@@ -20,11 +20,11 @@ class VariationalEncoder(torch.nn.Module):
 
         self.activation = activation
 
-        self.encoder = torch.nn.ModuleList()
+        self.layers = torch.nn.ModuleList()
 
         sizes = [input_size] + hidden_sizes
         for i in range(len(sizes) - 1):
-            self.encoder.append(
+            self.layers.append(
                 torch.nn.Linear(sizes[i], sizes[i + 1], bias=bias),
             )
 
@@ -32,7 +32,7 @@ class VariationalEncoder(torch.nn.Module):
         self.logvar = torch.nn.Linear(hidden_sizes[-1], latent_size, bias=bias)
 
     def forward(self, x):
-        for layer in self.encoder:
+        for layer in self.layers:
             x = self.activation(layer(x))
 
         mu = self.mu(x)
@@ -58,21 +58,21 @@ class VariationalDecoder(torch.nn.Module):
 
         self.activation = activation
 
-        self.decoder = torch.nn.ModuleList()
+        self.layers = torch.nn.ModuleList()
 
         sizes = [latent_size] + hidden_sizes + [output_size]
         for i in range(len(sizes) - 1):
-            self.decoder.append(
+            self.layers.append(
                 torch.nn.Linear(sizes[i], sizes[i + 1], bias=bias),
             )
 
         self.output_activation = torch.nn.ReLU()
 
     def forward(self, x):
-        for layer in self.decoder[:-1]:
+        for layer in self.layers[:-1]:
             x = self.activation(layer(x))
 
-        x = self.decoder[-1](x)
+        x = self.layers[-1](x)
         x = self.output_activation(x)
 
         return x
