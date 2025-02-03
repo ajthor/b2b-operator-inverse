@@ -1,5 +1,7 @@
 import torch
 
+from function_encoder.model.mlp import MLP
+
 
 class Encoder(torch.nn.Module):
     def __init__(
@@ -27,8 +29,10 @@ class Encoder(torch.nn.Module):
             )
 
     def forward(self, x):
-        for layer in self.layers:
+        for layer in self.layers[:-1]:
             x = self.activation(layer(x))
+
+        x = self.layers[-1](x)
 
         return x
 
@@ -58,14 +62,14 @@ class Decoder(torch.nn.Module):
                 torch.nn.Linear(sizes[i], sizes[i + 1], bias=bias),
             )
 
-        self.output_activation = torch.nn.ReLU()
+        self.output_activation = torch.nn.Identity()
 
     def forward(self, x):
         for layer in self.layers[:-1]:
             x = self.activation(layer(x))
 
         x = self.layers[-1](x)
-        x = self.output_activation(x)
+        # x = self.output_activation(x)
 
         return x
 
@@ -74,8 +78,19 @@ class Autoencoder(torch.nn.Module):
     def __init__(self, input_size, hidden_sizes, latent_size):
         super(Autoencoder, self).__init__()
 
-        self.encoder = Encoder(input_size, hidden_sizes, latent_size)
-        self.decoder = Decoder(latent_size, hidden_sizes[::-1], input_size)
+        # self.encoder = Encoder(input_size, hidden_sizes, latent_size)
+        # self.decoder = Decoder(latent_size, hidden_sizes[::-1], input_size)
+
+        self.encoder = MLP(
+            layer_sizes=[input_size] + hidden_sizes + [latent_size],
+            activation=torch.nn.ReLU(),
+            bias=True,
+        )
+        self.decoder = MLP(
+            layer_sizes=[latent_size] + hidden_sizes[::-1] + [input_size],
+            activation=torch.nn.ReLU(),
+            bias=True,
+        )
 
     def forward(self, x):
         z = self.encoder(x)

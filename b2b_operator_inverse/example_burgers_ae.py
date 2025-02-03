@@ -3,12 +3,16 @@ import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 
-from function_encoder.model.mlp import MultiHeadedMLP
-from function_encoder.function_encoder import FunctionEncoder
+from function_encoder.model.mlp import MLP, MultiHeadedMLP
+from function_encoder.function_encoder import FunctionEncoder, BasisFunctions
 from function_encoder.losses import basis_normalization_loss
 from function_encoder.utils.training import fit
 
-from autoencoder import Autoencoder, Encoder, Decoder
+from autoencoder import (
+    Autoencoder,
+    Encoder,
+    Decoder,
+)
 
 import tqdm
 
@@ -22,42 +26,42 @@ else:
     device = "cpu"
 
 
+torch.manual_seed(42)
+
 # Load dataset
 
-ds = load_dataset("ajthor/burgers_1d", split="train")
+ds = load_dataset("ajthor/derivative_polynomial", split="train")
 ds = ds.with_format("torch", device=device)
 
-# Remove all rows with nans.
-ds = ds.filter(
-    lambda x: not torch.isnan(x["a"]).any() and not torch.isnan(x["u"]).any()
-)
+# # Remove all rows with nans.
+# ds = ds.filter(
+#     lambda x: not torch.isnan(x["a"]).any() and not torch.isnan(x["u"]).any()
+# )
 
-dataloader = DataLoader(ds, batch_size=50, shuffle=True)
+dataloader = DataLoader(ds, batch_size=5, shuffle=True)
 
 
 # Define model
 
-n_basis = 100
+n_basis = 8
 
-input_basis_functions = MultiHeadedMLP(
-    layer_sizes=[1, 128, 128, 128, 1], num_heads=n_basis
+# input_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
+input_basis_functions = BasisFunctions(
+    basis_functions=torch.nn.ModuleList([MLP([1, 64, 1]) for _ in range(n_basis)])
 )
 input_function_encoder = FunctionEncoder(input_basis_functions)
 
-output_basis_functions = MultiHeadedMLP(
-    layer_sizes=[1, 128, 128, 128, 1], num_heads=n_basis
+# output_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
+output_basis_functions = BasisFunctions(
+    basis_functions=torch.nn.ModuleList([MLP([1, 64, 1]) for _ in range(n_basis)])
 )
 output_function_encoder = FunctionEncoder(output_basis_functions)
 
-# autoencoder = Autoencoder(
-#     input_size=n_basis, hidden_sizes=[128, 128, 128], latent_size=n_basis
-# )
+autoencoder = Autoencoder(input_size=n_basis, hidden_sizes=[64], latent_size=n_basis)
 
-encoder = Encoder(input_size=n_basis, hidden_sizes=[128, 128, 128], latent_size=n_basis)
+encoder = Encoder(input_size=n_basis, hidden_sizes=[64], latent_size=n_basis)
 
-decoder = Decoder(
-    latent_size=n_basis, hidden_sizes=[128, 128, 128], output_size=n_basis
-)
+decoder = Decoder(latent_size=n_basis, hidden_sizes=[64], output_size=n_basis)
 
 
 # Train model
@@ -69,7 +73,8 @@ learning_rate = 1e-3
 
 # Train the input function encoder
 def input_loss_function(model, batch):
-    x, a = batch["x"], batch["a"]
+    # x, a = batch["x"], batch["a"]
+    x, a = batch["X"], batch["f"]
     x = x.unsqueeze(-1)
     a = a.unsqueeze(-1)
 
@@ -86,9 +91,9 @@ def input_loss_function(model, batch):
     y_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(y_pred, ys)
-    norm_loss = basis_normalization_loss(model.basis_functions(xs))
+    # norm_loss = basis_normalization_loss(model.basis_functions(xs))
 
-    return pred_loss + norm_loss
+    return pred_loss
 
 
 input_function_encoder = fit(
@@ -102,7 +107,8 @@ input_function_encoder = fit(
 
 # Train the output function encoder
 def output_loss_function(model, batch):
-    x, u = batch["x"], batch["u"]
+    # x, u = batch["x"], batch["u"]
+    x, u = batch["Y"], batch["Tf"]
     x = x.unsqueeze(-1)
     u = u.unsqueeze(-1)
 
@@ -119,9 +125,9 @@ def output_loss_function(model, batch):
     u_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(u_pred, ys)
-    norm_loss = basis_normalization_loss(model.basis_functions(xs))
+    # norm_loss = basis_normalization_loss(model.basis_functions(xs))
 
-    return pred_loss + norm_loss
+    return pred_loss
 
 
 output_function_encoder = fit(
@@ -135,13 +141,15 @@ output_function_encoder = fit(
 
 # # Train AE
 # def autoencoder_loss(model, batch):
-#     a, x, u = batch["a"], batch["x"], batch["u"]
+#     # a, x, u = batch["a"], batch["x"], batch["u"]
+#     a, x, y, u = batch["X"], batch["f"], batch["Y"], batch["Tf"]
 #     a = a.unsqueeze(-1)
 #     x = x.unsqueeze(-1)
+#     y = y.unsqueeze(-1)
 #     u = u.unsqueeze(-1)
 
 #     c = input_function_encoder.compute_coefficients(x, a)
-#     z = output_function_encoder.compute_coefficients(x, u)
+#     z = output_function_encoder.compute_coefficients(y, u)
 
 #     z_pred = model.encoder(c)
 #     c_pred = model.decoder(z_pred)
@@ -174,13 +182,15 @@ output_function_encoder = fit(
 
 #  Train encoder
 def encoder_loss(model, batch):
-    a, x, u = batch["a"], batch["x"], batch["u"]
+    # a, x, u = batch["a"], batch["x"], batch["u"]
+    a, x, y, u = batch["X"], batch["f"], batch["Y"], batch["Tf"]
     a = a.unsqueeze(-1)
     x = x.unsqueeze(-1)
+    y = y.unsqueeze(-1)
     u = u.unsqueeze(-1)
 
     c = input_function_encoder.compute_coefficients(x, a)
-    z = output_function_encoder.compute_coefficients(x, u)
+    z = output_function_encoder.compute_coefficients(y, u)
 
     z_pred = model(c)
 
@@ -206,18 +216,20 @@ def train_encoder(model, dataloader, epochs, learning_rate):
                 tqdm_bar.set_postfix_str(f"Loss {loss.item()}")
 
 
-train_encoder(encoder, dataloader, epochs=2000, learning_rate=learning_rate)
+train_encoder(encoder, dataloader, epochs=1000, learning_rate=learning_rate)
 
 
 # Train decoder
 def decoder_loss(model, batch):
-    a, x, u = batch["a"], batch["x"], batch["u"]
+    # a, x, u = batch["a"], batch["x"], batch["u"]
+    a, x, y, u = batch["X"], batch["f"], batch["Y"], batch["Tf"]
     a = a.unsqueeze(-1)
     x = x.unsqueeze(-1)
+    y = y.unsqueeze(-1)
     u = u.unsqueeze(-1)
 
     c = input_function_encoder.compute_coefficients(x, a)
-    z = output_function_encoder.compute_coefficients(x, u)
+    z = output_function_encoder.compute_coefficients(y, u)
 
     z_pred = encoder(c)
     c_pred = model(z_pred)
@@ -244,7 +256,7 @@ def train_decoder(model, dataloader, epochs, learning_rate):
                 tqdm_bar.set_postfix_str(f"Loss {loss.item()}")
 
 
-train_decoder(decoder, dataloader, epochs=2000, learning_rate=learning_rate)
+train_decoder(decoder, dataloader, epochs=1000, learning_rate=learning_rate)
 
 
 # Save models
@@ -257,31 +269,38 @@ train_decoder(decoder, dataloader, epochs=2000, learning_rate=learning_rate)
 
 input_function_encoder.eval()
 output_function_encoder.eval()
-# autoencoder.eval()
+autoencoder.eval()
 encoder.eval()
 decoder.eval()
 
 point = ds.take(1)[0]
 
-x = point["x"]
-a = point["a"]
-u = point["u"]
+# x = point["x"]
+# a = point["a"]
+# u = point["u"]
+
+x = point["X"]
+a = point["f"]
+y = point["Y"]
+u = point["Tf"]
 
 idx = torch.argsort(x, dim=0).squeeze()
 
 x = x[idx]
 a = a[idx]
+y = y[idx]
 u = u[idx]
 
 x = x.unsqueeze(-1).unsqueeze(0)
 a = a.unsqueeze(-1).unsqueeze(0)
+y = y.unsqueeze(-1).unsqueeze(0)
 u = u.unsqueeze(-1).unsqueeze(0)
 
 c = input_function_encoder.compute_coefficients(x, a)
-z = output_function_encoder.compute_coefficients(x, u)
+z = output_function_encoder.compute_coefficients(y, u)
 
 a_est = input_function_encoder(x, c)
-u_est = output_function_encoder(x, z)
+u_est = output_function_encoder(y, z)
 
 z_pred = encoder(c)
 c_pred = decoder(z_pred)
@@ -290,10 +309,11 @@ c_pred = decoder(z_pred)
 # c_pred = autoencoder.decoder(z_pred)
 
 a_pred = input_function_encoder(x, c_pred)
-u_pred = output_function_encoder(x, z_pred)
+u_pred = output_function_encoder(y, z_pred)
 
 x = x.squeeze().cpu().detach().numpy()
 a = a.squeeze().cpu().detach().numpy()
+y = y.squeeze().cpu().detach().numpy()
 u = u.squeeze().cpu().detach().numpy()
 a_est = a_est.squeeze().cpu().detach().numpy()
 u_est = u_est.squeeze().cpu().detach().numpy()
@@ -306,8 +326,8 @@ ax[0].plot(x, a, label="a")
 ax[0].plot(x, a_est, label="a_est")
 ax[0].plot(x, a_pred, label="a_pred")
 
-ax[1].plot(x, u, label="u")
-ax[1].plot(x, u_est, label="u_est")
-ax[1].plot(x, u_pred, label="u_pred")
+ax[1].plot(y, u, label="u")
+ax[1].plot(y, u_est, label="u_est")
+ax[1].plot(y, u_pred, label="u_pred")
 
 plt.show()

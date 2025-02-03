@@ -9,7 +9,7 @@ from function_encoder.losses import basis_normalization_loss
 from function_encoder.utils.training import fit
 
 from variational_autoencoder import (
-    VariationalAutoencoder,
+    CustomVariationalAutoencoder,
     VariationalEncoder,
     VariationalDecoder,
 )
@@ -51,8 +51,8 @@ input_function_encoder = FunctionEncoder(input_basis_functions)
 output_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
 output_function_encoder = FunctionEncoder(output_basis_functions)
 
-autoencoder = VariationalAutoencoder(
-    input_size=n_basis, hidden_sizes=[64], latent_size=n_basis
+autoencoder = CustomVariationalAutoencoder(
+    alpha_size=n_basis, beta_size=n_basis, hidden_sizes=[64], latent_size=64
 )
 
 
@@ -82,9 +82,9 @@ def input_loss_function(model, batch):
     y_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(y_pred, ys)
-    # norm_loss = basis_normalization_loss(model.basis_functions(xs))
+    norm_loss = basis_normalization_loss(model.basis_functions(xs))
 
-    return pred_loss
+    return pred_loss + norm_loss
 
 
 input_function_encoder = fit(
@@ -115,9 +115,9 @@ def output_loss_function(model, batch):
     u_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(u_pred, us)
-    # norm_loss = basis_normalization_loss(model.basis_functions(xs))
+    norm_loss = basis_normalization_loss(model.basis_functions(xs))
 
-    return pred_loss
+    return pred_loss + norm_loss
 
 
 output_function_encoder = fit(
@@ -142,17 +142,30 @@ def autoencoder_loss(model, batch):
     # z_pred = model.encoder(c)
     # c_pred = model.decoder(z_pred)
 
-    mu, logvar = model.encoder(c)
-    z_pred = model.reparameterize(mu, logvar)
-    c_pred = model.decoder(z_pred)
+    # mu, logvar = model.encoder(torch.cat([c, z], dim=-1))
+    # z_pred = model.reparameterize(mu, logvar)
+    # c_pred = model.decoder(torch.cat([z_pred, z], dim=-1))
 
-    pred_loss = torch.nn.functional.mse_loss(c_pred, c)
-    latent_loss = torch.nn.functional.mse_loss(z_pred, z)
+    # pred_loss = torch.nn.functional.mse_loss(c_pred, c)
+    # # latent_loss = torch.nn.functional.mse_loss(z_pred, z)
+    # latent_loss = torch.nn.functional.binary_cross_entropy()
 
+    # kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    # kl_loss = kl_loss.mean()
+
+    c_pred, mu, logvar = model(c, z)
+
+    # pred_loss = torch.nn.functional.binary_cross_entropy(c_pred, c, reduction="sum")
+    pred_loss = torch.nn.functional.mse_loss(c_pred, c, reduction="sum")
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     kl_loss = kl_loss.mean()
 
-    return pred_loss + latent_loss + kl_loss
+    if torch.isnan(pred_loss).any():
+        print("pred_loss", pred_loss)
+        print("c", c)
+        print("c_pred", c_pred)
+
+    return pred_loss + kl_loss
 
 
 def train_autoencoder(model, dataloader, epochs, learning_rate):
@@ -172,7 +185,7 @@ def train_autoencoder(model, dataloader, epochs, learning_rate):
                 tqdm_bar.set_postfix_str(f"Loss {loss.item()}")
 
 
-train_autoencoder(autoencoder, dataloader, epochs=2000, learning_rate=learning_rate)
+train_autoencoder(autoencoder, dataloader, epochs=1000, learning_rate=learning_rate)
 
 
 # Save models
@@ -209,12 +222,17 @@ z = output_function_encoder.compute_coefficients(x, u)
 a_est = input_function_encoder(x, c)
 u_est = output_function_encoder(x, z)
 
-mu, logvar = autoencoder.encoder(c)
+mu, logvar = autoencoder.encoder(torch.cat([c, z], dim=-1))
 z_pred = autoencoder.reparameterize(mu, logvar)
-c_pred = autoencoder.decoder(z_pred)
+c_pred = autoencoder.decoder(torch.cat([z_pred, z], dim=-1))
+
+z_random = autoencoder.reparameterize(torch.zeros_like(mu), torch.zeros_like(logvar))
+naive_c_pred = autoencoder.decoder(torch.cat([z_random, z], dim=-1))
 
 a_pred = input_function_encoder(x, c_pred)
-u_pred = output_function_encoder(x, z_pred)
+# u_pred = output_function_encoder(x, z_pred)
+
+naive_a_pred = input_function_encoder(x, naive_c_pred)
 
 x = x.squeeze().cpu().detach().numpy()
 a = a.squeeze().cpu().detach().numpy()
@@ -222,16 +240,18 @@ u = u.squeeze().cpu().detach().numpy()
 a_est = a_est.squeeze().cpu().detach().numpy()
 u_est = u_est.squeeze().cpu().detach().numpy()
 a_pred = a_pred.squeeze().cpu().detach().numpy()
-u_pred = u_pred.squeeze().cpu().detach().numpy()
+# u_pred = u_pred.squeeze().cpu().detach().numpy()
+naive_a_pred = naive_a_pred.squeeze().cpu().detach().numpy()
 
 fig, ax = plt.subplots(1, 2, figsize=(12, 5))
 
 ax[0].plot(x, a, label="a")
 ax[0].plot(x, a_est, label="a_est")
 ax[0].plot(x, a_pred, label="a_pred")
+ax[0].plot(x, naive_a_pred, label="naive_a_pred")
 
 ax[1].plot(x, u, label="u")
 ax[1].plot(x, u_est, label="u_est")
-ax[1].plot(x, u_pred, label="u_pred")
+# ax[1].plot(x, u_pred, label="u_pred")
 
 plt.show()

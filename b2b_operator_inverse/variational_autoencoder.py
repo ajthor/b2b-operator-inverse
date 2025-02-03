@@ -66,7 +66,7 @@ class VariationalDecoder(torch.nn.Module):
                 torch.nn.Linear(sizes[i], sizes[i + 1], bias=bias),
             )
 
-        self.output_activation = torch.nn.ReLU()
+        self.output_activation = torch.nn.Identity()
 
     def forward(self, x):
         for layer in self.layers[:-1]:
@@ -94,3 +94,25 @@ class VariationalAutoencoder(torch.nn.Module):
         mu, logvar = self.encoder(x)
         z = self.reparameterize(mu, logvar)
         return self.decoder(z), mu, logvar
+
+
+class CustomVariationalAutoencoder(torch.nn.Module):
+    def __init__(self, alpha_size, beta_size, hidden_sizes, latent_size):
+        super(CustomVariationalAutoencoder, self).__init__()
+
+        self.encoder = VariationalEncoder(
+            alpha_size + beta_size, hidden_sizes, latent_size
+        )
+        self.decoder = VariationalDecoder(
+            latent_size + beta_size, hidden_sizes[::-1], alpha_size
+        )
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, alpha, beta):
+        mu, logvar = self.encoder(torch.cat([alpha, beta], dim=-1))
+        z = self.reparameterize(mu, logvar)
+        return self.decoder(torch.cat([z, beta], dim=-1)), mu, logvar
