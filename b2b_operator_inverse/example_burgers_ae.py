@@ -37,7 +37,7 @@ dataloader = DataLoader(ds, batch_size=50, shuffle=True)
 
 # Define model
 
-n_basis = 8
+n_basis = 100
 
 input_basis_functions = MultiHeadedMLP(
     layer_sizes=[1, 128, 128, 128, 1], num_heads=n_basis
@@ -49,19 +49,21 @@ output_basis_functions = MultiHeadedMLP(
 )
 output_function_encoder = FunctionEncoder(output_basis_functions)
 
-autoencoder = Autoencoder(
-    input_size=n_basis, hidden_sizes=[128, 128, 128], latent_size=n_basis
+# autoencoder = Autoencoder(
+#     input_size=n_basis, hidden_sizes=[128, 128, 128], latent_size=n_basis
+# )
+
+encoder = Encoder(input_size=n_basis, hidden_sizes=[128, 128, 128], latent_size=n_basis)
+
+decoder = Decoder(
+    latent_size=n_basis, hidden_sizes=[128, 128, 128], output_size=n_basis
 )
-
-# encoder = Encoder(input_size=n_basis, hidden_sizes=[128], latent_size=n_basis)
-
-# decoder = Decoder(latent_size=n_basis, hidden_sizes=[128], output_size=n_basis)
 
 
 # Train model
 
 
-epochs = 2000
+epochs = 1000
 learning_rate = 1e-3
 
 
@@ -109,14 +111,14 @@ def output_loss_function(model, batch):
     # Split this into two sets of data. Randomly select a subset of the x, u pairs
     perm = torch.randperm(x_size, device=device)
     example_xs = x[:, perm[: x_size // 2]]
-    example_us = u[:, perm[: x_size // 2]]
+    example_ys = u[:, perm[: x_size // 2]]
     xs = x[:, perm[x_size // 2 :]]
-    us = u[:, perm[x_size // 2 :]]
+    ys = u[:, perm[x_size // 2 :]]
 
-    coefficients = model.compute_coefficients(example_xs, example_us)
+    coefficients = model.compute_coefficients(example_xs, example_ys)
     u_pred = model(xs, coefficients)
 
-    pred_loss = torch.nn.functional.mse_loss(u_pred, us)
+    pred_loss = torch.nn.functional.mse_loss(u_pred, ys)
     norm_loss = basis_normalization_loss(model.basis_functions(xs))
 
     return pred_loss + norm_loss
@@ -131,8 +133,47 @@ output_function_encoder = fit(
 )
 
 
-# Train AE
-def autoencoder_loss(model, batch):
+# # Train AE
+# def autoencoder_loss(model, batch):
+#     a, x, u = batch["a"], batch["x"], batch["u"]
+#     a = a.unsqueeze(-1)
+#     x = x.unsqueeze(-1)
+#     u = u.unsqueeze(-1)
+
+#     c = input_function_encoder.compute_coefficients(x, a)
+#     z = output_function_encoder.compute_coefficients(x, u)
+
+#     z_pred = model.encoder(c)
+#     c_pred = model.decoder(z_pred)
+
+#     pred_loss = torch.nn.functional.mse_loss(c_pred, c)
+#     latent_loss = torch.nn.functional.mse_loss(z_pred, z)
+
+#     return pred_loss + latent_loss
+
+
+# def train_autoencoder(model, dataloader, epochs, learning_rate):
+#     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+#     model.train()
+
+#     with tqdm.tqdm(range(epochs)) as tqdm_bar:
+#         for epoch in tqdm_bar:
+#             for batch in dataloader:
+#                 optimizer.zero_grad()
+#                 loss = autoencoder_loss(model, batch)
+#                 loss.backward()
+#                 optimizer.step()
+#                 break
+
+#             if epoch % 10 == 0:
+#                 tqdm_bar.set_postfix_str(f"Loss {loss.item()}")
+
+
+# train_autoencoder(autoencoder, dataloader, epochs=2000, learning_rate=learning_rate)
+
+
+#  Train encoder
+def encoder_loss(model, batch):
     a, x, u = batch["a"], batch["x"], batch["u"]
     a = a.unsqueeze(-1)
     x = x.unsqueeze(-1)
@@ -141,16 +182,14 @@ def autoencoder_loss(model, batch):
     c = input_function_encoder.compute_coefficients(x, a)
     z = output_function_encoder.compute_coefficients(x, u)
 
-    z_pred = model.encoder(c)
-    c_pred = model.decoder(z_pred)
+    z_pred = model(c)
 
-    pred_loss = torch.nn.functional.mse_loss(c_pred, c)
     latent_loss = torch.nn.functional.mse_loss(z_pred, z)
 
-    return pred_loss + latent_loss
+    return latent_loss
 
 
-def train_autoencoder(model, dataloader, epochs, learning_rate):
+def train_encoder(model, dataloader, epochs, learning_rate):
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     model.train()
 
@@ -158,7 +197,7 @@ def train_autoencoder(model, dataloader, epochs, learning_rate):
         for epoch in tqdm_bar:
             for batch in dataloader:
                 optimizer.zero_grad()
-                loss = autoencoder_loss(model, batch)
+                loss = encoder_loss(model, batch)
                 loss.backward()
                 optimizer.step()
                 break
@@ -167,82 +206,45 @@ def train_autoencoder(model, dataloader, epochs, learning_rate):
                 tqdm_bar.set_postfix_str(f"Loss {loss.item()}")
 
 
-train_autoencoder(autoencoder, dataloader, epochs=1000, learning_rate=learning_rate)
+train_encoder(encoder, dataloader, epochs=2000, learning_rate=learning_rate)
 
 
-# #  Train encoder
-# def encoder_loss(model, batch):
-#     a, x, u = batch["a"], batch["x"], batch["u"]
-#     a = a.unsqueeze(-1)
-#     x = x.unsqueeze(-1)
-#     u = u.unsqueeze(-1)
+# Train decoder
+def decoder_loss(model, batch):
+    a, x, u = batch["a"], batch["x"], batch["u"]
+    a = a.unsqueeze(-1)
+    x = x.unsqueeze(-1)
+    u = u.unsqueeze(-1)
 
-#     c = input_function_encoder.compute_coefficients(x, a)
-#     z = output_function_encoder.compute_coefficients(x, u)
+    c = input_function_encoder.compute_coefficients(x, a)
+    z = output_function_encoder.compute_coefficients(x, u)
 
-#     z_pred = model(c)
+    z_pred = encoder(c)
+    c_pred = model(z_pred)
 
-#     latent_loss = torch.nn.functional.mse_loss(z_pred, z)
+    pred_loss = torch.nn.functional.mse_loss(c_pred, c)
 
-#     return latent_loss
-
-
-# def train_encoder(model, dataloader, epochs, learning_rate):
-#     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-#     model.train()
-
-#     with tqdm.tqdm(range(epochs)) as tqdm_bar:
-#         for epoch in tqdm_bar:
-#             for batch in dataloader:
-#                 optimizer.zero_grad()
-#                 loss = encoder_loss(model, batch)
-#                 loss.backward()
-#                 optimizer.step()
-#                 break
-
-#             if epoch % 10 == 0:
-#                 tqdm_bar.set_postfix_str(f"Loss {loss.item()}")
+    return pred_loss
 
 
-# train_encoder(encoder, dataloader, epochs=1000, learning_rate=learning_rate)
+def train_decoder(model, dataloader, epochs, learning_rate):
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    model.train()
+
+    with tqdm.tqdm(range(epochs)) as tqdm_bar:
+        for epoch in tqdm_bar:
+            for batch in dataloader:
+                optimizer.zero_grad()
+                loss = decoder_loss(model, batch)
+                loss.backward()
+                optimizer.step()
+                break
+
+            if epoch % 10 == 0:
+                tqdm_bar.set_postfix_str(f"Loss {loss.item()}")
 
 
-# # Train decoder
-# def decoder_loss(model, batch):
-#     a, x, u = batch["a"], batch["x"], batch["u"]
-#     a = a.unsqueeze(-1)
-#     x = x.unsqueeze(-1)
-#     u = u.unsqueeze(-1)
-
-#     c = input_function_encoder.compute_coefficients(x, a)
-#     z = output_function_encoder.compute_coefficients(x, u)
-
-#     z_pred = encoder(c)
-#     c_pred = model(z_pred)
-
-#     pred_loss = torch.nn.functional.mse_loss(c_pred, c)
-
-#     return pred_loss
-
-
-# def train_decoder(model, dataloader, epochs, learning_rate):
-#     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-#     model.train()
-
-#     with tqdm.tqdm(range(epochs)) as tqdm_bar:
-#         for epoch in tqdm_bar:
-#             for batch in dataloader:
-#                 optimizer.zero_grad()
-#                 loss = decoder_loss(model, batch)
-#                 loss.backward()
-#                 optimizer.step()
-#                 break
-
-#             if epoch % 10 == 0:
-#                 tqdm_bar.set_postfix_str(f"Loss {loss.item()}")
-
-
-# train_decoder(decoder, dataloader, epochs=1000, learning_rate=learning_rate)
+train_decoder(decoder, dataloader, epochs=2000, learning_rate=learning_rate)
 
 
 # Save models
@@ -255,9 +257,9 @@ train_autoencoder(autoencoder, dataloader, epochs=1000, learning_rate=learning_r
 
 input_function_encoder.eval()
 output_function_encoder.eval()
-autoencoder.eval()
-# encoder.eval()
-# decoder.eval()
+# autoencoder.eval()
+encoder.eval()
+decoder.eval()
 
 point = ds.take(1)[0]
 
@@ -281,11 +283,11 @@ z = output_function_encoder.compute_coefficients(x, u)
 a_est = input_function_encoder(x, c)
 u_est = output_function_encoder(x, z)
 
-# z_pred = encoder(c)
-# c_pred = decoder(z_pred)
+z_pred = encoder(c)
+c_pred = decoder(z_pred)
 
-z_pred = autoencoder.encoder(c)
-c_pred = autoencoder.decoder(z_pred)
+# z_pred = autoencoder.encoder(c)
+# c_pred = autoencoder.decoder(z_pred)
 
 a_pred = input_function_encoder(x, c_pred)
 u_pred = output_function_encoder(x, z_pred)
