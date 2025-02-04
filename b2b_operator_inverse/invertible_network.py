@@ -34,32 +34,32 @@ class CouplingLayer(torch.nn.Module):
         self.scale_x = torch.nn.Sequential(
             torch.nn.Linear(input_size // 2, 128),
             torch.nn.LeakyReLU(),
-            # torch.nn.Linear(128, 128),
-            # torch.nn.LeakyReLU(),
+            torch.nn.Linear(128, 128),
+            torch.nn.LeakyReLU(),
             torch.nn.Linear(128, input_size // 2),
         )
 
         self.translate_x = torch.nn.Sequential(
             torch.nn.Linear(input_size // 2, 128),
             torch.nn.LeakyReLU(),
-            # torch.nn.Linear(128, 128),
-            # torch.nn.LeakyReLU(),
+            torch.nn.Linear(128, 128),
+            torch.nn.LeakyReLU(),
             torch.nn.Linear(128, input_size // 2),
         )
 
         self.scale_y = torch.nn.Sequential(
             torch.nn.Linear(input_size // 2, 128),
             torch.nn.LeakyReLU(),
-            # torch.nn.Linear(128, 128),
-            # torch.nn.LeakyReLU(),
+            torch.nn.Linear(128, 128),
+            torch.nn.LeakyReLU(),
             torch.nn.Linear(128, input_size // 2),
         )
 
         self.translate_y = torch.nn.Sequential(
             torch.nn.Linear(input_size // 2, 128),
             torch.nn.LeakyReLU(),
-            # torch.nn.Linear(128, 128),
-            # torch.nn.LeakyReLU(),
+            torch.nn.Linear(128, 128),
+            torch.nn.LeakyReLU(),
             torch.nn.Linear(128, input_size // 2),
         )
 

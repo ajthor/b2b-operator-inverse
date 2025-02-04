@@ -35,7 +35,7 @@ dataloader = DataLoader(ds, batch_size=50, shuffle=True)
 
 # Define model
 
-n_basis = 8
+n_basis = 100
 
 input_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
 input_function_encoder = FunctionEncoder(input_basis_functions)
@@ -149,7 +149,7 @@ def train_operator(model, dataloader, epochs, learning_rate):
                 tqdm_bar.set_postfix_str(f"Loss {loss.item():.3e}")
 
 
-train_operator(operator, dataloader, epochs=10000, learning_rate=learning_rate)
+train_operator(operator, dataloader, epochs=5000, learning_rate=learning_rate)
 
 
 # Plot
@@ -189,6 +189,9 @@ alpha_pred = operator.inverse(beta)
 
 f_pred = input_function_encoder(X, alpha_pred)
 Tf_pred = output_function_encoder(Y, beta_pred)
+
+# Center the prediction
+f_pred = f_pred - f_pred.mean()
 
 X = X.squeeze().cpu().detach().numpy()
 f = f.squeeze().cpu().detach().numpy()
