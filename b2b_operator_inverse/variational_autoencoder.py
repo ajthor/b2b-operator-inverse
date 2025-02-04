@@ -1,6 +1,7 @@
 # Interface of a variational autoencoder. Torch module with an init and forward.
 
 import torch
+import sys
 
 
 class VariationalEncoder(torch.nn.Module):
@@ -110,9 +111,20 @@ class CustomVariationalAutoencoder(torch.nn.Module):
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
+
         return mu + eps * std
 
     def forward(self, alpha, beta):
         mu, logvar = self.encoder(torch.cat([alpha, beta], dim=-1))
         z = self.reparameterize(mu, logvar)
+
+        if torch.isnan(z).any():
+            print("NaN in z")
+
+        if torch.isnan(mu).any():
+            print("mu is nan")
+
+        if torch.isnan(logvar).any():
+            print("logvar is nan")
+
         return self.decoder(torch.cat([z, beta], dim=-1)), mu, logvar

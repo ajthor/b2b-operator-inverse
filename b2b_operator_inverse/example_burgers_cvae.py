@@ -30,15 +30,11 @@ torch.manual_seed(42)
 
 # Load dataset
 
-ds = load_dataset("ajthor/burgers_1d", split="train")
+ds = load_dataset("ajthor/derivative_polynomial", split="train")
 ds = ds.with_format("torch", device=device)
 
-# Remove all rows with nans.
-ds = ds.filter(
-    lambda x: not torch.isnan(x["a"]).any() and not torch.isnan(x["u"]).any()
-)
 
-dataloader = DataLoader(ds, batch_size=5, shuffle=True)
+dataloader = DataLoader(ds, batch_size=50, shuffle=True)
 
 
 # Define model
@@ -46,13 +42,19 @@ dataloader = DataLoader(ds, batch_size=5, shuffle=True)
 n_basis = 8
 
 input_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
+# input_basis_functions = BasisFunctions(
+#     basis_functions=torch.nn.ModuleList([MLP([1, 64, 1]) for _ in range(n_basis)])
+# )
 input_function_encoder = FunctionEncoder(input_basis_functions)
 
 output_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
+# output_basis_functions = BasisFunctions(
+#     basis_functions=torch.nn.ModuleList([MLP([1, 64, 1]) for _ in range(n_basis)])
+# )
 output_function_encoder = FunctionEncoder(output_basis_functions)
 
 autoencoder = CustomVariationalAutoencoder(
-    alpha_size=n_basis, beta_size=n_basis, hidden_sizes=[64], latent_size=64
+    alpha_size=n_basis, beta_size=n_basis, hidden_sizes=[64, 64, 64], latent_size=64
 )
 
 
@@ -65,18 +67,14 @@ learning_rate = 1e-3
 
 # Train the input function encoder
 def input_loss_function(model, batch):
-    x, a = batch["x"], batch["a"]
-    x = x.unsqueeze(-1)
-    a = a.unsqueeze(-1)
+    X, f = batch["X"], batch["f"]
+    X = X.unsqueeze(-1)
+    f = f.unsqueeze(-1)
 
-    x_size = x.size(1)
-
-    # Split this into two sets of data. Randomly select a subset of the x, a pairs
-    perm = torch.randperm(x_size, device=device)
-    example_xs = x[:, perm[: x_size // 2]]
-    example_ys = a[:, perm[: x_size // 2]]
-    xs = x[:, perm[x_size // 2 :]]
-    ys = a[:, perm[x_size // 2 :]]
+    example_xs = X
+    example_ys = f
+    xs = X
+    ys = f
 
     coefficients = model.compute_coefficients(example_xs, example_ys)
     y_pred = model(xs, coefficients)
@@ -98,23 +96,19 @@ input_function_encoder = fit(
 
 # Train the output function encoder
 def output_loss_function(model, batch):
-    x, u = batch["x"], batch["u"]
-    x = x.unsqueeze(-1)
-    u = u.unsqueeze(-1)
+    Y, Tf = batch["Y"], batch["Tf"]
+    Y = Y.unsqueeze(-1)
+    Tf = Tf.unsqueeze(-1)
 
-    x_size = x.size(1)
+    example_xs = Y
+    example_ys = Tf
+    xs = Y
+    ys = Tf
 
-    # Split this into two sets of data. Randomly select a subset of the x, u pairs
-    perm = torch.randperm(x_size, device=device)
-    example_xs = x[:, perm[: x_size // 2]]
-    example_us = u[:, perm[: x_size // 2]]
-    xs = x[:, perm[x_size // 2 :]]
-    us = u[:, perm[x_size // 2 :]]
+    coefficients = model.compute_coefficients(example_xs, example_ys)
+    y_pred = model(xs, coefficients)
 
-    coefficients = model.compute_coefficients(example_xs, example_us)
-    u_pred = model(xs, coefficients)
-
-    pred_loss = torch.nn.functional.mse_loss(u_pred, us)
+    pred_loss = torch.nn.functional.mse_loss(y_pred, ys)
     norm_loss = basis_normalization_loss(model.basis_functions(xs))
 
     return pred_loss + norm_loss
@@ -129,41 +123,41 @@ output_function_encoder = fit(
 )
 
 
+# Train the oeprator
+ds_subset = ds.take(1000)
+
+source_coefficients = input_function_encoder.compute_coefficients(
+    ds_subset["X"].unsqueeze(-1).to(device), ds_subset["f"].unsqueeze(-1).to(device)
+)
+
+target_coefficients = output_function_encoder.compute_coefficients(
+    ds_subset["Y"].unsqueeze(-1).to(device), ds_subset["Tf"].unsqueeze(-1).to(device)
+)
+
+operator = torch.linalg.lstsq(source_coefficients, target_coefficients).solution
+
+
 # Train AE
 def autoencoder_loss(model, batch):
-    a, x, u = batch["a"], batch["x"], batch["u"]
-    a = a.unsqueeze(-1)
-    x = x.unsqueeze(-1)
-    u = u.unsqueeze(-1)
+    X, f, Y, Tf = batch["X"], batch["f"], batch["Y"], batch["Tf"]
+    X = X.unsqueeze(-1)
+    f = f.unsqueeze(-1)
+    Y = Y.unsqueeze(-1)
+    Tf = Tf.unsqueeze(-1)
 
-    c = input_function_encoder.compute_coefficients(x, a)
-    z = output_function_encoder.compute_coefficients(x, u)
+    alpha = input_function_encoder.compute_coefficients(X, f)
+    beta = output_function_encoder.compute_coefficients(Y, Tf)
 
-    # z_pred = model.encoder(c)
-    # c_pred = model.decoder(z_pred)
+    alpha_pred, mu, logvar = model(alpha, beta)
 
-    # mu, logvar = model.encoder(torch.cat([c, z], dim=-1))
-    # z_pred = model.reparameterize(mu, logvar)
-    # c_pred = model.decoder(torch.cat([z_pred, z], dim=-1))
-
-    # pred_loss = torch.nn.functional.mse_loss(c_pred, c)
-    # # latent_loss = torch.nn.functional.mse_loss(z_pred, z)
-    # latent_loss = torch.nn.functional.binary_cross_entropy()
-
-    # kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    # kl_loss = kl_loss.mean()
-
-    c_pred, mu, logvar = model(c, z)
-
-    # pred_loss = torch.nn.functional.binary_cross_entropy(c_pred, c, reduction="sum")
-    pred_loss = torch.nn.functional.mse_loss(c_pred, c, reduction="sum")
+    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     kl_loss = kl_loss.mean()
 
-    if torch.isnan(pred_loss).any():
-        print("pred_loss", pred_loss)
-        print("c", c)
-        print("c_pred", c_pred)
+    # # consistency loss
+    # consistency_loss = torch.nn.functional.mse_loss(
+    #     beta, torch.matmul(alpha_pred, operator.T)
+    # )
 
     return pred_loss + kl_loss
 
@@ -182,16 +176,10 @@ def train_autoencoder(model, dataloader, epochs, learning_rate):
                 break
 
             if epoch % 10 == 0:
-                tqdm_bar.set_postfix_str(f"Loss {loss.item()}")
+                tqdm_bar.set_postfix_str(f"Loss {loss.item():.3e}")
 
 
-train_autoencoder(autoencoder, dataloader, epochs=1000, learning_rate=learning_rate)
-
-
-# Save models
-
-# torch.save(function_encoder.state_dict(), "function_encoder.pt")
-# torch.save(autoencoder.state_dict(), "autoencoder.pt")
+train_autoencoder(autoencoder, dataloader, epochs=80000, learning_rate=learning_rate)
 
 
 # Plot
@@ -202,56 +190,59 @@ autoencoder.eval()
 
 point = ds.take(1)[0]
 
-x = point["x"]
-a = point["a"]
-u = point["u"]
+X = point["X"]
+f = point["f"]
+Y = point["Y"]
+Tf = point["Tf"]
 
-idx = torch.argsort(x, dim=0).squeeze()
+idx = torch.argsort(X, dim=0).squeeze()
+X = X[idx]
+f = f[idx]
 
-x = x[idx]
-a = a[idx]
-u = u[idx]
+idx = torch.argsort(Y, dim=0).squeeze()
+Y = Y[idx]
+Tf = Tf[idx]
 
-x = x.unsqueeze(-1).unsqueeze(0)
-a = a.unsqueeze(-1).unsqueeze(0)
-u = u.unsqueeze(-1).unsqueeze(0)
+X = X.unsqueeze(-1).unsqueeze(0)
+f = f.unsqueeze(-1).unsqueeze(0)
+Y = Y.unsqueeze(-1).unsqueeze(0)
+Tf = Tf.unsqueeze(-1).unsqueeze(0)
 
-c = input_function_encoder.compute_coefficients(x, a)
-z = output_function_encoder.compute_coefficients(x, u)
+alpha = input_function_encoder.compute_coefficients(X, f)
+beta = output_function_encoder.compute_coefficients(Y, Tf)
 
-a_est = input_function_encoder(x, c)
-u_est = output_function_encoder(x, z)
+f_est = input_function_encoder(X, alpha)
+Tf_est = output_function_encoder(Y, beta)
 
-mu, logvar = autoencoder.encoder(torch.cat([c, z], dim=-1))
+mu, logvar = autoencoder.encoder(torch.cat([alpha, beta], dim=-1))
 z_pred = autoencoder.reparameterize(mu, logvar)
-c_pred = autoencoder.decoder(torch.cat([z_pred, z], dim=-1))
+alpha_pred = autoencoder.decoder(torch.cat([z_pred, beta], dim=-1))
 
-z_random = autoencoder.reparameterize(torch.zeros_like(mu), torch.zeros_like(logvar))
-naive_c_pred = autoencoder.decoder(torch.cat([z_random, z], dim=-1))
+# TODO: WHAT SHOULD THIS BE?
+z_random = autoencoder.reparameterize(torch.zeros_like(mu), torch.ones_like(logvar))
+naive_alpha_pred = autoencoder.decoder(torch.cat([z_random, beta], dim=-1))
 
-a_pred = input_function_encoder(x, c_pred)
-# u_pred = output_function_encoder(x, z_pred)
+f_pred = input_function_encoder(X, alpha_pred)
 
-naive_a_pred = input_function_encoder(x, naive_c_pred)
+naive_f_pred = input_function_encoder(X, naive_alpha_pred)
 
-x = x.squeeze().cpu().detach().numpy()
-a = a.squeeze().cpu().detach().numpy()
-u = u.squeeze().cpu().detach().numpy()
-a_est = a_est.squeeze().cpu().detach().numpy()
-u_est = u_est.squeeze().cpu().detach().numpy()
-a_pred = a_pred.squeeze().cpu().detach().numpy()
-# u_pred = u_pred.squeeze().cpu().detach().numpy()
-naive_a_pred = naive_a_pred.squeeze().cpu().detach().numpy()
+X = X.squeeze().cpu().detach().numpy()
+f = f.squeeze().cpu().detach().numpy()
+Y = Y.squeeze().cpu().detach().numpy()
+Tf = Tf.squeeze().cpu().detach().numpy()
+f_est = f_est.squeeze().cpu().detach().numpy()
+Tf_est = Tf_est.squeeze().cpu().detach().numpy()
+f_pred = f_pred.squeeze().cpu().detach().numpy()
+naive_f_pred = naive_f_pred.squeeze().cpu().detach().numpy()
 
 fig, ax = plt.subplots(1, 2, figsize=(12, 5))
 
-ax[0].plot(x, a, label="a")
-ax[0].plot(x, a_est, label="a_est")
-ax[0].plot(x, a_pred, label="a_pred")
-ax[0].plot(x, naive_a_pred, label="naive_a_pred")
+ax[0].plot(X, f, label="a")
+ax[0].plot(X, f_est, label="f_est")
+ax[0].plot(X, f_pred, label="f_pred")
+ax[0].plot(X, naive_f_pred, label="naive_f_pred")
 
-ax[1].plot(x, u, label="u")
-ax[1].plot(x, u_est, label="u_est")
-# ax[1].plot(x, u_pred, label="u_pred")
+ax[1].plot(Y, Tf, label="Tf")
+ax[1].plot(Y, Tf_est, label="Tf_est")
 
 plt.show()
