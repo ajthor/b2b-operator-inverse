@@ -1,5 +1,6 @@
 datasets
-numpy
-torch
-scipy
 git+https://github.com/ajthor/function-encoder.git
+matplotlib
+numpy
+scipy
+torch

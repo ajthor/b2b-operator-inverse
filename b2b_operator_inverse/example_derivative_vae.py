@@ -154,12 +154,12 @@ def autoencoder_loss(model, batch):
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     kl_loss = kl_loss.mean()
 
-    # # consistency loss
-    # consistency_loss = torch.nn.functional.mse_loss(
-    #     beta, torch.matmul(alpha_pred, operator.T)
-    # )
+    # consistency loss
+    consistency_loss = torch.nn.functional.mse_loss(
+        beta, torch.einsum("kl,bk->bl", operator, alpha_pred) # torch.matmul(alpha_pred, operator.T)
+    )
 
-    return pred_loss + kl_loss
+    return pred_loss + kl_loss + consistency_loss
 
 
 def train_autoencoder(model, dataloader, epochs, learning_rate):
@@ -171,7 +171,7 @@ def train_autoencoder(model, dataloader, epochs, learning_rate):
             for batch in dataloader:
                 optimizer.zero_grad()
                 loss = autoencoder_loss(model, batch)
-                loss.backward()
+                loss.backward(retain_graph=True)
                 optimizer.step()
                 break
 
@@ -179,7 +179,7 @@ def train_autoencoder(model, dataloader, epochs, learning_rate):
                 tqdm_bar.set_postfix_str(f"Loss {loss.item():.3e}")
 
 
-train_autoencoder(autoencoder, dataloader, epochs=80000, learning_rate=learning_rate)
+train_autoencoder(autoencoder, dataloader, epochs=10000, learning_rate=learning_rate)
 
 
 # Plot
