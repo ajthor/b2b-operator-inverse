@@ -123,7 +123,7 @@ def operator_loss_function(model, batch):
     beta = output_function_encoder.compute_coefficients(Y, Tf)
 
     beta_pred = model(alpha)
-    alpha_pred = model.inverse(beta_pred)
+    alpha_pred = model.inverse(beta)
 
     pred_loss = torch.nn.functional.mse_loss(beta_pred, beta)
     reconstruction_loss = torch.nn.functional.mse_loss(alpha_pred, alpha)
@@ -185,7 +185,7 @@ f_est = input_function_encoder(X, alpha)
 Tf_est = output_function_encoder(Y, beta)
 
 beta_pred = operator(alpha)
-alpha_pred = operator.inverse(beta)
+alpha_pred = operator.inverse(beta_pred)
 
 f_pred = input_function_encoder(X, alpha_pred)
 Tf_pred = output_function_encoder(Y, beta_pred)

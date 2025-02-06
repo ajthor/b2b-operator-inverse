@@ -8,11 +8,7 @@ from function_encoder.function_encoder import FunctionEncoder, BasisFunctions
 from function_encoder.losses import basis_normalization_loss
 from function_encoder.utils.training import fit
 
-from variational_autoencoder import (
-    CustomVariationalAutoencoder,
-    VariationalEncoder,
-    VariationalDecoder,
-)
+from variational_autoencoder import VariationalAutoencoder
 
 import tqdm
 
@@ -53,7 +49,7 @@ output_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basi
 # )
 output_function_encoder = FunctionEncoder(output_basis_functions)
 
-autoencoder = CustomVariationalAutoencoder(
+autoencoder = VariationalAutoencoder(
     alpha_size=n_basis, beta_size=n_basis, hidden_sizes=[64, 64, 64], latent_size=64
 )
 
@@ -123,18 +119,18 @@ output_function_encoder = fit(
 )
 
 
-# Train the oeprator
-ds_subset = ds.take(1000)
+# # Train the operator
+# ds_subset = ds.take(1000)
 
-source_coefficients = input_function_encoder.compute_coefficients(
-    ds_subset["X"].unsqueeze(-1).to(device), ds_subset["f"].unsqueeze(-1).to(device)
-)
+# source_coefficients = input_function_encoder.compute_coefficients(
+#     ds_subset["X"].unsqueeze(-1).to(device), ds_subset["f"].unsqueeze(-1).to(device)
+# )
 
-target_coefficients = output_function_encoder.compute_coefficients(
-    ds_subset["Y"].unsqueeze(-1).to(device), ds_subset["Tf"].unsqueeze(-1).to(device)
-)
+# target_coefficients = output_function_encoder.compute_coefficients(
+#     ds_subset["Y"].unsqueeze(-1).to(device), ds_subset["Tf"].unsqueeze(-1).to(device)
+# )
 
-operator = torch.linalg.lstsq(source_coefficients, target_coefficients).solution
+# operator = torch.linalg.lstsq(source_coefficients, target_coefficients).solution
 
 
 # Train AE
@@ -154,12 +150,15 @@ def autoencoder_loss(model, batch):
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     kl_loss = kl_loss.mean()
 
-    # consistency loss
-    consistency_loss = torch.nn.functional.mse_loss(
-        beta, torch.einsum("kl,bk->bl", operator, alpha_pred) # torch.matmul(alpha_pred, operator.T)
-    )
+    # # consistency loss
+    # consistency_loss = torch.nn.functional.mse_loss(
+    #     beta,
+    #     torch.einsum(
+    #         "kl,bk->bl", operator, alpha_pred
+    #     ),  # torch.matmul(alpha_pred, operator.T)
+    # )
 
-    return pred_loss + kl_loss + consistency_loss
+    return pred_loss + kl_loss  # + consistency_loss
 
 
 def train_autoencoder(model, dataloader, epochs, learning_rate):

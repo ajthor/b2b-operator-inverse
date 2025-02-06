@@ -4,7 +4,7 @@ import torch
 import sys
 
 
-class VariationalEncoder(torch.nn.Module):
+class Encoder(torch.nn.Module):
     def __init__(
         self,
         input_size,
@@ -13,7 +13,7 @@ class VariationalEncoder(torch.nn.Module):
         activation=torch.nn.ReLU(),
         bias=True,
     ):
-        super(VariationalEncoder, self).__init__()
+        super(Encoder, self).__init__()
 
         self.input_size = input_size
         self.hidden_sizes = hidden_sizes
@@ -42,7 +42,7 @@ class VariationalEncoder(torch.nn.Module):
         return mu, logvar
 
 
-class VariationalDecoder(torch.nn.Module):
+class Decoder(torch.nn.Module):
     def __init__(
         self,
         latent_size,
@@ -51,7 +51,7 @@ class VariationalDecoder(torch.nn.Module):
         activation=torch.nn.ReLU(),
         bias=True,
     ):
-        super(VariationalDecoder, self).__init__()
+        super(Decoder, self).__init__()
 
         self.latent_size = latent_size
         self.hidden_sizes = hidden_sizes
@@ -80,33 +80,11 @@ class VariationalDecoder(torch.nn.Module):
 
 
 class VariationalAutoencoder(torch.nn.Module):
-    def __init__(self, input_size, hidden_sizes, latent_size):
+    def __init__(self, alpha_size, beta_size, hidden_sizes, latent_size):
         super(VariationalAutoencoder, self).__init__()
 
-        self.encoder = VariationalEncoder(input_size, hidden_sizes, latent_size)
-        self.decoder = VariationalDecoder(latent_size, hidden_sizes[::-1], input_size)
-
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
-    def forward(self, x):
-        mu, logvar = self.encoder(x)
-        z = self.reparameterize(mu, logvar)
-        return self.decoder(z), mu, logvar
-
-
-class CustomVariationalAutoencoder(torch.nn.Module):
-    def __init__(self, alpha_size, beta_size, hidden_sizes, latent_size):
-        super(CustomVariationalAutoencoder, self).__init__()
-
-        self.encoder = VariationalEncoder(
-            alpha_size + beta_size, hidden_sizes, latent_size
-        )
-        self.decoder = VariationalDecoder(
-            latent_size + beta_size, hidden_sizes[::-1], alpha_size
-        )
+        self.encoder = Encoder(alpha_size + beta_size, hidden_sizes, latent_size)
+        self.decoder = Decoder(latent_size + beta_size, hidden_sizes[::-1], alpha_size)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -117,14 +95,5 @@ class CustomVariationalAutoencoder(torch.nn.Module):
     def forward(self, alpha, beta):
         mu, logvar = self.encoder(torch.cat([alpha, beta], dim=-1))
         z = self.reparameterize(mu, logvar)
-
-        if torch.isnan(z).any():
-            print("NaN in z")
-
-        if torch.isnan(mu).any():
-            print("mu is nan")
-
-        if torch.isnan(logvar).any():
-            print("logvar is nan")
 
         return self.decoder(torch.cat([z, beta], dim=-1)), mu, logvar
