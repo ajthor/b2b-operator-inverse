@@ -5,6 +5,11 @@ from torch.utils.tensorboard import SummaryWriter
 
 from datasets import load_dataset
 
+from inverse_neural_operator.model.function_encoder import (
+    FunctionEncoderFactory,
+    train as train_function_encoder,
+)
+
 import tqdm
 
 
@@ -87,11 +92,11 @@ ds = ds.with_format("torch", device=device)
 
 n_basis = args.n_basis
 
-input_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
-input_function_encoder = FunctionEncoder(input_basis_functions)
+# input_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
+# input_function_encoder = FunctionEncoder(input_basis_functions)
 
-output_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
-output_function_encoder = FunctionEncoder(output_basis_functions)
+# output_basis_functions = MultiHeadedMLP(layer_sizes=[1, 64, 1], num_heads=n_basis)
+# output_function_encoder = FunctionEncoder(output_basis_functions)
 
 
 match args.model:

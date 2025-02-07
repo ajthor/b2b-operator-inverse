@@ -8,16 +8,9 @@ import tqdm
 
 
 class FunctionEncoderFactory:
-    def __init__(self, input_size, hidden_sizes, output_size, n_basis):
-        self.input_size = input_size
-        self.hidden_sizes = hidden_sizes
-        self.output_size = output_size
-        self.n_basis = n_basis
-
-    def __call__(self):
-        layer_sizes = (
-            [self.input_size] + self.hidden_sizes + [self.output_size * self.n_basis]
-        )
+    @staticmethod
+    def create(input_size, hidden_sizes, output_size, n_basis):
+        layer_sizes = [input_size] + hidden_sizes + [output_size * n_basis]
 
         basis_functions = MultiHeadedMLP(
             layer_sizes=layer_sizes,

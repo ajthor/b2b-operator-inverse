@@ -3,14 +3,14 @@ import torch
 import tqdm
 
 
-class Scale(torch.nn.Module):
+class ScaleNetwork(torch.nn.Module):
     def __init__(
         self,
         input_size,
         condition_size,
         hidden_sizes=[128, 128],
     ):
-        super(Scale, self).__init__()
+        super(ScaleNetwork, self).__init__()
 
         self.input_size = input_size
 
@@ -34,14 +34,14 @@ class Scale(torch.nn.Module):
         return torch.tanh(x)
 
 
-class Translate(torch.nn.Module):
+class TranslateNetwork(torch.nn.Module):
     def __init__(
         self,
         input_size,
         condition_size,
         hidden_sizes=[128, 128],
     ):
-        super(Translate, self).__init__()
+        super(TranslateNetwork, self).__init__()
 
         self.input_size = input_size
 
@@ -67,22 +67,19 @@ class Translate(torch.nn.Module):
 class AffineCoupling(torch.nn.Module):
     def __init__(
         self,
-        input_size,
-        condition_size,
-        hidden_sizes=[128, 128],
+        scale_network,
+        translate_network,
     ):
         super(AffineCoupling, self).__init__()
 
-        self.input_size = input_size
-
-        self.scale = Scale(input_size, condition_size, hidden_sizes)
-        self.translate = Translate(input_size, condition_size, hidden_sizes)
+        self.scale_network = scale_network
+        self.translate_network = translate_network
 
     def forward(self, x, condition):
         x1, x2 = x.chunk(2, dim=-1)
 
-        s = self.scale(x1, condition)
-        t = self.translate(x1, condition)
+        s = self.scale_network(x1, condition)
+        t = self.translate_network(x1, condition)
 
         x2 = x2 * torch.exp(s) + t
 
@@ -91,8 +88,8 @@ class AffineCoupling(torch.nn.Module):
     def inverse(self, z, condition):
         z1, z2 = z.chunk(2, dim=-1)
 
-        s = self.scale(z1, condition)
-        t = self.translate(z1, condition)
+        s = self.scale_network(z1, condition)
+        t = self.translate_network(z1, condition)
 
         z2 = (z2 - t) * torch.exp(-s)
 
@@ -102,20 +99,11 @@ class AffineCoupling(torch.nn.Module):
 class InvertibleNetwork(torch.nn.Module):
     def __init__(
         self,
-        input_size,
-        condition_size,
-        n_coupling_layers=3,
+        coupling_layers,
     ):
         super(InvertibleNetwork, self).__init__()
 
-        self.input_size = input_size
-
-        self.layers = torch.nn.ModuleList(
-            [
-                AffineCoupling(input_size, condition_size)
-                for _ in range(n_coupling_layers)
-            ]
-        )
+        self.layers = coupling_layers
 
     def forward(self, x, condition):
         log_det = 0
@@ -135,8 +123,33 @@ class InvertibleNetwork(torch.nn.Module):
 
 
 class InvertibleNetworkFactory:
-    def __init__(self):
-        pass
+    def __init__(self, input_size, condition_size, hidden_sizes, n_coupling_layers):
+        self.input_size = input_size
+        self.condition_size = condition_size
+        self.hidden_sizes = hidden_sizes
+        self.n_coupling_layers = n_coupling_layers
+
+    def __call__(self):
+
+        coupling_layers = torch.nn.ModuleList(
+            [
+                AffineCoupling(
+                    ScaleNetwork(
+                        self.input_size,
+                        self.condition_size,
+                        self.hidden_sizes,
+                    ),
+                    TranslateNetwork(
+                        self.input_size,
+                        self.condition_size,
+                        self.hidden_sizes,
+                    ),
+                )
+                for _ in range(self.n_coupling_layers)
+            ]
+        )
+
+        return InvertibleNetwork(coupling_layers)
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):

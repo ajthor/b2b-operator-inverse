@@ -81,15 +81,13 @@ class Decoder(torch.nn.Module):
 class VariationalAutoencoder(torch.nn.Module):
     def __init__(
         self,
-        alpha_size,
-        beta_size,
-        hidden_sizes: list[int] = [128, 128],
-        latent_size: int = 128,
+        encoder: Encoder,
+        decoder: Decoder,
     ):
         super(VariationalAutoencoder, self).__init__()
 
-        self.encoder = Encoder(alpha_size + beta_size, hidden_sizes, latent_size)
-        self.decoder = Decoder(alpha_size, hidden_sizes[::-1], latent_size + beta_size)
+        self.encoder = encoder
+        self.decoder = decoder
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -102,6 +100,35 @@ class VariationalAutoencoder(torch.nn.Module):
         z = self.reparameterize(mu, logvar)
 
         return self.decoder(torch.cat([z, beta], dim=-1)), mu, logvar
+
+
+class VariationalAutoencoderFactory:
+    def __init__(
+        self,
+        alpha_size: int,
+        beta_size: int,
+        hidden_sizes: list[int] = [128, 128],
+        latent_size: int = 128,
+    ):
+        self.alpha_size = alpha_size
+        self.beta_size = beta_size
+        self.hidden_sizes = hidden_sizes
+        self.latent_size = latent_size
+
+    def __call__(self):
+        encoder = Encoder(
+            input_size=self.alpha_size + self.beta_size,
+            hidden_sizes=self.hidden_sizes,
+            latent_size=self.latent_size,
+        )
+
+        decoder = Decoder(
+            output_size=self.alpha_size,
+            hidden_sizes=self.hidden_sizes[::-1],
+            latent_size=self.latent_size + self.beta_size,
+        )
+
+        return VariationalAutoencoder(encoder, decoder)
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
