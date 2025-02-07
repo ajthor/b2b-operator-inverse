@@ -5,6 +5,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from datasets import load_dataset
 
+import tqdm
+
 
 # Parse command line args
 
@@ -12,9 +14,13 @@ parser = argparse.ArgumentParser(
     description="Train a model to predict the inverse of a b2b operator"
 )
 # Dataset args
-parser.add_argument("--dataset", type=str, help="Dataset to train on", required=True)
+parser.add_argument(
+    "--dataset", type=str, help="Dataset to train on", default="derivative_polynomial"
+)
 # Model args
-parser.add_argument("--model", type=str, help="Model to train", required=True)
+parser.add_argument(
+    "--model", type=str, help="Model to train", default="variational_autoencoder"
+)
 # Function encoder args
 parser.add_argument("--n_basis", type=int, help="Number of basis functions", default=8)
 parser.add_argument(
@@ -92,7 +98,7 @@ match args.model:
     case "autoencoder":
         from inverse_neural_operator.model.autoencoder import (
             Autoencoder,
-            train,
+            loss_function,
         )
 
         model = Autoencoder(
@@ -104,11 +110,12 @@ match args.model:
     case "variational_autoencoder":
         from inverse_neural_operator.model.variational_autoencoder import (
             VariationalAutoencoder,
-            train,
+            loss_function,
         )
 
         model = VariationalAutoencoder(
-            input_size=n_basis,
+            alpha_size=n_basis,
+            beta_size=n_basis,
             hidden_sizes=[64],
             latent_size=n_basis,
         )
@@ -116,11 +123,13 @@ match args.model:
     case "invertible_network":
         from inverse_neural_operator.model.invertible_network import (
             InvertibleNetwork,
-            train,
+            loss_function,
         )
 
         model = InvertibleNetwork(
             input_size=n_basis,
+            condition_size=n_basis,
+            hidden_sizes=[64],
         )
 
     case _:
@@ -128,10 +137,3 @@ match args.model:
 
 
 # Train model
-
-train(
-    model=model,
-    dataloader=dataloader,
-    epochs=args.epochs,
-    learning_rate=args.learning_rate,
-)

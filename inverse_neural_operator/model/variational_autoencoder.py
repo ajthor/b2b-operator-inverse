@@ -1,5 +1,7 @@
 import torch
 
+import tqdm
+
 
 class Encoder(torch.nn.Module):
     def __init__(
@@ -100,3 +102,56 @@ class VariationalAutoencoder(torch.nn.Module):
         z = self.reparameterize(mu, logvar)
 
         return self.decoder(torch.cat([z, beta], dim=-1)), mu, logvar
+
+
+def loss_function(model, batch, input_function_encoder, output_function_encoder):
+
+    alpha = input_function_encoder.compute_coefficients(X, f)
+    beta = output_function_encoder.compute_coefficients(Y, Tf)
+
+    alpha_pred, mu, logvar = model(alpha, beta)
+
+    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
+    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    kl_loss = kl_loss.mean()
+
+    # # consistency loss
+    # consistency_loss = torch.nn.functional.mse_loss(
+    #     beta,
+    #     torch.einsum(
+    #         "kl,bk->bl", operator, alpha_pred
+    #     ),  # torch.matmul(alpha_pred, operator.T)
+    # )
+
+    return pred_loss + kl_loss  # + consistency_loss
+
+
+def train(
+    model,
+    dataloader,
+    optimizer,
+    input_function_encoder,
+    output_function_encoder,
+    n_epochs=100,
+):
+    model.train()
+
+    with tqdm.tqdm(range(n_epochs)) as tqdm_bar:
+        for epoch in tqdm_bar:
+            for batch in dataloader:
+                optimizer.zero_grad()
+
+                loss = loss_function(
+                    model,
+                    batch,
+                    input_function_encoder,
+                    output_function_encoder,
+                )
+                loss.backward()
+
+                optimizer.step()
+
+                break
+
+            if epoch % 10 == 0:
+                tqdm_bar.set_postfix_str(f"loss {loss.item():.4e}")

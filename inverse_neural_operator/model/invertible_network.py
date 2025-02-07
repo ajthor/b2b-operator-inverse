@@ -1,6 +1,6 @@
 import torch
 
-# Invertible neural network
+import tqdm
 
 
 class Scale(torch.nn.Module):
@@ -68,13 +68,15 @@ class AffineCoupling(torch.nn.Module):
     def __init__(
         self,
         input_size,
+        condition_size,
+        hidden_sizes=[128, 128],
     ):
         super(AffineCoupling, self).__init__()
 
         self.input_size = input_size
 
-        self.scale = Scale(input_size)
-        self.translate = Translate(input_size)
+        self.scale = Scale(input_size, condition_size, hidden_sizes)
+        self.translate = Translate(input_size, condition_size, hidden_sizes)
 
     def forward(self, x, condition):
         x1, x2 = x.chunk(2, dim=-1)
@@ -130,3 +132,56 @@ class InvertibleNetwork(torch.nn.Module):
             z = layer.inverse(z, condition)
 
         return z
+
+
+class InvertibleNetworkFactory:
+    def __init__(self):
+        pass
+
+
+def loss_function(model, batch, input_function_encoder, output_function_encoder):
+
+    alpha = input_function_encoder.compute_coefficients(X, f)
+    beta = output_function_encoder.compute_coefficients(Y, Tf)
+
+    z, log_det = model(alpha, beta)
+    alpha_pred = model.inverse(z, beta)
+
+    # reconstruction loss
+    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
+
+    # regularization loss
+    regularization_loss = torch.mean(log_det)
+
+    return pred_loss + regularization_loss
+
+
+def train(
+    model,
+    dataloader,
+    optimizer,
+    input_function_encoder,
+    output_function_encoder,
+    n_epochs=100,
+):
+    model.train()
+
+    with tqdm.tqdm(range(n_epochs)) as tqdm_bar:
+        for epoch in tqdm_bar:
+            for batch in dataloader:
+                optimizer.zero_grad()
+
+                loss = loss_function(
+                    model,
+                    batch,
+                    input_function_encoder,
+                    output_function_encoder,
+                )
+                loss.backward()
+
+                optimizer.step()
+
+                break
+
+            if epoch % 10 == 0:
+                tqdm_bar.set_postfix_str(f"loss {loss.item():.4e}")
