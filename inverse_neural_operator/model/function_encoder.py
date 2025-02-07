@@ -9,14 +9,22 @@ import tqdm
 
 class FunctionEncoderFactory:
     @staticmethod
-    def create(input_size, hidden_sizes, output_size, n_basis):
-        layer_sizes = [input_size] + hidden_sizes + [output_size * n_basis]
+    def create(
+        input_size,
+        hidden_sizes,
+        output_size,
+        n_basis,
+        activation=torch.nn.ReLU(),
+    ):
+        layer_sizes = [input_size] + hidden_sizes + [output_size]
 
         basis_functions = MultiHeadedMLP(
             layer_sizes=layer_sizes,
+            num_heads=n_basis,
+            activation=activation,
         )
 
-        return FunctionEncoder(basis_functions)
+        return FunctionEncoder(basis_functions=basis_functions)
 
 
 def loss_function(model, batch):
@@ -47,7 +55,10 @@ def train(
             for batch in dataloader:
                 optimizer.zero_grad()
 
-                loss = loss_function(model, batch)
+                loss = loss_function(
+                    model=model,
+                    batch=batch,
+                )
                 loss.backward()
 
                 optimizer.step()

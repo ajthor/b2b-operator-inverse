@@ -103,35 +103,33 @@ class VariationalAutoencoder(torch.nn.Module):
 
 
 class VariationalAutoencoderFactory:
-    def __init__(
-        self,
+    @staticmethod
+    def create(
         alpha_size: int,
         beta_size: int,
         hidden_sizes: list[int] = [128, 128],
         latent_size: int = 128,
     ):
-        self.alpha_size = alpha_size
-        self.beta_size = beta_size
-        self.hidden_sizes = hidden_sizes
-        self.latent_size = latent_size
-
-    def __call__(self):
         encoder = Encoder(
-            input_size=self.alpha_size + self.beta_size,
-            hidden_sizes=self.hidden_sizes,
-            latent_size=self.latent_size,
+            input_size=alpha_size + beta_size,
+            hidden_sizes=hidden_sizes,
+            latent_size=latent_size,
         )
 
         decoder = Decoder(
-            output_size=self.alpha_size,
-            hidden_sizes=self.hidden_sizes[::-1],
-            latent_size=self.latent_size + self.beta_size,
+            output_size=alpha_size,
+            hidden_sizes=hidden_sizes[::-1],
+            latent_size=latent_size + beta_size,
         )
 
-        return VariationalAutoencoder(encoder, decoder)
+        return VariationalAutoencoder(encoder=encoder, decoder=decoder)
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
+    X = batch["X"]
+    f = batch["f"]
+    Y = batch["Y"]
+    Tf = batch["Tf"]
 
     alpha = input_function_encoder.compute_coefficients(X, f)
     beta = output_function_encoder.compute_coefficients(Y, Tf)
@@ -160,6 +158,7 @@ def train(
     input_function_encoder,
     output_function_encoder,
     n_epochs=100,
+    summary_writer=None,
 ):
     model.train()
 
@@ -169,10 +168,10 @@ def train(
                 optimizer.zero_grad()
 
                 loss = loss_function(
-                    model,
-                    batch,
-                    input_function_encoder,
-                    output_function_encoder,
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
                 )
                 loss.backward()
 

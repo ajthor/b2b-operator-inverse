@@ -9,6 +9,7 @@ class ScaleNetwork(torch.nn.Module):
         input_size,
         condition_size,
         hidden_sizes=[128, 128],
+        activation=torch.nn.ReLU(),
     ):
         super(ScaleNetwork, self).__init__()
 
@@ -23,11 +24,13 @@ class ScaleNetwork(torch.nn.Module):
                 torch.nn.Linear(sizes[i], sizes[i + 1]),
             )
 
+        self.activation = activation
+
     def forward(self, x, condition):
         x = torch.cat([x, condition], dim=1)
 
         for layer in self.scale[:-1]:
-            x = torch.nn.ReLU(layer(x))
+            x = self.activation(layer(x))
 
         x = self.scale[-1](x)
 
@@ -40,6 +43,7 @@ class TranslateNetwork(torch.nn.Module):
         input_size,
         condition_size,
         hidden_sizes=[128, 128],
+        activation=torch.nn.ReLU(),
     ):
         super(TranslateNetwork, self).__init__()
 
@@ -53,11 +57,13 @@ class TranslateNetwork(torch.nn.Module):
                 torch.nn.Linear(sizes[i], sizes[i + 1]),
             )
 
+        self.activation = activation
+
     def forward(self, x, condition):
         x = torch.cat([x, condition], dim=1)
 
         for layer in self.translate[:-1]:
-            x = torch.nn.ReLU(layer(x))
+            x = self.activation(layer(x))
 
         x = self.translate[-1](x)
 
@@ -123,36 +129,42 @@ class InvertibleNetwork(torch.nn.Module):
 
 
 class InvertibleNetworkFactory:
-    def __init__(self, input_size, condition_size, hidden_sizes, n_coupling_layers):
-        self.input_size = input_size
-        self.condition_size = condition_size
-        self.hidden_sizes = hidden_sizes
-        self.n_coupling_layers = n_coupling_layers
-
-    def __call__(self):
-
+    @staticmethod
+    def create(
+        input_size,
+        condition_size,
+        hidden_sizes,
+        n_coupling_layers,
+        activation=torch.nn.ReLU(),
+    ):
         coupling_layers = torch.nn.ModuleList(
             [
                 AffineCoupling(
                     ScaleNetwork(
-                        self.input_size,
-                        self.condition_size,
-                        self.hidden_sizes,
+                        input_size=input_size,
+                        condition_size=condition_size,
+                        hidden_sizes=hidden_sizes,
+                        activation=activation,
                     ),
                     TranslateNetwork(
-                        self.input_size,
-                        self.condition_size,
-                        self.hidden_sizes,
+                        input_size=input_size,
+                        condition_size=condition_size,
+                        hidden_sizes=hidden_sizes,
+                        activation=activation,
                     ),
                 )
-                for _ in range(self.n_coupling_layers)
+                for _ in range(n_coupling_layers)
             ]
         )
 
-        return InvertibleNetwork(coupling_layers)
+        return InvertibleNetwork(coupling_layers=coupling_layers)
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
+    X = batch["X"]
+    f = batch["f"]
+    Y = batch["Y"]
+    Tf = batch["Tf"]
 
     alpha = input_function_encoder.compute_coefficients(X, f)
     beta = output_function_encoder.compute_coefficients(Y, Tf)
@@ -176,6 +188,7 @@ def train(
     input_function_encoder,
     output_function_encoder,
     n_epochs=100,
+    summary_writer=None,
 ):
     model.train()
 
@@ -185,10 +198,10 @@ def train(
                 optimizer.zero_grad()
 
                 loss = loss_function(
-                    model,
-                    batch,
-                    input_function_encoder,
-                    output_function_encoder,
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
                 )
                 loss.backward()
 
