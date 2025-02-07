@@ -1,15 +1,12 @@
-# Interface of a variational autoencoder. Torch module with an init and forward.
-
 import torch
-import sys
 
 
 class Encoder(torch.nn.Module):
     def __init__(
         self,
-        input_size,
-        hidden_sizes,
-        latent_size,
+        input_size: int,
+        hidden_sizes: list[int] = [128, 128],
+        latent_size: int = 128,
         activation=torch.nn.ReLU(),
         bias=True,
     ):
@@ -45,9 +42,9 @@ class Encoder(torch.nn.Module):
 class Decoder(torch.nn.Module):
     def __init__(
         self,
-        latent_size,
-        hidden_sizes,
-        output_size,
+        output_size: int,
+        hidden_sizes: list[int] = [128, 128],
+        latent_size: int = 128,
         activation=torch.nn.ReLU(),
         bias=True,
     ):
@@ -80,11 +77,17 @@ class Decoder(torch.nn.Module):
 
 
 class VariationalAutoencoder(torch.nn.Module):
-    def __init__(self, alpha_size, beta_size, hidden_sizes, latent_size):
+    def __init__(
+        self,
+        alpha_size,
+        beta_size,
+        hidden_sizes: list[int] = [128, 128],
+        latent_size: int = 128,
+    ):
         super(VariationalAutoencoder, self).__init__()
 
         self.encoder = Encoder(alpha_size + beta_size, hidden_sizes, latent_size)
-        self.decoder = Decoder(latent_size + beta_size, hidden_sizes[::-1], alpha_size)
+        self.decoder = Decoder(alpha_size, hidden_sizes[::-1], latent_size + beta_size)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)

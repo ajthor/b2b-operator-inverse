@@ -8,7 +8,7 @@ from function_encoder.function_encoder import FunctionEncoder, BasisFunctions
 from function_encoder.losses import basis_normalization_loss
 from function_encoder.utils.training import fit
 
-from variational_autoencoder import (
+from b2b_operator_inverse.model.variational_autoencoder import (
     VariationalAutoencoder,
     VariationalEncoder,
     VariationalDecoder,
