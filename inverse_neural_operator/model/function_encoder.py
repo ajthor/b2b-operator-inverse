@@ -5,6 +5,7 @@ from function_encoder.function_encoder import FunctionEncoder
 from function_encoder.losses import basis_normalization_loss
 
 import tqdm
+from torch.utils.tensorboard import SummaryWriter
 
 
 class FunctionEncoderFactory:
@@ -44,26 +45,34 @@ def loss_function(model, batch):
 
 def train(
     model,
-    dataloader,
+    train_dataloader,
+    test_dataloader,
     optimizer,
-    n_epochs=100,
+    n_epochs,
+    summary_writer,
+    model_name,
 ):
-    model.train()
 
-    with tqdm.tqdm(range(n_epochs)) as tqdm_bar:
-        for epoch in tqdm_bar:
-            for batch in dataloader:
-                optimizer.zero_grad()
+    tqdm_bar = tqdm.tqdm(range(n_epochs))
+    for epoch in range(n_epochs):
+        model.train()
+        batch = next(iter(train_dataloader))
+        optimizer.zero_grad()
+        loss = loss_function(model=model, batch=batch)
+        loss.backward()
+        optimizer.step()
 
-                loss = loss_function(
-                    model=model,
-                    batch=batch,
-                )
-                loss.backward()
+        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
-                optimizer.step()
+        model.eval()
+        total_test_loss = 0.0
+        with torch.no_grad():
+            for batch in test_dataloader:
+                loss = loss_function(model=model, batch=batch)
+                total_test_loss += loss.item()
 
-                break
+        avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
-            if epoch % 10 == 0:
-                tqdm_bar.set_postfix_str(f"loss {loss.item():.4e}")
+        tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
+        tqdm_bar.update(1)
