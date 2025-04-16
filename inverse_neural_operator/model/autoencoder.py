@@ -1,14 +1,13 @@
 import torch
-
-from function_encoder.model.mlp import MLP
+import tqdm
 
 
 class Encoder(torch.nn.Module):
     def __init__(
         self,
-        input_size,
-        hidden_sizes,
-        latent_size,
+        input_size: int,
+        hidden_sizes: list[int] = [128, 128],
+        latent_size: int = 128,
         activation=torch.nn.ReLU(),
         bias=True,
     ):
@@ -22,27 +21,27 @@ class Encoder(torch.nn.Module):
 
         self.layers = torch.nn.ModuleList()
 
-        sizes = [input_size] + hidden_sizes + [latent_size]
+        sizes = [input_size] + hidden_sizes
         for i in range(len(sizes) - 1):
             self.layers.append(
                 torch.nn.Linear(sizes[i], sizes[i + 1], bias=bias),
             )
 
+        self.latent = torch.nn.Linear(hidden_sizes[-1], latent_size, bias=bias)
+
     def forward(self, x):
-        for layer in self.layers[:-1]:
+        for layer in self.layers:
             x = self.activation(layer(x))
 
-        x = self.layers[-1](x)
-
-        return x
+        return self.latent(x)
 
 
 class Decoder(torch.nn.Module):
     def __init__(
         self,
-        latent_size,
-        hidden_sizes,
-        output_size,
+        output_size: int,
+        hidden_sizes: list[int] = [128, 128],
+        latent_size: int = 128,
         activation=torch.nn.ReLU(),
         bias=True,
     ):
@@ -69,29 +68,117 @@ class Decoder(torch.nn.Module):
             x = self.activation(layer(x))
 
         x = self.layers[-1](x)
-        # x = self.output_activation(x)
+        x = self.output_activation(x)
 
         return x
 
 
-class Autoencoder(torch.nn.Module):
-    def __init__(self, input_size, hidden_sizes, latent_size):
-        super(Autoencoder, self).__init__()
+class ConditionalAutoencoder(torch.nn.Module):
+    def __init__(
+        self,
+        encoder: Encoder,
+        decoder: Decoder,
+    ):
+        super(ConditionalAutoencoder, self).__init__()
 
-        # self.encoder = Encoder(input_size, hidden_sizes, latent_size)
-        # self.decoder = Decoder(latent_size, hidden_sizes[::-1], input_size)
+        self.encoder = encoder
+        self.decoder = decoder
 
-        self.encoder = MLP(
-            layer_sizes=[input_size] + hidden_sizes + [latent_size],
-            activation=torch.nn.ReLU(),
-            bias=True,
+    def forward(self, alpha, beta):
+        z = self.encoder(torch.cat([alpha, beta], dim=-1))
+        return self.decoder(torch.cat([z, beta], dim=-1))
+
+
+class ConditionalAutoencoderFactory:
+    @staticmethod
+    def create(
+        alpha_size: int,
+        beta_size: int,
+        hidden_sizes: list[int] = [128, 128],
+        latent_size: int = 128,
+    ):
+        encoder = Encoder(
+            input_size=alpha_size + beta_size,
+            hidden_sizes=hidden_sizes,
+            latent_size=latent_size,
         )
-        self.decoder = MLP(
-            layer_sizes=[latent_size] + hidden_sizes[::-1] + [input_size],
-            activation=torch.nn.ReLU(),
-            bias=True,
+
+        decoder = Decoder(
+            output_size=alpha_size,
+            hidden_sizes=hidden_sizes[::-1],
+            latent_size=latent_size + beta_size,
         )
 
-    def forward(self, x):
-        z = self.encoder(x)
-        return self.decoder(z)
+        return ConditionalAutoencoder(encoder=encoder, decoder=decoder)
+
+
+def loss_function(model, batch, input_function_encoder, output_function_encoder):
+    X = batch["X"]
+    f = batch["f"]
+    Y = batch["Y"]
+    Tf = batch["Tf"]
+
+    alpha = input_function_encoder.compute_coefficients(X, f)
+    beta = output_function_encoder.compute_coefficients(Y, Tf)
+
+    alpha_pred = model(alpha, beta)
+
+    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
+
+    # # consistency loss (optional, commented out as in the CVAE implementation)
+    # consistency_loss = torch.nn.functional.mse_loss(
+    #     beta,
+    #     torch.einsum(
+    #         "kl,bk->bl", operator, alpha_pred
+    #     ),  # torch.matmul(alpha_pred, operator.T)
+    # )
+
+    return pred_loss  # + consistency_loss
+
+
+def train(
+    model,
+    train_dataloader,
+    test_dataloader,
+    optimizer,
+    input_function_encoder,
+    output_function_encoder,
+    n_epochs,
+    summary_writer,
+    model_name,
+):
+
+    tqdm_bar = tqdm.tqdm(range(n_epochs))
+    for epoch in range(n_epochs):
+
+        model.train()
+        batch = next(iter(train_dataloader))
+        optimizer.zero_grad()
+        loss = loss_function(
+            model=model,
+            batch=batch,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+        )
+        loss.backward()
+        optimizer.step()
+
+        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
+
+        model.eval()
+        total_test_loss = 0.0
+        with torch.no_grad():
+            for batch in test_dataloader:
+                loss = loss_function(
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                )
+                total_test_loss += loss.item()
+
+        avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+
+        tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
+        tqdm_bar.update(1)
