@@ -21,6 +21,12 @@ class LinearB2BOperator(torch.nn.Module):
         return torch.linalg.solve(self.linear.weight, beta)
 
 
+class LinearB2BOperatorFactory:
+    @staticmethod
+    def create(input_dim, output_dim):
+        return LinearB2BOperator(input_dim=input_dim, output_dim=output_dim)
+
+
 def train(
     model,
     train_dataloader,

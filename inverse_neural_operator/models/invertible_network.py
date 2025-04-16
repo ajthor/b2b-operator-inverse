@@ -120,7 +120,10 @@ class ConditionalInvertibleNetwork(torch.nn.Module):
 
         return alpha, log_det
 
-    def inverse(self, z, beta):
+    def inverse(self, beta, z=None):
+        if z is None:
+            # Sample z from the prior
+            z = torch.randn(beta.size(0), beta.size(1), device=beta.device)
 
         for layer in reversed(self.layers):
             z = layer.inverse(z, beta)
@@ -170,7 +173,7 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     beta = output_function_encoder.compute_coefficients(Y, s)
 
     z, log_det = model(alpha, beta)
-    alpha_pred = model.inverse(z, beta)
+    alpha_pred = model.inverse(beta, z)
 
     # reconstruction loss
     pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")

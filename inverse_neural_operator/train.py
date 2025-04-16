@@ -31,7 +31,7 @@ parser.add_argument("--output_fe_hidden_sizes", type=int, nargs="+", default=[64
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=5)
-parser.add_argument("--epochs", type=int, default=10000)
+parser.add_argument("--epochs", type=int, default=1000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 
 parser.add_argument("--input_fe_epochs", type=int, default=None)
@@ -116,19 +116,31 @@ output_fe_output_size = output_info["output_size"]
 
 match params.model:
 
-    # case "autoencoder":
-    #     from models.autoencoder import (
-    #         ConditionalAutoencoderFactory,
-    #         train as train_model,
-    #     )
+    case "b2b_linear":
+        from models.b2b_operator_linear import (
+            LinearB2BOperatorFactory,
+            train as train_model,
+        )
 
-    #     model = ConditionalAutoencoderFactory.create(
-    #         alpha_size=params.input_fe_n_basis,
-    #         beta_size=params.output_fe_n_basis,
-    #         hidden_sizes=[64],
-    #         latent_size=params.output_fe_n_basis,
-    #     )
-    #     optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        model = LinearB2BOperatorFactory.create(
+            input_size=params.input_fe_n_basis,
+            output_size=params.output_fe_n_basis,
+            hidden_sizes=params.hidden_sizes,
+        )
+        optimizer = None
+
+    case "b2b_nonlinear":
+        from models.b2b_operator_nonlinear import (
+            NonlinearB2BOperatorFactory,
+            train as train_model,
+        )
+
+        model = NonlinearB2BOperatorFactory.create(
+            input_size=params.input_fe_n_basis,
+            output_size=params.output_fe_n_basis,
+            hidden_sizes=params.hidden_sizes,
+        )
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "variational_autoencoder":
         from models.variational_autoencoder import (

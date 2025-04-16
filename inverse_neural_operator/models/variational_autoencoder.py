@@ -110,7 +110,10 @@ class ConditionalVariationalAutoencoder(torch.nn.Module):
 
         return z, mu, logvar
 
-    def inverse(self, z, beta):
+    def inverse(self, beta, z=None):
+        if z is None:
+            # Sample z from the prior
+            z = self.sample_prior(beta.size(0))
         return self.decoder(torch.cat([z, beta], dim=-1))
 
 
@@ -155,7 +158,7 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     beta = output_function_encoder.compute_coefficients(Y, s)
 
     z, mu, logvar = model(alpha, beta)
-    alpha_pred = model.inverse(z, beta)
+    alpha_pred = model.inverse(beta, z)
 
     pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
