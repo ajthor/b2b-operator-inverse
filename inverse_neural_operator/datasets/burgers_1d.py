@@ -5,7 +5,7 @@ from datasets import load_dataset
 from inverse_neural_operator.datasets.process_data import process_dataset
 
 
-def load_dataset(args, device):
+def load_dataset(params, device):
 
     train_ds = load_dataset("ajthor/burgers_1d", split="train")
     test_ds = load_dataset("ajthor/burgers_1d", split="test")
@@ -13,7 +13,7 @@ def load_dataset(args, device):
     datasets_and_info = process_dataset(
         train_ds,
         test_ds,
-        args,
+        params,
         device=device,
     )
 

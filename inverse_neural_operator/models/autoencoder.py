@@ -146,6 +146,8 @@ def train(
     n_epochs,
     summary_writer,
     model_name,
+    params,
+    device,
 ):
 
     tqdm_bar = tqdm.tqdm(range(n_epochs))

@@ -83,23 +83,35 @@ class ConditionalVariationalAutoencoder(torch.nn.Module):
         self,
         encoder: Encoder,
         decoder: Decoder,
+        latent_size: int = 128,
+        device=None,
     ):
         super(ConditionalVariationalAutoencoder, self).__init__()
 
         self.encoder = encoder
         self.decoder = decoder
 
+        self.latent_size = latent_size
+        self.device = device
+
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
+        eps = torch.randn_like(std, device=self.device)
 
         return mu + eps * std
+
+    def sample_prior(self, batch_size):
+        z = torch.randn(batch_size, self.latent_size, device=self.device)
+        return z
 
     def forward(self, alpha, beta):
         mu, logvar = self.encoder(torch.cat([alpha, beta], dim=-1))
         z = self.reparameterize(mu, logvar)
 
-        return self.decoder(torch.cat([z, beta], dim=-1)), mu, logvar
+        return z, mu, logvar
+
+    def inverse(self, z, beta):
+        return self.decoder(torch.cat([z, beta], dim=-1))
 
 
 class ConditionalVariationalAutoencoderFactory:
@@ -109,20 +121,28 @@ class ConditionalVariationalAutoencoderFactory:
         beta_size: int,
         hidden_sizes: list[int] = [128, 128],
         latent_size: int = 128,
+        device=None,
     ):
         encoder = Encoder(
             input_size=alpha_size + beta_size,
             hidden_sizes=hidden_sizes,
             latent_size=latent_size,
+            device=device,
         )
 
         decoder = Decoder(
             output_size=alpha_size,
             hidden_sizes=hidden_sizes[::-1],
             latent_size=latent_size + beta_size,
+            device=device,
         )
 
-        return ConditionalVariationalAutoencoder(encoder=encoder, decoder=decoder)
+        return ConditionalVariationalAutoencoder(
+            encoder=encoder,
+            decoder=decoder,
+            latent_size=latent_size,
+            device=device,
+        )
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
@@ -134,7 +154,8 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     alpha = input_function_encoder.compute_coefficients(X, u)
     beta = output_function_encoder.compute_coefficients(Y, s)
 
-    alpha_pred, mu, logvar = model(alpha, beta)
+    z, mu, logvar = model(alpha, beta)
+    alpha_pred = model.inverse(z, beta)
 
     pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
@@ -161,6 +182,8 @@ def train(
     n_epochs,
     summary_writer,
     model_name,
+    params,
+    device,
 ):
 
     tqdm_bar = tqdm.tqdm(range(n_epochs))
@@ -180,20 +203,35 @@ def train(
 
         summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
-        model.eval()
-        total_test_loss = 0.0
-        with torch.no_grad():
-            for batch in test_dataloader:
-                loss = loss_function(
-                    model=model,
-                    batch=batch,
-                    input_function_encoder=input_function_encoder,
-                    output_function_encoder=output_function_encoder,
-                )
-                total_test_loss += loss.item()
-
-        avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+        avg_test_loss = evaluate_model(
+            model=model,
+            test_dataloader=test_dataloader,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+        )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
+
+
+def evaluate_model(
+    model,
+    test_dataloader,
+    input_function_encoder,
+    output_function_encoder,
+):
+    model.eval()
+    total_test_loss = 0.0
+    with torch.no_grad():
+        for batch in test_dataloader:
+            loss = loss_function(
+                model=model,
+                batch=batch,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+            )
+            total_test_loss += loss.item()
+
+    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+    return avg_test_loss

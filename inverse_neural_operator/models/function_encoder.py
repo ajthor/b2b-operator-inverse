@@ -51,6 +51,8 @@ def train(
     n_epochs,
     summary_writer,
     model_name,
+    params,
+    device,
 ):
 
     tqdm_bar = tqdm.tqdm(range(n_epochs))
@@ -64,15 +66,23 @@ def train(
 
         summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
-        model.eval()
-        total_test_loss = 0.0
-        with torch.no_grad():
-            for batch in test_dataloader:
-                loss = loss_function(model=model, batch=batch)
-                total_test_loss += loss.item()
-
-        avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+        avg_test_loss = evaluate_model(model=model, test_dataloader=test_dataloader)
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
+
+
+def evaluate_model(
+    model,
+    test_dataloader,
+):
+    model.eval()
+    total_test_loss = 0.0
+    with torch.no_grad():
+        for batch in test_dataloader:
+            loss = loss_function(model=model, batch=batch)
+            total_test_loss += loss.item()
+
+    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+    return avg_test_loss

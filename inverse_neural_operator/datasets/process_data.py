@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 
 
-def process_input_function_encoder_dataset(train_ds, test_ds, args, device):
+def process_input_function_encoder_dataset(train_ds, test_ds, params, device):
 
     def process_ds(point):
         pt_len = len(point["X"])
@@ -34,12 +34,12 @@ def process_input_function_encoder_dataset(train_ds, test_ds, args, device):
     input_fe_test_ds = input_fe_test_ds.with_format("torch", device=device)
     input_fe_train_dataloader = DataLoader(
         input_fe_train_ds,
-        batch_size=args.batch_size,
+        batch_size=params.batch_size,
         shuffle=True,
     )
     input_fe_test_dataloader = DataLoader(
         input_fe_test_ds,
-        batch_size=args.batch_size,
+        batch_size=params.batch_size,
         shuffle=True,
     )
 
@@ -55,7 +55,7 @@ def process_input_function_encoder_dataset(train_ds, test_ds, args, device):
     )
 
 
-def process_output_function_encoder_dataset(train_ds, test_ds, args, device):
+def process_output_function_encoder_dataset(train_ds, test_ds, params, device):
 
     def process_ds(point):
         pt_len = len(point["Y"])
@@ -86,12 +86,12 @@ def process_output_function_encoder_dataset(train_ds, test_ds, args, device):
     output_fe_test_ds = output_fe_test_ds.with_format("torch", device=device)
     output_fe_train_dataloader = DataLoader(
         output_fe_train_ds,
-        batch_size=args.batch_size,
+        batch_size=params.batch_size,
         shuffle=True,
     )
     output_fe_test_dataloader = DataLoader(
         output_fe_test_ds,
-        batch_size=args.batch_size,
+        batch_size=params.batch_size,
         shuffle=True,
     )
 
@@ -103,7 +103,7 @@ def process_output_function_encoder_dataset(train_ds, test_ds, args, device):
     return output_fe_train_dataloader, output_fe_test_dataloader, output_info
 
 
-def process_model_dataset(train_ds, test_ds, args, device):
+def process_model_dataset(train_ds, test_ds, params, device):
 
     def process_ds(point):
         if point["X"].dim() == 1:
@@ -124,12 +124,12 @@ def process_model_dataset(train_ds, test_ds, args, device):
     model_test_ds = model_test_ds.with_format("torch", device=device)
     model_train_dataloader = DataLoader(
         model_train_ds,
-        batch_size=args.batch_size,
+        batch_size=params.batch_size,
         shuffle=True,
     )
     model_test_dataloader = DataLoader(
         model_test_ds,
-        batch_size=args.batch_size,
+        batch_size=params.batch_size,
         shuffle=True,
     )
 
@@ -141,24 +141,45 @@ def process_model_dataset(train_ds, test_ds, args, device):
     return model_train_dataloader, model_test_dataloader, model_info
 
 
-def process_dataset(train_ds, test_ds, args, device):
+def process_dataset(train_ds, test_ds, params, device):
 
     train_ds = train_ds.with_format("torch", device=device)
     test_ds = test_ds.with_format("torch", device=device)
 
     # Process the datasets to train the input function encoder
-    input_fe_train_dataloader, input_fe_test_dataloader, input_info = (
-        process_input_function_encoder_dataset(train_ds, test_ds, args, device=device)
+    (
+        input_fe_train_dataloader,
+        input_fe_test_dataloader,
+        input_info,
+    ) = process_input_function_encoder_dataset(
+        train_ds,
+        test_ds,
+        params,
+        device=device,
     )
 
     # Process the datasets to train the output function encoder
-    output_fe_train_dataloader, output_fe_test_dataloader, output_info = (
-        process_output_function_encoder_dataset(train_ds, test_ds, args, device=device)
+    (
+        output_fe_train_dataloader,
+        output_fe_test_dataloader,
+        output_info,
+    ) = process_output_function_encoder_dataset(
+        train_ds,
+        test_ds,
+        params,
+        device=device,
     )
 
     # Process the datasets to train the model
-    model_train_dataloader, model_test_dataloader, model_info = process_model_dataset(
-        train_ds, test_ds, args, device=device
+    (
+        model_train_dataloader,
+        model_test_dataloader,
+        model_info,
+    ) = process_model_dataset(
+        train_ds,
+        test_ds,
+        params,
+        device=device,
     )
 
     return (

@@ -111,19 +111,19 @@ class ConditionalInvertibleNetwork(torch.nn.Module):
 
         self.layers = coupling_layers
 
-    def forward(self, x, condition):
+    def forward(self, alpha, beta):
         log_det = 0
 
         for layer in self.layers:
-            x, (s, _) = layer(x, condition)
+            alpha, (s, _) = layer(alpha, beta)
             log_det += torch.sum(torch.exp(s), dim=1)
 
-        return x, log_det
+        return alpha, log_det
 
-    def inverse(self, z, condition):
+    def inverse(self, z, beta):
 
         for layer in reversed(self.layers):
-            z = layer.inverse(z, condition)
+            z = layer.inverse(z, beta)
 
         return z
 
@@ -191,6 +191,8 @@ def train(
     n_epochs,
     summary_writer,
     model_name,
+    params,
+    device,
 ):
 
     tqdm_bar = tqdm.tqdm(range(n_epochs))
@@ -209,20 +211,35 @@ def train(
 
         summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
-        model.eval()
-        total_test_loss = 0.0
-        with torch.no_grad():
-            for batch in test_dataloader:
-                loss = loss_function(
-                    model=model,
-                    batch=batch,
-                    input_function_encoder=input_function_encoder,
-                    output_function_encoder=output_function_encoder,
-                )
-                total_test_loss += loss.item()
-
-        avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+        avg_test_loss = evaluate_model(
+            model=model,
+            test_dataloader=test_dataloader,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+        )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
+
+
+def evaluate_model(
+    model,
+    test_dataloader,
+    input_function_encoder,
+    output_function_encoder,
+):
+    model.eval()
+    total_test_loss = 0.0
+    with torch.no_grad():
+        for batch in test_dataloader:
+            loss = loss_function(
+                model=model,
+                batch=batch,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+            )
+            total_test_loss += loss.item()
+
+    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+    return avg_test_loss

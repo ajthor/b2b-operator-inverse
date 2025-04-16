@@ -14,14 +14,21 @@ from models.function_encoder import (
 # Parse command line args
 
 parser = argparse.ArgumentParser()
+
 # Dataset args
 parser.add_argument("--dataset", type=str, default="derivative_polynomial")
+
 # Model args
 parser.add_argument("--model", type=str, default="variational_autoencoder")
+parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[64])
+
 # Function encoder args
-parser.add_argument("--n_basis", type=int, default=8)
+parser.add_argument("--input_fe_n_basis", type=int, default=8)
 parser.add_argument("--input_fe_hidden_sizes", type=int, nargs="+", default=[64])
+
+parser.add_argument("--output_fe_n_basis", type=int, default=8)
 parser.add_argument("--output_fe_hidden_sizes", type=int, nargs="+", default=[64])
+
 # Training args
 parser.add_argument("--batch_size", type=int, default=5)
 parser.add_argument("--epochs", type=int, default=10000)
@@ -32,23 +39,25 @@ parser.add_argument("--input_fe_learning_rate", type=float, default=None)
 
 parser.add_argument("--output_fe_epochs", type=int, default=None)
 parser.add_argument("--output_fe_learning_rate", type=float, default=None)
+
 # SummaryWriter args
 parser.add_argument("--log_dir", type=str, default=None)
 parser.add_argument("--comment", type=str, default="")
+
 # Seed args
 parser.add_argument("--seed", type=int, default=42)
-args = parser.parse_args()
+params = parser.parse_args()
 
 # Set default values for function encoder training if none are provided
-if args.input_fe_epochs is None:
-    args.input_fe_epochs = args.epochs
-if args.output_fe_epochs is None:
-    args.output_fe_epochs = args.epochs
+if params.input_fe_epochs is None:
+    params.input_fe_epochs = params.epochs
+if params.output_fe_epochs is None:
+    params.output_fe_epochs = params.epochs
 
-if args.input_fe_learning_rate is None:
-    args.input_fe_learning_rate = args.learning_rate
-if args.output_fe_learning_rate is None:
-    args.output_fe_learning_rate = args.learning_rate
+if params.input_fe_learning_rate is None:
+    params.input_fe_learning_rate = params.learning_rate
+if params.output_fe_learning_rate is None:
+    params.output_fe_learning_rate = params.learning_rate
 
 
 if torch.cuda.is_available():
@@ -58,12 +67,12 @@ elif torch.backends.mps.is_available():
 else:
     device = "cpu"
 
-torch.manual_seed(args.seed)
+torch.manual_seed(params.seed)
 
 
 # Load dataset
 
-match args.dataset:
+match params.dataset:
     case "derivative_polynomial":
         train_ds = load_dataset("ajthor/derivative_polynomial", split="train")
         test_ds = load_dataset("ajthor/derivative_polynomial", split="test")
@@ -81,7 +90,7 @@ match args.dataset:
         from datasets.wave_scattering import load_dataset
 
     case _:
-        raise ValueError(f"Unknown dataset: {args.dataset}")
+        raise ValueError(f"Unknown dataset: {params.dataset}")
 
 
 (
@@ -94,7 +103,7 @@ match args.dataset:
     input_info,
     output_info,
     model_info,
-) = load_dataset(args, device=device)
+) = load_dataset(params, device=device)
 
 input_fe_input_size = input_info["input_size"]
 input_fe_output_size = input_info["output_size"]
@@ -105,20 +114,21 @@ output_fe_output_size = output_info["output_size"]
 
 # Define model
 
-match args.model:
+match params.model:
 
-    case "autoencoder":
-        from models.autoencoder import (
-            ConditionalAutoencoderFactory,
-            train as train_model,
-        )
+    # case "autoencoder":
+    #     from models.autoencoder import (
+    #         ConditionalAutoencoderFactory,
+    #         train as train_model,
+    #     )
 
-        model = ConditionalAutoencoderFactory.create(
-            alpha_size=args.n_basis,
-            beta_size=args.n_basis,
-            hidden_sizes=[64],
-            latent_size=args.n_basis,
-        )
+    #     model = ConditionalAutoencoderFactory.create(
+    #         alpha_size=params.input_fe_n_basis,
+    #         beta_size=params.output_fe_n_basis,
+    #         hidden_sizes=[64],
+    #         latent_size=params.output_fe_n_basis,
+    #     )
+    #     optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "variational_autoencoder":
         from models.variational_autoencoder import (
@@ -127,11 +137,12 @@ match args.model:
         )
 
         model = ConditionalVariationalAutoencoderFactory.create(
-            alpha_size=args.n_basis,
-            beta_size=args.n_basis,
-            hidden_sizes=[64],
-            latent_size=args.n_basis,
+            alpha_size=params.input_fe_n_basis,
+            beta_size=params.output_fe_n_basis,
+            hidden_sizes=params.hidden_sizes,
+            latent_size=params.output_fe_n_basis,
         )
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "invertible_network":
         from models.invertible_network import (
@@ -140,41 +151,42 @@ match args.model:
         )
 
         model = ConditionalInvertibleNetworkFactory.create(
-            input_size=args.n_basis,
-            condition_size=args.n_basis,
-            hidden_sizes=[64],
+            input_size=params.input_fe_n_basis,
+            condition_size=params.output_fe_n_basis,
+            hidden_sizes=params.hidden_sizes,
             n_coupling_layers=1,
         )
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case _:
-        raise ValueError(f"Unknown model: {args.model}")
+        raise ValueError(f"Unknown model: {params.model}")
 
 
 input_function_encoder = FunctionEncoderFactory.create(
     input_size=input_fe_input_size,
-    hidden_sizes=args.input_fe_hidden_sizes,
+    hidden_sizes=params.input_fe_hidden_sizes,
     output_size=input_fe_output_size,
-    n_basis=args.n_basis,
+    n_basis=params.input_fe_n_basis,
 )
 
 output_function_encoder = FunctionEncoderFactory.create(
     input_size=output_fe_input_size,
-    hidden_sizes=args.output_fe_hidden_sizes,
+    hidden_sizes=params.output_fe_hidden_sizes,
     output_size=output_fe_output_size,
-    n_basis=args.n_basis,
+    n_basis=params.output_fe_n_basis,
 )
 
 # Train model
 
-writer = SummaryWriter(log_dir=args.log_dir, comment=args.comment)
+writer = SummaryWriter(log_dir=params.log_dir, comment=params.comment)
 log_dir = writer.log_dir
 
 # Save args
 
-with open(f"{log_dir}/args.txt", "w") as f:
-    f.write(str(args))
+with open(f"{log_dir}/params.txt", "w") as f:
+    f.write(str(params))
 
-torch.save(args, f"{log_dir}/args.pth")
+torch.save(params, f"{log_dir}/params.pth")
 
 # Train the input function encoder
 train_function_encoder(
@@ -182,11 +194,13 @@ train_function_encoder(
     train_dataloader=input_fe_train_dataloader,
     test_dataloader=input_fe_test_dataloader,
     optimizer=torch.optim.Adam(
-        input_function_encoder.parameters(), lr=args.input_fe_learning_rate
+        input_function_encoder.parameters(), lr=params.input_fe_learning_rate
     ),
-    n_epochs=args.input_fe_epochs,
+    n_epochs=params.input_fe_epochs,
     summary_writer=writer,
     model_name="input_function_encoder",
+    params=params,
+    device=device,
 )
 
 # Train the output function encoder
@@ -195,11 +209,13 @@ train_function_encoder(
     train_dataloader=output_fe_train_dataloader,
     test_dataloader=output_fe_test_dataloader,
     optimizer=torch.optim.Adam(
-        output_function_encoder.parameters(), lr=args.output_fe_learning_rate
+        output_function_encoder.parameters(), lr=params.output_fe_learning_rate
     ),
-    n_epochs=args.output_fe_epochs,
+    n_epochs=params.output_fe_epochs,
     summary_writer=writer,
     model_name="output_function_encoder",
+    params=params,
+    device=device,
 )
 
 # Train the model
@@ -207,12 +223,14 @@ train_model(
     model=model,
     train_dataloader=model_train_dataloader,
     test_dataloader=model_test_dataloader,
-    optimizer=torch.optim.Adam(model.parameters(), lr=args.learning_rate),
+    optimizer=optimizer,
     input_function_encoder=input_function_encoder,
     output_function_encoder=output_function_encoder,
-    n_epochs=args.epochs,
+    n_epochs=params.epochs,
     summary_writer=writer,
-    model_name=args.model,
+    model_name=params.model,
+    params=params,
+    device=device,
 )
 
 # Save model
