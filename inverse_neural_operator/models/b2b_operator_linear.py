@@ -1,5 +1,7 @@
 import torch
 
+import tqdm
+
 
 class LinearB2BOperator(torch.nn.Module):
     """
@@ -11,12 +13,12 @@ class LinearB2BOperator(torch.nn.Module):
         self.linear = torch.nn.Linear(input_dim, output_dim, bias=False)
         self.linear.weight.requires_grad = False
 
-    def forward(self, x):
-        return self.linear(x)
+    def forward(self, alpha):
+        return self.linear(alpha)
 
-    def inverse(self, x):
+    def inverse(self, beta):
         """Compute the inverse of the linear operator."""
-        return torch.linalg.solve(self.linear.weight, x)
+        return torch.linalg.solve(self.linear.weight, beta)
 
 
 def train(
@@ -40,6 +42,7 @@ def train(
     SXY = torch.zeros((n, m), device=device)
 
     with torch.no_grad():
+        tqdm_bar = tqdm.tqdm(len(train_dataloader))
         for batch in train_dataloader:
 
             # Compute the alpha and beta coefficients
@@ -53,6 +56,8 @@ def train(
             # Compute the normal equations in chunks
             SXX += torch.einsum("ij,ik->jk", alpha, alpha)
             SXY += torch.einsum("ij,ik->jk", alpha, beta)
+
+            tqdm_bar.update(1)
 
         # Add small regularization term to SXX
         SXX += 1e-6 * torch.eye(n, device=device)
