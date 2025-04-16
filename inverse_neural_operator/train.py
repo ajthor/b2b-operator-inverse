@@ -3,7 +3,6 @@ import argparse
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from datasets import load_dataset
 
 from models.function_encoder import (
     FunctionEncoderFactory,
@@ -16,7 +15,7 @@ from models.function_encoder import (
 parser = argparse.ArgumentParser()
 
 # Dataset args
-parser.add_argument("--dataset", type=str, default="derivative_polynomial")
+parser.add_argument("--dataset", type=str, default="darcy_1d")
 
 # Model args
 parser.add_argument("--model", type=str, default="variational_autoencoder")
@@ -73,21 +72,21 @@ torch.manual_seed(params.seed)
 # Load dataset
 
 match params.dataset:
-    case "derivative_polynomial":
-        train_ds = load_dataset("ajthor/derivative_polynomial", split="train")
-        test_ds = load_dataset("ajthor/derivative_polynomial", split="test")
+    # case "derivative_polynomial":
+    # train_ds = load_dataset("ajthor/derivative_polynomial", split="train")
+    # test_ds = load_dataset("ajthor/derivative_polynomial", split="test")
 
     case "burgers_1d":
-        from datasets.burgers_1d import load_dataset
+        from data.burgers_1d import load_data
 
     case "darcy_1d":
-        from datasets.darcy_1d import load_dataset
+        from data.darcy_1d import load_data
 
     case "parametric_heat":
-        from datasets.parametric_heat import load_dataset
+        from data.parametric_heat import load_data
 
     case "wave_scattering":
-        from datasets.wave_scattering import load_dataset
+        from data.wave_scattering import load_data
 
     case _:
         raise ValueError(f"Unknown dataset: {params.dataset}")
@@ -103,7 +102,7 @@ match params.dataset:
     input_info,
     output_info,
     model_info,
-) = load_dataset(params, device=device)
+) = load_data(params, device=device)
 
 input_fe_input_size = input_info["input_size"]
 input_fe_output_size = input_info["output_size"]
@@ -126,7 +125,7 @@ match params.model:
             input_size=params.input_fe_n_basis,
             output_size=params.output_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
-        )
+        ).to(device)
         optimizer = None
 
     case "b2b_nonlinear":
@@ -139,7 +138,7 @@ match params.model:
             input_size=params.input_fe_n_basis,
             output_size=params.output_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
-        )
+        ).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "variational_autoencoder":
@@ -153,7 +152,7 @@ match params.model:
             beta_size=params.output_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
             latent_size=params.output_fe_n_basis,
-        )
+        ).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "invertible_network":
@@ -167,7 +166,7 @@ match params.model:
             condition_size=params.output_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
             n_coupling_layers=1,
-        )
+        ).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case _:

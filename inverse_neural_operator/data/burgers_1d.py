@@ -2,10 +2,10 @@ import torch
 
 from datasets import load_dataset
 
-from inverse_neural_operator.datasets.process_data import process_dataset
+from data.process_data import process_dataset
 
 
-def load_dataset(params, device):
+def load_data(params, device):
 
     train_ds = load_dataset("ajthor/burgers_1d", split="train")
     test_ds = load_dataset("ajthor/burgers_1d", split="test")

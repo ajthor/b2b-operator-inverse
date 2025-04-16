@@ -11,6 +11,7 @@ class Encoder(torch.nn.Module):
         latent_size: int = 128,
         activation=torch.nn.ReLU(),
         bias=True,
+        device=None,
     ):
         super(Encoder, self).__init__()
 
@@ -49,6 +50,7 @@ class Decoder(torch.nn.Module):
         latent_size: int = 128,
         activation=torch.nn.ReLU(),
         bias=True,
+        device=None,
     ):
         super(Decoder, self).__init__()
 

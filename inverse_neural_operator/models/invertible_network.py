@@ -139,6 +139,7 @@ class ConditionalInvertibleNetworkFactory:
         hidden_sizes,
         n_coupling_layers,
         activation=torch.nn.ReLU(),
+        device=None,
     ):
         coupling_layers = torch.nn.ModuleList(
             [
@@ -148,12 +149,14 @@ class ConditionalInvertibleNetworkFactory:
                         condition_size=condition_size,
                         hidden_sizes=hidden_sizes,
                         activation=activation,
+                        device=device,
                     ),
                     TranslateNetwork(
                         input_size=input_size,
                         condition_size=condition_size,
                         hidden_sizes=hidden_sizes,
                         activation=activation,
+                        device=device,
                     ),
                 )
                 for _ in range(n_coupling_layers)
