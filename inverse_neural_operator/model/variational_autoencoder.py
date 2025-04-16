@@ -78,13 +78,13 @@ class Decoder(torch.nn.Module):
         return x
 
 
-class VariationalAutoencoder(torch.nn.Module):
+class ConditionalVariationalAutoencoder(torch.nn.Module):
     def __init__(
         self,
         encoder: Encoder,
         decoder: Decoder,
     ):
-        super(VariationalAutoencoder, self).__init__()
+        super(ConditionalVariationalAutoencoder, self).__init__()
 
         self.encoder = encoder
         self.decoder = decoder
@@ -102,7 +102,7 @@ class VariationalAutoencoder(torch.nn.Module):
         return self.decoder(torch.cat([z, beta], dim=-1)), mu, logvar
 
 
-class VariationalAutoencoderFactory:
+class ConditionalVariationalAutoencoderFactory:
     @staticmethod
     def create(
         alpha_size: int,
@@ -122,7 +122,7 @@ class VariationalAutoencoderFactory:
             latent_size=latent_size + beta_size,
         )
 
-        return VariationalAutoencoder(encoder=encoder, decoder=decoder)
+        return ConditionalVariationalAutoencoder(encoder=encoder, decoder=decoder)
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
@@ -165,6 +165,7 @@ def train(
 
     tqdm_bar = tqdm.tqdm(range(n_epochs))
     for epoch in range(n_epochs):
+
         model.train()
         batch = next(iter(train_dataloader))
         optimizer.zero_grad()
@@ -196,25 +197,3 @@ def train(
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
-
-    # model.train()
-
-    # with tqdm.tqdm(range(n_epochs)) as tqdm_bar:
-    #     for epoch in tqdm_bar:
-    #         for batch in train_dataloader:
-    #             optimizer.zero_grad()
-
-    #             loss = loss_function(
-    #                 model=model,
-    #                 batch=batch,
-    #                 input_function_encoder=input_function_encoder,
-    #                 output_function_encoder=output_function_encoder,
-    #             )
-    #             loss.backward()
-
-    #             optimizer.step()
-
-    #             break
-
-    #         if epoch % 10 == 0:
-    #             tqdm_bar.set_postfix_str(f"loss {loss.item():.4e}")

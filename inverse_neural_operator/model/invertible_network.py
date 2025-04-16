@@ -102,12 +102,12 @@ class AffineCoupling(torch.nn.Module):
         return torch.cat([z1, z2], dim=-1)
 
 
-class InvertibleNetwork(torch.nn.Module):
+class ConditionalInvertibleNetwork(torch.nn.Module):
     def __init__(
         self,
         coupling_layers,
     ):
-        super(InvertibleNetwork, self).__init__()
+        super(ConditionalInvertibleNetwork, self).__init__()
 
         self.layers = coupling_layers
 
@@ -128,7 +128,7 @@ class InvertibleNetwork(torch.nn.Module):
         return z
 
 
-class InvertibleNetworkFactory:
+class ConditionalInvertibleNetworkFactory:
     @staticmethod
     def create(
         input_size,
@@ -157,7 +157,7 @@ class InvertibleNetworkFactory:
             ]
         )
 
-        return InvertibleNetwork(coupling_layers=coupling_layers)
+        return ConditionalInvertibleNetwork(coupling_layers=coupling_layers)
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
@@ -226,25 +226,3 @@ def train(
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
-
-    # model.train()
-
-    # with tqdm.tqdm(range(n_epochs)) as tqdm_bar:
-    #     for epoch in tqdm_bar:
-    #         for batch in train_dataloader:
-    #             optimizer.zero_grad()
-
-    #             loss = loss_function(
-    #                 model=model,
-    #                 batch=batch,
-    #                 input_function_encoder=input_function_encoder,
-    #                 output_function_encoder=output_function_encoder,
-    #             )
-    #             loss.backward()
-
-    #             optimizer.step()
-
-    #             break
-
-    #         if epoch % 10 == 0:
-    #             tqdm_bar.set_postfix_str(f"loss {loss.item():.4e}")
