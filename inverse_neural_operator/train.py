@@ -1,17 +1,14 @@
 import argparse
 
 import torch
-from torch.utils.data import DataLoader, RandomSampler
 from torch.utils.tensorboard import SummaryWriter
 
-from datasets import load_dataset, concatenate_datasets
+from datasets import load_dataset
 
-from model.function_encoder import (
+from models.function_encoder import (
     FunctionEncoderFactory,
     train as train_function_encoder,
 )
-
-import tqdm
 
 
 # Parse command line args
@@ -72,16 +69,16 @@ match args.dataset:
         test_ds = load_dataset("ajthor/derivative_polynomial", split="test")
 
     case "burgers_1d":
-        from inverse_neural_operator.datasets.burgers_1d import load_dataset
+        from datasets.burgers_1d import load_dataset
 
     case "darcy_1d":
-        from inverse_neural_operator.datasets.darcy_1d import load_dataset
+        from datasets.darcy_1d import load_dataset
 
     case "parametric_heat":
-        from inverse_neural_operator.datasets.parametric_heat import load_dataset
+        from datasets.parametric_heat import load_dataset
 
     case "wave_scattering":
-        from inverse_neural_operator.datasets.wave_scattering import load_dataset
+        from datasets.wave_scattering import load_dataset
 
     case _:
         raise ValueError(f"Unknown dataset: {args.dataset}")
@@ -111,7 +108,7 @@ output_fe_output_size = output_info["output_size"]
 match args.model:
 
     case "autoencoder":
-        from model.autoencoder import (
+        from models.autoencoder import (
             ConditionalAutoencoderFactory,
             train as train_model,
         )
@@ -124,7 +121,7 @@ match args.model:
         )
 
     case "variational_autoencoder":
-        from model.variational_autoencoder import (
+        from models.variational_autoencoder import (
             ConditionalVariationalAutoencoderFactory,
             train as train_model,
         )
@@ -137,7 +134,7 @@ match args.model:
         )
 
     case "invertible_network":
-        from model.invertible_network import (
+        from models.invertible_network import (
             ConditionalInvertibleNetworkFactory,
             train as train_model,
         )

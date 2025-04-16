@@ -12,9 +12,9 @@ def process_input_function_encoder_dataset(train_ds, test_ds, args, device):
         example_indices = indices[:split_idx]
         remaining_indices = indices[split_idx:]
         point["example_xs"] = point["X"][example_indices]
-        point["example_ys"] = point["f"][example_indices]
+        point["example_ys"] = point["u"][example_indices]
         point["xs"] = point["X"][remaining_indices]
-        point["ys"] = point["f"][remaining_indices]
+        point["ys"] = point["u"][remaining_indices]
 
         if point["example_xs"].dim() == 1:
             point["example_xs"] = point["example_xs"].unsqueeze(-1)
@@ -64,9 +64,9 @@ def process_output_function_encoder_dataset(train_ds, test_ds, args, device):
         example_indices = indices[:split_idx]
         remaining_indices = indices[split_idx:]
         point["example_xs"] = point["Y"][example_indices]
-        point["example_ys"] = point["Tf"][example_indices]
+        point["example_ys"] = point["s"][example_indices]
         point["xs"] = point["Y"][remaining_indices]
-        point["ys"] = point["Tf"][remaining_indices]
+        point["ys"] = point["s"][remaining_indices]
 
         if point["example_xs"].dim() == 1:
             point["example_xs"] = point["example_xs"].unsqueeze(-1)
@@ -108,12 +108,12 @@ def process_model_dataset(train_ds, test_ds, args, device):
     def process_ds(point):
         if point["X"].dim() == 1:
             point["X"] = point["X"].unsqueeze(-1)
-        if point["f"].dim() == 1:
-            point["f"] = point["f"].unsqueeze(-1)
+        if point["u"].dim() == 1:
+            point["u"] = point["u"].unsqueeze(-1)
         if point["Y"].dim() == 1:
             point["Y"] = point["Y"].unsqueeze(-1)
-        if point["Tf"].dim() == 1:
-            point["Tf"] = point["Tf"].unsqueeze(-1)
+        if point["s"].dim() == 1:
+            point["s"] = point["s"].unsqueeze(-1)
         return point
 
     # ds = ds.map(process_ds)

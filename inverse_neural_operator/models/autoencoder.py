@@ -114,12 +114,12 @@ class ConditionalAutoencoderFactory:
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
     X = batch["X"]
-    f = batch["f"]
+    u = batch["u"]
     Y = batch["Y"]
-    Tf = batch["Tf"]
+    s = batch["s"]
 
-    alpha = input_function_encoder.compute_coefficients(X, f)
-    beta = output_function_encoder.compute_coefficients(Y, Tf)
+    alpha = input_function_encoder.compute_coefficients(X, u)
+    beta = output_function_encoder.compute_coefficients(Y, s)
 
     alpha_pred = model(alpha, beta)
 
