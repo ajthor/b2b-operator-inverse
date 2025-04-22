@@ -8,9 +8,9 @@ class LinearB2BOperator(torch.nn.Module):
     Linear operator for the inverse problem of parameter estimation.
     """
 
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_size, output_size):
         super(LinearB2BOperator, self).__init__()
-        self.linear = torch.nn.Linear(input_dim, output_dim, bias=False)
+        self.linear = torch.nn.Linear(input_size, output_size, bias=False)
         self.linear.weight.requires_grad = False
 
     def forward(self, alpha):
@@ -23,8 +23,11 @@ class LinearB2BOperator(torch.nn.Module):
 
 class LinearB2BOperatorFactory:
     @staticmethod
-    def create(input_dim, output_dim):
-        return LinearB2BOperator(input_dim=input_dim, output_dim=output_dim)
+    def create(input_size, output_size):
+        return LinearB2BOperator(
+            input_size=input_size,
+            output_size=output_size,
+        )
 
 
 def train(

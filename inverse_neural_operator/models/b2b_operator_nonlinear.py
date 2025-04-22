@@ -9,7 +9,6 @@ class NonlinearB2BOperator(torch.nn.Module):
         input_size,
         hidden_sizes: list[int] = [128, 128],
         output_size: int = 128,
-        device=None,
     ):
         super(NonlinearB2BOperator, self).__init__()
         self.input_size = input_size
@@ -40,17 +39,11 @@ class NonlinearB2BOperator(torch.nn.Module):
 
 class NonlinearB2BOperatorFactory:
     @staticmethod
-    def create(
-        input_size,
-        hidden_sizes,
-        output_size,
-        device=None,
-    ):
+    def create(input_size, hidden_sizes, output_size, device=None):
         return NonlinearB2BOperator(
             input_size=input_size,
             hidden_sizes=hidden_sizes,
             output_size=output_size,
-            device=device,
         )
 
 

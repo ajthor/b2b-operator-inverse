@@ -111,6 +111,12 @@ class ConditionalInvertibleNetwork(torch.nn.Module):
 
         self.layers = coupling_layers
 
+    def sample_prior(self, batch_size, device=None):
+        z = torch.randn(
+            batch_size, self.layers[0].scale_network.input_size, device=device
+        )
+        return z
+
     def forward(self, alpha, beta):
         log_det = 0
 
@@ -120,11 +126,7 @@ class ConditionalInvertibleNetwork(torch.nn.Module):
 
         return alpha, log_det
 
-    def inverse(self, beta, z=None):
-        if z is None:
-            # Sample z from the prior
-            z = torch.randn(beta.size(0), beta.size(1), device=beta.device)
-
+    def inverse(self, beta, z):
         for layer in reversed(self.layers):
             z = layer.inverse(z, beta)
 
@@ -139,7 +141,6 @@ class ConditionalInvertibleNetworkFactory:
         hidden_sizes,
         n_coupling_layers,
         activation=torch.nn.ReLU(),
-        device=None,
     ):
         coupling_layers = torch.nn.ModuleList(
             [
@@ -149,14 +150,12 @@ class ConditionalInvertibleNetworkFactory:
                         condition_size=condition_size,
                         hidden_sizes=hidden_sizes,
                         activation=activation,
-                        device=device,
                     ),
                     TranslateNetwork(
                         input_size=input_size,
                         condition_size=condition_size,
                         hidden_sizes=hidden_sizes,
                         activation=activation,
-                        device=device,
                     ),
                 )
                 for _ in range(n_coupling_layers)

@@ -43,6 +43,9 @@ parser.add_argument("--output_fe_learning_rate", type=float, default=None)
 parser.add_argument("--log_dir", type=str, default=None)
 parser.add_argument("--comment", type=str, default="")
 
+# Device args
+parser.add_argument("--device", type=str, default=None)
+
 # Seed args
 parser.add_argument("--seed", type=int, default=42)
 params = parser.parse_args()
@@ -58,13 +61,15 @@ if params.input_fe_learning_rate is None:
 if params.output_fe_learning_rate is None:
     params.output_fe_learning_rate = params.learning_rate
 
-
-if torch.cuda.is_available():
-    device = "cuda"
-elif torch.backends.mps.is_available():
-    device = "mps"
+if params.device is None:
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
 else:
-    device = "cpu"
+    device = params.device
 
 torch.manual_seed(params.seed)
 
@@ -124,7 +129,6 @@ match params.model:
         model = LinearB2BOperatorFactory.create(
             input_size=params.input_fe_n_basis,
             output_size=params.output_fe_n_basis,
-            hidden_sizes=params.hidden_sizes,
         ).to(device)
         optimizer = None
 

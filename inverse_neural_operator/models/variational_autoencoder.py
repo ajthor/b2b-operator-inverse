@@ -11,7 +11,6 @@ class Encoder(torch.nn.Module):
         latent_size: int = 128,
         activation=torch.nn.ReLU(),
         bias=True,
-        device=None,
     ):
         super(Encoder, self).__init__()
 
@@ -50,7 +49,6 @@ class Decoder(torch.nn.Module):
         latent_size: int = 128,
         activation=torch.nn.ReLU(),
         bias=True,
-        device=None,
     ):
         super(Decoder, self).__init__()
 
@@ -86,7 +84,6 @@ class ConditionalVariationalAutoencoder(torch.nn.Module):
         encoder: Encoder,
         decoder: Decoder,
         latent_size: int = 128,
-        device=None,
     ):
         super(ConditionalVariationalAutoencoder, self).__init__()
 
@@ -94,7 +91,6 @@ class ConditionalVariationalAutoencoder(torch.nn.Module):
         self.decoder = decoder
 
         self.latent_size = latent_size
-        self.device = device
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -102,8 +98,8 @@ class ConditionalVariationalAutoencoder(torch.nn.Module):
 
         return mu + eps * std
 
-    def sample_prior(self, batch_size):
-        z = torch.randn(batch_size, self.latent_size, device=self.device)
+    def sample_prior(self, batch_size, device=None):
+        z = torch.randn(batch_size, self.latent_size, device=device)
         return z
 
     def forward(self, alpha, beta):
@@ -112,10 +108,7 @@ class ConditionalVariationalAutoencoder(torch.nn.Module):
 
         return z, mu, logvar
 
-    def inverse(self, beta, z=None):
-        if z is None:
-            # Sample z from the prior
-            z = self.sample_prior(beta.size(0))
+    def inverse(self, beta, z):
         return self.decoder(torch.cat([z, beta], dim=-1))
 
 
@@ -126,27 +119,23 @@ class ConditionalVariationalAutoencoderFactory:
         beta_size: int,
         hidden_sizes: list[int] = [128, 128],
         latent_size: int = 128,
-        device=None,
     ):
         encoder = Encoder(
             input_size=alpha_size + beta_size,
             hidden_sizes=hidden_sizes,
             latent_size=latent_size,
-            device=device,
         )
 
         decoder = Decoder(
             output_size=alpha_size,
             hidden_sizes=hidden_sizes[::-1],
             latent_size=latent_size + beta_size,
-            device=device,
         )
 
         return ConditionalVariationalAutoencoder(
             encoder=encoder,
             decoder=decoder,
             latent_size=latent_size,
-            device=device,
         )
 
 
