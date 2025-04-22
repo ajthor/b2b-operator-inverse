@@ -73,7 +73,7 @@ for dataset in "${DATASETS[@]}"; do
       # wait for a free GPU slot
       while :; do
         for ((gpu=0; gpu<NUM_GPUS; gpu++)); do
-          if flock "$LOCK_FILE" bash -c "[ \$(< $STATUS_DIR/gpu_\$gpu) -lt $PROCS_PER_GPU ]"; then
+          if flock "$LOCK_FILE" bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
             # claim it
             flock "$LOCK_FILE" bash -c "
               c=\$(< $STATUS_DIR/gpu_$gpu)
