@@ -8,9 +8,10 @@ LOCK_FILE=/tmp/gpu_lock_file
 STATUS_DIR=/tmp/gpu_status
 
 # Base directory for experiment logs
-LOG_BASE_DIR="/tmp/operator_inverse_logs"
+LOG_BASE_DIR="/store"
 
-DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering)
+# DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering)
+DATASETS=(burgers_1d darcy_1d)
 MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
 SEEDS=(1)   # add more seeds if you like
 
@@ -43,7 +44,7 @@ run_experiment() {
 
   # run and capture exit code
   echo "[$count] $dataset | $model | seed=$seed → cuda:$gpu"
-  python train.py \
+  python inverse_neural_operator/train.py \
     --dataset        "$dataset" \
     --model          "$model" \
     --seed           "$seed" \
@@ -96,4 +97,4 @@ for dataset in "${DATASETS[@]}"; do
 done
 
 wait
-echo "Done."
+echo "done"

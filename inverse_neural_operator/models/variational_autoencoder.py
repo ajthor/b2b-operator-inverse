@@ -94,7 +94,7 @@ class ConditionalVariationalAutoencoder(torch.nn.Module):
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std, device=self.device)
+        eps = torch.randn_like(std, device=mu.device)
 
         return mu + eps * std
 
