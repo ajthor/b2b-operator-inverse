@@ -2,23 +2,42 @@
 set -euo pipefail
 
 #── CONFIGURATION ────────────────────────────────────────
-NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+# Default: use all available GPUs if not specified
+GPU_LIST=${GPU_LIST:-}  # Can be set externally, e.g., GPU_LIST="0 2 3"
+
+if [ -z "$GPU_LIST" ]; then
+  # Auto-detect all available GPUs
+  ALL_GPUS=($(nvidia-smi --query-gpu=index --format=csv,noheader))
+else
+  # Use user-specified GPUs
+  ALL_GPUS=($GPU_LIST)
+fi
+
+NUM_GPUS=${#ALL_GPUS[@]}
+if [ $NUM_GPUS -eq 0 ]; then
+  echo "Error: No GPUs specified or detected" >&2
+  exit 1
+fi
+
+echo "Using GPUs: ${ALL_GPUS[*]}"
+
 PROCS_PER_GPU=1
 LOCK_FILE=/tmp/gpu_lock_file
 STATUS_DIR=/tmp/gpu_status
 
 # Base directory for experiment logs
-LOG_BASE_DIR="/store"
+LOG_BASE_DIR="/store/at46867"
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering)
+# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
 DATASETS=(burgers_1d darcy_1d)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
-SEEDS=(1)   # add more seeds if you like
+MODELS=(variational_autoencoder)
+SEEDS=(1 2)   # add more seeds if you like
 
 #── INITIALIZE GPU STATUS ─────────────────────────────────
 mkdir -p "$STATUS_DIR"
-for ((g=0; g<NUM_GPUS; g++)); do
-  echo 0 > "$STATUS_DIR/gpu_$g"
+for gpu in "${ALL_GPUS[@]}"; do
+  echo 0 > "$STATUS_DIR/gpu_$gpu"
 done
 
 #── EXPERIMENT WORKER ─────────────────────────────────────
@@ -40,6 +59,7 @@ run_experiment() {
   # prepare logdir
   local logdir="$LOG_BASE_DIR/$dataset/$model/seed_$seed"
   mkdir -p "$logdir"
+  echo "$logdir"
   local logfile="$logdir/log.txt"
 
   # run and capture exit code
@@ -54,7 +74,7 @@ run_experiment() {
     || echo "Experiment #$count failed (exit $?)"
 
   # release the GPU slot
-  flock "$LOCK_FILE" bash -c "
+  flock $LOCK_FILE bash -c "
     c=\$(< $STATUS_DIR/gpu_$gpu)
     echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
   "
@@ -62,20 +82,23 @@ run_experiment() {
 }
 
 export -f run_experiment
+export LOCK_FILE
 
 #── MAIN SCHEDULER ────────────────────────────────────────
 count=0
+
 for dataset in "${DATASETS[@]}"; do
   for model in "${MODELS[@]}"; do
     for seed in "${SEEDS[@]}"; do
-      ((count++))
+      count=$((count+1))
 
       # wait for a free GPU slot
       while :; do
-        for ((gpu=0; gpu<NUM_GPUS; gpu++)); do
-          if flock "$LOCK_FILE" bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
+        for gpu_idx in "${!ALL_GPUS[@]}"; do
+          gpu="${ALL_GPUS[$gpu_idx]}"
+          if flock $LOCK_FILE bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
             # claim it
-            flock "$LOCK_FILE" bash -c "
+            flock $LOCK_FILE bash -c "
               c=\$(< $STATUS_DIR/gpu_$gpu)
               echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
             "

@@ -18,7 +18,7 @@ class LinearB2BOperator(torch.nn.Module):
 
     def inverse(self, beta):
         """Compute the inverse of the linear operator."""
-        return torch.linalg.solve(self.linear.weight, beta)
+        return torch.linalg.solve(self.linear.weight.unsqueeze(0).expand(beta.size(0), -1, -1), beta)
 
 
 class LinearB2BOperatorFactory:
@@ -28,6 +28,24 @@ class LinearB2BOperatorFactory:
             input_size=input_size,
             output_size=output_size,
         )
+
+
+def loss_function(model, batch, input_function_encoder, output_function_encoder):
+    # X = batch["X"]
+    # u = batch["u"]
+    # Y = batch["Y"]
+    # s = batch["s"]
+    X, u, Y, s = batch
+
+    alpha = input_function_encoder.compute_coefficients(X, u)
+    beta = output_function_encoder.compute_coefficients(Y, s)
+
+    alpha_pred = model.inverse(beta)
+
+    pred_loss = torch.nn.functional.mse_loss(
+        alpha_pred, alpha, reduction="mean")
+
+    return pred_loss
 
 
 def train(
@@ -55,10 +73,7 @@ def train(
         for batch in train_dataloader:
 
             # Compute the alpha and beta coefficients
-            X = batch["X"]
-            u = batch["u"]
-            Y = batch["Y"]
-            s = batch["s"]
+            X, u, Y, s = batch
             alpha = input_function_encoder.compute_coefficients(X, u)
             beta = output_function_encoder.compute_coefficients(Y, s)
 
@@ -75,3 +90,33 @@ def train(
         W = torch.linalg.solve(SXX, SXY)
 
         model.linear.weight.copy_(W.T)
+
+        avg_test_loss = evaluate_model(
+            model=model,
+            test_dataloader=test_dataloader,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+        )
+        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss})
+
+
+def evaluate_model(
+    model,
+    test_dataloader,
+    input_function_encoder,
+    output_function_encoder,
+):
+    model.eval()
+    total_test_loss = 0.0
+    with torch.no_grad():
+        for batch in test_dataloader:
+            loss = loss_function(
+                model=model,
+                batch=batch,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+            )
+            total_test_loss += loss.item()
+
+    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+    return avg_test_loss

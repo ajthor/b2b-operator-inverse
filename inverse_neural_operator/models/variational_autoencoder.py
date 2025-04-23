@@ -140,10 +140,7 @@ class ConditionalVariationalAutoencoderFactory:
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
-    X = batch["X"]
-    u = batch["u"]
-    Y = batch["Y"]
-    s = batch["s"]
+    X, u, Y, s = batch
 
     alpha = input_function_encoder.compute_coefficients(X, u)
     beta = output_function_encoder.compute_coefficients(Y, s)
@@ -151,7 +148,8 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     z, mu, logvar = model(alpha, beta)
     alpha_pred = model.inverse(beta, z)
 
-    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
+    pred_loss = torch.nn.functional.mse_loss(
+        alpha_pred, alpha, reduction="mean")
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     kl_loss = kl_loss.mean()
 
@@ -195,7 +193,8 @@ def train(
         loss.backward()
         optimizer.step()
 
-        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
+        summary_writer.add_scalars(
+            "loss/train", {model_name: loss.item()}, epoch)
 
         avg_test_loss = evaluate_model(
             model=model,
@@ -203,7 +202,8 @@ def train(
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
         )
-        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+        summary_writer.add_scalars(
+            "loss/test", {model_name: avg_test_loss}, epoch)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)

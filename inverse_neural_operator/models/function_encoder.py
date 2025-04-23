@@ -29,10 +29,7 @@ class FunctionEncoderFactory:
 
 
 def loss_function(model, batch):
-    example_xs = batch["example_xs"]
-    example_ys = batch["example_ys"]
-    xs = batch["xs"]
-    ys = batch["ys"]
+    example_xs, example_ys, xs, ys = batch
 
     coefficients = model.compute_coefficients(example_xs, example_ys)
     y_pred = model(xs, coefficients)
@@ -64,10 +61,13 @@ def train(
         loss.backward()
         optimizer.step()
 
-        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
+        summary_writer.add_scalars(
+            "loss/train", {model_name: loss.item()}, epoch)
 
-        avg_test_loss = evaluate_model(model=model, test_dataloader=test_dataloader)
-        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+        avg_test_loss = evaluate_model(
+            model=model, test_dataloader=test_dataloader)
+        summary_writer.add_scalars(
+            "loss/test", {model_name: avg_test_loss}, epoch)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
