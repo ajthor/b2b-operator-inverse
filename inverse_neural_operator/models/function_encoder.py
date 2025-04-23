@@ -83,3 +83,14 @@ def evaluate_model(
 
     avg_test_loss = total_test_loss / len(test_dataloader.dataset)
     return avg_test_loss
+
+
+def evaluate_instance(model, point):
+    model.eval()
+    with torch.no_grad():
+        example_xs, example_ys, xs, ys = point
+
+        coefficients = model.compute_coefficients(example_xs, example_ys)
+        pred = model(xs, coefficients)
+
+        return pred

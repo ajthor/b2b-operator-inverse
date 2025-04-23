@@ -33,10 +33,6 @@ class LinearB2BOperatorFactory:
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
-    # X = batch["X"]
-    # u = batch["u"]
-    # Y = batch["Y"]
-    # s = batch["s"]
     X, u, Y, s = batch
 
     alpha = input_function_encoder.compute_coefficients(X, u)
@@ -121,3 +117,18 @@ def evaluate_model(
 
     avg_test_loss = total_test_loss / len(test_dataloader.dataset)
     return avg_test_loss
+
+
+def evaluate_instance(model, point, input_function_encoder, output_function_encoder):
+    model.eval()
+    with torch.no_grad():
+        X, u, Y, s = (
+            tensor.unsqueeze(0) if tensor.ndim == 1 else tensor for tensor in point
+        )
+
+        beta = output_function_encoder.compute_coefficients(Y, s)
+        alpha_pred = model.inverse(beta)
+
+        pred = input_function_encoder(X, alpha_pred)
+
+        return pred, alpha_pred

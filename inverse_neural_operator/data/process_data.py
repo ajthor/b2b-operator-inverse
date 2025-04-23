@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 
-def process_input_function_encoder_dataset(train_ds, test_ds, params, device):
+def process_input_function_encoder_dataset(ds, params, device):
 
     def process_ds(point):
         pt_len = len(point["X"])
@@ -27,37 +27,17 @@ def process_input_function_encoder_dataset(train_ds, test_ds, params, device):
 
         return point
 
-    input_fe_train_ds = train_ds.map(process_ds).remove_columns(train_ds.column_names)
-    input_fe_test_ds = test_ds.map(process_ds).remove_columns(test_ds.column_names)
+    input_fe_ds = ds.map(process_ds).remove_columns(ds.column_names)
+    input_fe_ds = input_fe_ds.with_format("numpy")
 
-    input_fe_train_ds = input_fe_train_ds.with_format("numpy")
-    input_fe_test_ds = input_fe_test_ds.with_format("numpy")
+    input_size = input_fe_ds[0]["xs"].shape[-1]
+    output_size = input_fe_ds[0]["ys"].shape[-1]
 
-    input_size = input_fe_train_ds[0]["xs"].shape[-1]
-    output_size = input_fe_train_ds[0]["ys"].shape[-1]
-
-    input_fe_train_ds = TensorDataset(
-        torch.from_numpy(input_fe_train_ds["example_xs"]).to(device),
-        torch.from_numpy(input_fe_train_ds["example_ys"]).to(device),
-        torch.from_numpy(input_fe_train_ds["xs"]).to(device),
-        torch.from_numpy(input_fe_train_ds["ys"]).to(device),
-    )
-    input_fe_test_ds = TensorDataset(
-        torch.from_numpy(input_fe_test_ds["example_xs"]).to(device),
-        torch.from_numpy(input_fe_test_ds["example_ys"]).to(device),
-        torch.from_numpy(input_fe_test_ds["xs"]).to(device),
-        torch.from_numpy(input_fe_test_ds["ys"]).to(device),
-    )
-
-    input_fe_train_dataloader = DataLoader(
-        input_fe_train_ds,
-        batch_size=params.batch_size,
-        shuffle=True,
-    )
-    input_fe_test_dataloader = DataLoader(
-        input_fe_test_ds,
-        batch_size=params.batch_size,
-        shuffle=True,
+    input_fe_dataset = TensorDataset(
+        torch.from_numpy(input_fe_ds["example_xs"]).to(device),
+        torch.from_numpy(input_fe_ds["example_ys"]).to(device),
+        torch.from_numpy(input_fe_ds["xs"]).to(device),
+        torch.from_numpy(input_fe_ds["ys"]).to(device),
     )
 
     input_info = {
@@ -65,14 +45,10 @@ def process_input_function_encoder_dataset(train_ds, test_ds, params, device):
         "output_size": output_size,
     }
 
-    return (
-        input_fe_train_dataloader,
-        input_fe_test_dataloader,
-        input_info,
-    )
+    return input_fe_dataset, input_info
 
 
-def process_output_function_encoder_dataset(train_ds, test_ds, params, device):
+def process_output_function_encoder_dataset(ds, params, device):
 
     def process_ds(point):
         pt_len = len(point["Y"])
@@ -96,37 +72,17 @@ def process_output_function_encoder_dataset(train_ds, test_ds, params, device):
 
         return point
 
-    output_fe_train_ds = train_ds.map(process_ds).remove_columns(train_ds.column_names)
-    output_fe_test_ds = test_ds.map(process_ds).remove_columns(test_ds.column_names)
+    output_fe_ds = ds.map(process_ds).remove_columns(ds.column_names)
+    output_fe_ds = output_fe_ds.with_format("numpy")
 
-    output_fe_train_ds = output_fe_train_ds.with_format("numpy")
-    output_fe_test_ds = output_fe_test_ds.with_format("numpy")
+    input_size = output_fe_ds[0]["xs"].shape[-1]
+    output_size = output_fe_ds[0]["ys"].shape[-1]
 
-    input_size = output_fe_train_ds[0]["xs"].shape[-1]
-    output_size = output_fe_train_ds[0]["ys"].shape[-1]
-
-    output_fe_train_ds = TensorDataset(
-        torch.from_numpy(output_fe_train_ds["example_xs"]).to(device),
-        torch.from_numpy(output_fe_train_ds["example_ys"]).to(device),
-        torch.from_numpy(output_fe_train_ds["xs"]).to(device),
-        torch.from_numpy(output_fe_train_ds["ys"]).to(device),
-    )
-    output_fe_test_ds = TensorDataset(
-        torch.from_numpy(output_fe_test_ds["example_xs"]).to(device),
-        torch.from_numpy(output_fe_test_ds["example_ys"]).to(device),
-        torch.from_numpy(output_fe_test_ds["xs"]).to(device),
-        torch.from_numpy(output_fe_test_ds["ys"]).to(device),
-    )
-
-    output_fe_train_dataloader = DataLoader(
-        output_fe_train_ds,
-        batch_size=params.batch_size,
-        shuffle=True,
-    )
-    output_fe_test_dataloader = DataLoader(
-        output_fe_test_ds,
-        batch_size=params.batch_size,
-        shuffle=True,
+    output_fe_dataset = TensorDataset(
+        torch.from_numpy(output_fe_ds["example_xs"]).to(device),
+        torch.from_numpy(output_fe_ds["example_ys"]).to(device),
+        torch.from_numpy(output_fe_ds["xs"]).to(device),
+        torch.from_numpy(output_fe_ds["ys"]).to(device),
     )
 
     output_info = {
@@ -134,10 +90,10 @@ def process_output_function_encoder_dataset(train_ds, test_ds, params, device):
         "output_size": output_size,
     }
 
-    return output_fe_train_dataloader, output_fe_test_dataloader, output_info
+    return output_fe_dataset, output_info
 
 
-def process_model_dataset(train_ds, test_ds, params, device):
+def process_model_dataset(ds, params, device):
 
     def process_ds(point):
         if point["X"].dim() == 1:
@@ -150,38 +106,17 @@ def process_model_dataset(train_ds, test_ds, params, device):
             point["s"] = point["s"].unsqueeze(-1)
         return point
 
-    # ds = ds.map(process_ds)
-    model_train_ds = train_ds.map(process_ds)
-    model_test_ds = test_ds.map(process_ds)
+    model_ds = ds.map(process_ds)
+    model_ds = model_ds.with_format("numpy")
 
-    model_train_ds = model_train_ds.with_format("numpy")
-    model_test_ds = model_test_ds.with_format("numpy")
+    input_size = model_ds[0]["X"].shape[-1]
+    output_size = model_ds[0]["Y"].shape[-1]
 
-    input_size = model_train_ds[0]["X"].shape[-1]
-    output_size = model_train_ds[0]["Y"].shape[-1]
-
-    model_train_ds = TensorDataset(
-        torch.from_numpy(model_train_ds["X"]).to(device),
-        torch.from_numpy(model_train_ds["u"]).to(device),
-        torch.from_numpy(model_train_ds["Y"]).to(device),
-        torch.from_numpy(model_train_ds["s"]).to(device),
-    )
-    model_test_ds = TensorDataset(
-        torch.from_numpy(model_test_ds["X"]).to(device),
-        torch.from_numpy(model_test_ds["u"]).to(device),
-        torch.from_numpy(model_test_ds["Y"]).to(device),
-        torch.from_numpy(model_test_ds["s"]).to(device),
-    )
-
-    model_train_dataloader = DataLoader(
-        model_train_ds,
-        batch_size=params.batch_size,
-        shuffle=True,
-    )
-    model_test_dataloader = DataLoader(
-        model_test_ds,
-        batch_size=params.batch_size,
-        shuffle=True,
+    model_dataset = TensorDataset(
+        torch.from_numpy(model_ds["X"]).to(device),
+        torch.from_numpy(model_ds["u"]).to(device),
+        torch.from_numpy(model_ds["Y"]).to(device),
+        torch.from_numpy(model_ds["s"]).to(device),
     )
 
     model_info = {
@@ -189,57 +124,48 @@ def process_model_dataset(train_ds, test_ds, params, device):
         "output_size": output_size,
     }
 
-    return model_train_dataloader, model_test_dataloader, model_info
+    return model_dataset, model_info
 
 
-def process_dataset(train_ds, test_ds, params, device):
+def process_dataset(ds, params, device):
+    """
+    Process a single dataset for all three model types.
 
-    train_ds = train_ds.with_format("torch", device=device)
-    test_ds = test_ds.with_format("torch", device=device)
+    Args:
+        ds: The dataset to process
+        params: Parameters for processing
+        device: The device to use
 
-    # Process the datasets to train the input function encoder
-    (
-        input_fe_train_dataloader,
-        input_fe_test_dataloader,
-        input_info,
-    ) = process_input_function_encoder_dataset(
-        train_ds,
-        test_ds,
+    Returns:
+        A tuple of TensorDatasets and information for the models
+    """
+    ds = ds.with_format("torch", device=device)
+
+    # Process the dataset for input function encoder
+    input_fe_dataset, input_info = process_input_function_encoder_dataset(
+        ds,
         params,
         device=device,
     )
 
-    # Process the datasets to train the output function encoder
-    (
-        output_fe_train_dataloader,
-        output_fe_test_dataloader,
-        output_info,
-    ) = process_output_function_encoder_dataset(
-        train_ds,
-        test_ds,
+    # Process the dataset for output function encoder
+    output_fe_dataset, output_info = process_output_function_encoder_dataset(
+        ds,
         params,
         device=device,
     )
 
-    # Process the datasets to train the model
-    (
-        model_train_dataloader,
-        model_test_dataloader,
-        model_info,
-    ) = process_model_dataset(
-        train_ds,
-        test_ds,
+    # Process the dataset for the model
+    model_dataset, model_info = process_model_dataset(
+        ds,
         params,
         device=device,
     )
 
     return (
-        model_train_dataloader,
-        model_test_dataloader,
-        input_fe_train_dataloader,
-        input_fe_test_dataloader,
-        output_fe_train_dataloader,
-        output_fe_test_dataloader,
+        model_dataset,
+        input_fe_dataset,
+        output_fe_dataset,
         input_info,
         output_info,
         model_info,

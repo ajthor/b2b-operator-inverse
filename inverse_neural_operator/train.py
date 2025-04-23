@@ -2,6 +2,7 @@ import argparse
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
 
 
 from models.function_encoder import (
@@ -79,6 +80,7 @@ torch.manual_seed(params.seed)
 # Load dataset
 
 match params.dataset:
+
     # case "derivative_polynomial":
     # train_ds = load_dataset("ajthor/derivative_polynomial", split="train")
     # test_ds = load_dataset("ajthor/derivative_polynomial", split="test")
@@ -98,18 +100,59 @@ match params.dataset:
     case _:
         raise ValueError(f"Unknown dataset: {params.dataset}")
 
-
+# Load train dataset
 (
-    model_train_dataloader,
-    model_test_dataloader,
-    input_fe_train_dataloader,
-    input_fe_test_dataloader,
-    output_fe_train_dataloader,
-    output_fe_test_dataloader,
+    model_train_dataset,
+    input_fe_train_dataset,
+    output_fe_train_dataset,
     input_info,
     output_info,
     model_info,
-) = load_data(params, device=device)
+) = load_data(params, device=device, split="train")
+
+# Load test dataset
+(
+    model_test_dataset,
+    input_fe_test_dataset,
+    output_fe_test_dataset,
+    _,  # We already have input_info from train
+    _,  # We already have output_info from train
+    _,  # We already have model_info from train
+) = load_data(params, device=device, split="test")
+
+# Create DataLoaders from the datasets
+model_train_dataloader = DataLoader(
+    model_train_dataset,
+    batch_size=params.batch_size,
+    shuffle=True,
+)
+model_test_dataloader = DataLoader(
+    model_test_dataset,
+    batch_size=params.batch_size,
+    shuffle=True,
+)
+
+input_fe_train_dataloader = DataLoader(
+    input_fe_train_dataset,
+    batch_size=params.batch_size,
+    shuffle=True,
+)
+input_fe_test_dataloader = DataLoader(
+    input_fe_test_dataset,
+    batch_size=params.batch_size,
+    shuffle=True,
+)
+
+output_fe_train_dataloader = DataLoader(
+    output_fe_train_dataset,
+    batch_size=params.batch_size,
+    shuffle=True,
+)
+output_fe_test_dataloader = DataLoader(
+    output_fe_test_dataset,
+    batch_size=params.batch_size,
+    shuffle=True,
+)
 
 input_fe_input_size = input_info["input_size"]
 input_fe_output_size = input_info["output_size"]
