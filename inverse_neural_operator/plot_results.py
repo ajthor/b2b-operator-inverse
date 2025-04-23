@@ -6,16 +6,22 @@ import torch
 from models.function_encoder import (
     FunctionEncoderFactory,
     evaluate_instance as evaluate_instance_function_encoder,
+    plot_evaluations as plot_fe_evaluations,
 )
 
 device = "cpu"
 
+torch.manual_seed(1)
+
+
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Plot results.")
-parser.add_argument("--dataset", type=str, default="darcy_1d")
+parser.add_argument("--dataset", type=str, default="burgers_1d")
 parser.add_argument("--model", type=str, default="variational_autoencoder")
 parser.add_argument("--log_dir", type=str, default="/store/at46867")
-parser.add_argument("--results_dir", type=str, default="results")
+parser.add_argument(
+    "--results_dir", type=str, default="results/burgers_1d/variational_autoencoder"
+)
 
 args = parser.parse_args()
 
@@ -68,7 +74,8 @@ match params.model:
     case "b2b_linear":
         from models.b2b_operator_linear import (
             LinearB2BOperatorFactory,
-            evaluate_instance,
+            plot_evaluation,
+            plot_worst_case_evaluation,
         )
 
         model = LinearB2BOperatorFactory.create(
@@ -79,7 +86,8 @@ match params.model:
     case "b2b_nonlinear":
         from models.b2b_operator_nonlinear import (
             NonlinearB2BOperatorFactory,
-            evaluate_instance,
+            plot_evaluation,
+            plot_worst_case_evaluation,
         )
 
         model = NonlinearB2BOperatorFactory.create(
@@ -91,7 +99,8 @@ match params.model:
     case "variational_autoencoder":
         from models.variational_autoencoder import (
             ConditionalVariationalAutoencoderFactory,
-            evaluate_instance,
+            plot_evaluation,
+            plot_worst_case_evaluation,
         )
 
         model = ConditionalVariationalAutoencoderFactory.create(
@@ -104,7 +113,8 @@ match params.model:
     case "invertible_network":
         from models.invertible_network import (
             ConditionalInvertibleNetworkFactory,
-            evaluate_instance,
+            plot_evaluation,
+            plot_worst_case_evaluation,
         )
 
         model = ConditionalInvertibleNetworkFactory.create(
@@ -148,20 +158,31 @@ model.eval()
 
 
 # Create plots
-from plotting.function_encoder_evaluation import (
-    plot_function_encoder_evaluations,
-)
-
-plot_function_encoder_evaluations(
+plot_fe_evaluations(
     model=input_function_encoder,
     dataset=input_fe_test_dataset,
-    evaluate_instance=evaluate_instance_function_encoder,
     file_name=os.path.join(results_dir, "input_function_encoder_evaluation.png"),
 )
 
-plot_function_encoder_evaluations(
+plot_fe_evaluations(
     model=output_function_encoder,
     dataset=output_fe_test_dataset,
-    evaluate_instance=evaluate_instance_function_encoder,
     file_name=os.path.join(results_dir, "output_function_encoder_evaluation.png"),
+)
+
+for i in range(5):
+    plot_evaluation(
+        model=model,
+        dataset=model_test_dataset,
+        file_name=os.path.join(results_dir, f"model_evaluation_{i}.png"),
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+    )
+
+plot_worst_case_evaluation(
+    model=model,
+    dataset=model_test_dataset,
+    file_name=os.path.join(results_dir, "model_worst_case_evaluation.png"),
+    input_function_encoder=input_function_encoder,
+    output_function_encoder=output_function_encoder,
 )

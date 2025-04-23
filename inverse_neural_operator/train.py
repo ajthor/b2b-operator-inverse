@@ -20,24 +20,24 @@ parser.add_argument("--dataset", type=str, default="darcy_1d")
 
 # Model args
 parser.add_argument("--model", type=str, default="variational_autoencoder")
-parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[128, 128])
+parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
 
 # Function encoder args
 parser.add_argument("--input_fe_n_basis", type=int, default=100)
-parser.add_argument("--input_fe_hidden_sizes", type=int, nargs="+", default=[128, 128])
+parser.add_argument("--input_fe_hidden_sizes", type=int, nargs="+", default=[256, 256])
 
 parser.add_argument("--output_fe_n_basis", type=int, default=100)
-parser.add_argument("--output_fe_hidden_sizes", type=int, nargs="+", default=[128, 128])
+parser.add_argument("--output_fe_hidden_sizes", type=int, nargs="+", default=[256, 256])
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=1000)
+parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 
-parser.add_argument("--input_fe_epochs", type=int, default=None)
+parser.add_argument("--input_fe_epochs", type=int, default=1000)
 parser.add_argument("--input_fe_learning_rate", type=float, default=None)
 
-parser.add_argument("--output_fe_epochs", type=int, default=None)
+parser.add_argument("--output_fe_epochs", type=int, default=1000)
 parser.add_argument("--output_fe_learning_rate", type=float, default=None)
 
 # SummaryWriter args
