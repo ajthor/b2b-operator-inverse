@@ -61,13 +61,10 @@ def train(
         loss.backward()
         optimizer.step()
 
-        summary_writer.add_scalars(
-            "loss/train", {model_name: loss.item()}, epoch)
+        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
-        avg_test_loss = evaluate_model(
-            model=model, test_dataloader=test_dataloader)
-        summary_writer.add_scalars(
-            "loss/test", {model_name: avg_test_loss}, epoch)
+        avg_test_loss = evaluate_model(model=model, test_dataloader=test_dataloader)
+        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)

@@ -17,8 +17,7 @@ class ScaleNetwork(torch.nn.Module):
 
         self.scale = torch.nn.ModuleList()
 
-        sizes = [input_size // 2 + condition_size] + \
-            hidden_sizes + [input_size // 2]
+        sizes = [input_size // 2 + condition_size] + hidden_sizes + [input_size // 2]
 
         for i in range(len(sizes) - 1):
             self.scale.append(
@@ -52,8 +51,7 @@ class TranslateNetwork(torch.nn.Module):
 
         self.translate = torch.nn.ModuleList()
 
-        sizes = [input_size // 2 + condition_size] + \
-            hidden_sizes + [input_size // 2]
+        sizes = [input_size // 2 + condition_size] + hidden_sizes + [input_size // 2]
         for i in range(len(sizes) - 1):
             self.translate.append(
                 torch.nn.Linear(sizes[i], sizes[i + 1]),
@@ -177,8 +175,7 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     alpha_pred = model.inverse(beta, z)
 
     # reconstruction loss
-    pred_loss = torch.nn.functional.mse_loss(
-        alpha_pred, alpha, reduction="mean")
+    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
 
     # regularization loss
     regularization_loss = torch.mean(log_det)
@@ -214,8 +211,7 @@ def train(
         loss.backward()
         optimizer.step()
 
-        summary_writer.add_scalars(
-            "loss/train", {model_name: loss.item()}, epoch)
+        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
         avg_test_loss = evaluate_model(
             model=model,
@@ -223,8 +219,7 @@ def train(
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
         )
-        summary_writer.add_scalars(
-            "loss/test", {model_name: avg_test_loss}, epoch)
+        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)

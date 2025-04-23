@@ -18,7 +18,9 @@ class LinearB2BOperator(torch.nn.Module):
 
     def inverse(self, beta):
         """Compute the inverse of the linear operator."""
-        return torch.linalg.solve(self.linear.weight.unsqueeze(0).expand(beta.size(0), -1, -1), beta)
+        return torch.linalg.solve(
+            self.linear.weight.unsqueeze(0).expand(beta.size(0), -1, -1), beta
+        )
 
 
 class LinearB2BOperatorFactory:
@@ -42,8 +44,7 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
 
     alpha_pred = model.inverse(beta)
 
-    pred_loss = torch.nn.functional.mse_loss(
-        alpha_pred, alpha, reduction="mean")
+    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
 
     return pred_loss
 

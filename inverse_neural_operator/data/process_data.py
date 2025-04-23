@@ -27,10 +27,8 @@ def process_input_function_encoder_dataset(train_ds, test_ds, params, device):
 
         return point
 
-    input_fe_train_ds = train_ds.map(
-        process_ds).remove_columns(train_ds.column_names)
-    input_fe_test_ds = test_ds.map(
-        process_ds).remove_columns(test_ds.column_names)
+    input_fe_train_ds = train_ds.map(process_ds).remove_columns(train_ds.column_names)
+    input_fe_test_ds = test_ds.map(process_ds).remove_columns(test_ds.column_names)
 
     input_fe_train_ds = input_fe_train_ds.with_format("numpy")
     input_fe_test_ds = input_fe_test_ds.with_format("numpy")
@@ -98,10 +96,8 @@ def process_output_function_encoder_dataset(train_ds, test_ds, params, device):
 
         return point
 
-    output_fe_train_ds = train_ds.map(
-        process_ds).remove_columns(train_ds.column_names)
-    output_fe_test_ds = test_ds.map(
-        process_ds).remove_columns(test_ds.column_names)
+    output_fe_train_ds = train_ds.map(process_ds).remove_columns(train_ds.column_names)
+    output_fe_test_ds = test_ds.map(process_ds).remove_columns(test_ds.column_names)
 
     output_fe_train_ds = output_fe_train_ds.with_format("numpy")
     output_fe_test_ds = output_fe_test_ds.with_format("numpy")

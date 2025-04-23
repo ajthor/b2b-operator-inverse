@@ -55,8 +55,7 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
 
     alpha_pred = model.inverse(beta)
 
-    pred_loss = torch.nn.functional.mse_loss(
-        alpha_pred, alpha, reduction="mean")
+    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
 
     return pred_loss
 
@@ -89,8 +88,7 @@ def train(
         loss.backward()
         optimizer.step()
 
-        summary_writer.add_scalars(
-            "loss/train", {model_name: loss.item()}, epoch)
+        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
         avg_test_loss = evaluate_model(
             model=model,
@@ -98,8 +96,7 @@ def train(
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
         )
-        summary_writer.add_scalars(
-            "loss/test", {model_name: avg_test_loss}, epoch)
+        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)

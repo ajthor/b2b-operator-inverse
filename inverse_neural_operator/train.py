@@ -19,17 +19,14 @@ parser.add_argument("--dataset", type=str, default="darcy_1d")
 
 # Model args
 parser.add_argument("--model", type=str, default="variational_autoencoder")
-parser.add_argument("--hidden_sizes", type=int,
-                    nargs="+", default=[128, 128])
+parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[128, 128])
 
 # Function encoder args
 parser.add_argument("--input_fe_n_basis", type=int, default=100)
-parser.add_argument("--input_fe_hidden_sizes",
-                    type=int, nargs="+", default=[128, 128])
+parser.add_argument("--input_fe_hidden_sizes", type=int, nargs="+", default=[128, 128])
 
 parser.add_argument("--output_fe_n_basis", type=int, default=100)
-parser.add_argument("--output_fe_hidden_sizes",
-                    type=int, nargs="+", default=[128, 128])
+parser.add_argument("--output_fe_hidden_sizes", type=int, nargs="+", default=[128, 128])
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)
@@ -148,8 +145,7 @@ match params.model:
             output_size=params.output_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
         ).to(device)
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=params.learning_rate)
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "variational_autoencoder":
         from models.variational_autoencoder import (
@@ -163,8 +159,7 @@ match params.model:
             hidden_sizes=params.hidden_sizes,
             latent_size=params.output_fe_n_basis,
         ).to(device)
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=params.learning_rate)
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "invertible_network":
         from models.invertible_network import (
@@ -178,8 +173,7 @@ match params.model:
             hidden_sizes=params.hidden_sizes,
             n_coupling_layers=2,
         ).to(device)
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=params.learning_rate)
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case _:
         raise ValueError(f"Unknown model: {params.model}")
