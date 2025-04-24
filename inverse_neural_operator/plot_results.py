@@ -75,6 +75,7 @@ match params.model:
         from models.b2b_operator_linear import (
             LinearB2BOperatorFactory,
             plot_evaluation,
+            plot_best_case_evaluation,
             plot_worst_case_evaluation,
         )
 
@@ -87,6 +88,7 @@ match params.model:
         from models.b2b_operator_nonlinear import (
             NonlinearB2BOperatorFactory,
             plot_evaluation,
+            plot_best_case_evaluation,
             plot_worst_case_evaluation,
         )
 
@@ -100,6 +102,7 @@ match params.model:
         from models.variational_autoencoder import (
             ConditionalVariationalAutoencoderFactory,
             plot_evaluation,
+            plot_best_case_evaluation,
             plot_worst_case_evaluation,
         )
 
@@ -114,6 +117,7 @@ match params.model:
         from models.invertible_network import (
             ConditionalInvertibleNetworkFactory,
             plot_evaluation,
+            plot_best_case_evaluation,
             plot_worst_case_evaluation,
         )
 
@@ -178,6 +182,14 @@ for i in range(5):
         input_function_encoder=input_function_encoder,
         output_function_encoder=output_function_encoder,
     )
+
+plot_best_case_evaluation(
+    model=model,
+    dataset=model_test_dataset,
+    file_name=os.path.join(results_dir, "model_best_case_evaluation.png"),
+    input_function_encoder=input_function_encoder,
+    output_function_encoder=output_function_encoder,
+)
 
 plot_worst_case_evaluation(
     model=model,

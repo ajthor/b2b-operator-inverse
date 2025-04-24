@@ -264,6 +264,133 @@ def evaluate_instance(model, point, input_function_encoder, output_function_enco
         return pred, alpha_pred
 
 
+def _plot_case(
+    model,
+    point,
+    file_name,
+    input_function_encoder,
+    output_function_encoder,
+):
+    """Helper function to plot a specific case evaluation."""
+    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+
+    predictions = []
+    for _ in range(10):
+        pred, alpha_pred = evaluate_instance(
+            model,
+            point,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+        )
+        pred = pred.squeeze(0).cpu().numpy()
+        predictions.append(pred)
+
+    predictions = np.array(predictions)
+    mean_prediction = predictions.mean(axis=0)
+    min_prediction = predictions.min(axis=0)
+    max_prediction = predictions.max(axis=0)
+
+    X, u, Y, s = point
+    X = X.squeeze(0).cpu().numpy()
+    u = u.squeeze(0).cpu().numpy()
+    Y = Y.squeeze(0).cpu().numpy()
+    s = s.squeeze(0).cpu().numpy()
+
+    # Plot the input data
+    ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
+    ax[0].plot(X, mean_prediction, label="Mean Prediction", color="blue")
+
+    for i in range(predictions.shape[0]):
+        ax[0].plot(X, predictions[i], color="blue", alpha=0.1)
+
+    # Plot the output data
+    ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
+
+    plt.tight_layout()
+    plt.savefig(file_name)
+    plt.close()
+
+
+def plot_best_case_evaluation(
+    model,
+    dataset,
+    file_name="results/model_best_case_evaluation.png",
+    input_function_encoder=None,
+    output_function_encoder=None,
+):
+    """Find and plot the best case (lowest loss) from the dataset."""
+    model.eval()
+    with torch.no_grad():
+        dataloader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+        )
+        best_case = None
+        best_case_loss = float("inf")
+        best_case_index = -1
+
+        for i, point in enumerate(dataloader):
+            loss = loss_function(
+                model=model,
+                batch=point,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+            )
+            if loss < best_case_loss:
+                best_case_loss = loss
+                best_case = point
+                best_case_index = i
+
+        _plot_case(
+            model=model,
+            point=best_case,
+            file_name=file_name,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+        )
+
+
+def plot_worst_case_evaluation(
+    model,
+    dataset,
+    file_name="results/model_worst_case_evaluation.png",
+    input_function_encoder=None,
+    output_function_encoder=None,
+):
+    """Find and plot the worst case (highest loss) from the dataset."""
+    model.eval()
+    with torch.no_grad():
+        dataloader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+        )
+        worst_case = None
+        worst_case_loss = float("-inf")
+        worst_case_index = -1
+
+        for i, point in enumerate(dataloader):
+            loss = loss_function(
+                model=model,
+                batch=point,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+            )
+            if loss > worst_case_loss:
+                worst_case_loss = loss
+                worst_case = point
+                worst_case_index = i
+
+        _plot_case(
+            model=model,
+            point=worst_case,
+            file_name=file_name,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+        )
+
+
 def plot_evaluation(
     model,
     dataset,
@@ -284,100 +411,49 @@ def plot_evaluation(
         )
 
         for point in dataloader:
-            fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-
-            predictions = []
-
-            for _ in range(10):
-                pred, alpha_pred = evaluate_instance(
-                    model,
-                    point,
-                    input_function_encoder=input_function_encoder,
-                    output_function_encoder=output_function_encoder,
-                )
-                pred = pred.squeeze(0).cpu().numpy()
-                predictions.append(pred)
-
-            predictions = np.array(predictions)
-            mean_prediction = predictions.mean(axis=0)
-            min_prediction = predictions.min(axis=0)
-            max_prediction = predictions.max(axis=0)
-
-            X, u, Y, s = point
-            X = X.squeeze(0).cpu().numpy()
-            u = u.squeeze(0).cpu().numpy()
-            Y = Y.squeeze(0).cpu().numpy()
-            s = s.squeeze(0).cpu().numpy()
-
-            # Plot the input data
-            ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
-            ax[0].plot(X, mean_prediction, label="Mean Prediction", color="blue")
-
-            for i in range(predictions.shape[0]):
-                ax[0].plot(X, predictions[i], color="blue", alpha=0.1)
-
-            # Plot the output data
-            ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
-
-            plt.tight_layout()
-            plt.savefig(file_name)
-            plt.close()
-
-
-def plot_worst_case_evaluation(
-    model,
-    dataset,
-    file_name="results/b2b_operator_evaluation.png",
-    input_function_encoder=None,
-    output_function_encoder=None,
-):
-    model.eval()
-    with torch.no_grad():
-
-        # Find worst case
-        dataloader = DataLoader(
-            dataset,
-            batch_size=1,
-            shuffle=False,
-        )
-        worst_case = None
-        worst_case_loss = float("inf")
-        worst_case_index = -1
-
-        for i, point in enumerate(dataloader):
-            loss = loss_function(
+            _plot_case(
                 model=model,
-                batch=point,
+                point=point,
+                file_name=file_name,
                 input_function_encoder=input_function_encoder,
                 output_function_encoder=output_function_encoder,
             )
-            if loss < worst_case_loss:
-                worst_case_loss = loss
-                worst_case = point
-                worst_case_index = i
 
-        # Plot worst case
-        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-        pred, alpha_pred = evaluate_instance(
-            model,
-            worst_case,
-            input_function_encoder=input_function_encoder,
-            output_function_encoder=output_function_encoder,
-        )
-        pred = pred.squeeze(0).cpu().numpy()
+            # fig, ax = plt.subplots(1, 2, figsize=(12, 6))
 
-        X, u, Y, s = worst_case
-        X = X.squeeze(0).cpu().numpy()
-        u = u.squeeze(0).cpu().numpy()
-        Y = Y.squeeze(0).cpu().numpy()
-        s = s.squeeze(0).cpu().numpy()
+            # predictions = []
 
-        # Plot the input data
-        ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
-        ax[0].plot(X, pred, label="Prediction")
-        # Plot the output data
-        ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
+            # for _ in range(10):
+            #     pred, alpha_pred = evaluate_instance(
+            #         model,
+            #         point,
+            #         input_function_encoder=input_function_encoder,
+            #         output_function_encoder=output_function_encoder,
+            #     )
+            #     pred = pred.squeeze(0).cpu().numpy()
+            #     predictions.append(pred)
 
-        plt.tight_layout()
-        plt.savefig(file_name)
-        plt.close()
+            # predictions = np.array(predictions)
+            # mean_prediction = predictions.mean(axis=0)
+            # min_prediction = predictions.min(axis=0)
+            # max_prediction = predictions.max(axis=0)
+
+            # X, u, Y, s = point
+            # X = X.squeeze(0).cpu().numpy()
+            # u = u.squeeze(0).cpu().numpy()
+            # Y = Y.squeeze(0).cpu().numpy()
+            # s = s.squeeze(0).cpu().numpy()
+
+            # # Plot the input data
+            # ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
+            # ax[0].plot(X, mean_prediction, label="Mean Prediction", color="blue")
+
+            # for i in range(predictions.shape[0]):
+            #     ax[0].plot(X, predictions[i], color="blue", alpha=0.1)
+
+            # # Plot the output data
+            # ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
+
+            # plt.tight_layout()
+            # plt.savefig(file_name)
+            # plt.close()

@@ -9,6 +9,7 @@ import tqdm
 class LinearB2BOperator(torch.nn.Module):
     """
     Linear operator for the inverse problem of parameter estimation.
+    Maps from input coefficients (alpha) to output coefficients (beta) using a linear transformation.
     """
 
     def __init__(self, input_size, output_size):
@@ -17,13 +18,36 @@ class LinearB2BOperator(torch.nn.Module):
         self.linear.weight.requires_grad = False
 
     def forward(self, alpha):
+        """
+        Forward pass: beta = W * alpha
+        Maps from input coefficients to output coefficients.
+        """
         return self.linear(alpha)
 
     def inverse(self, beta):
-        """Compute the inverse of the linear operator."""
-        return torch.linalg.solve(
-            self.linear.weight.unsqueeze(0).expand(beta.size(0), -1, -1), beta
-        )
+        """
+        Inverse pass: alpha = W^(-1) * beta
+        Maps from output coefficients back to input coefficients using a least-squares solve.
+        """
+        # For batched inputs, we solve for each sample in the batch
+        weight = self.linear.weight
+
+        # Check if beta is a batch or single sample
+        if beta.dim() == 1:
+            # Single sample case
+            return torch.linalg.lstsq(weight, beta.unsqueeze(1)).solution.squeeze(1)
+        else:
+            # Batched case
+            solutions = []
+            for b in beta:
+                sol = torch.linalg.lstsq(weight, b.unsqueeze(1)).solution.squeeze(1)
+                solutions.append(sol)
+            return torch.stack(solutions)
+
+        # weight = self.linear.weight.unsqueeze(0).expand(beta.shape[0], -1, -1)
+        # solutions = torch.linalg.lstsq(weight, beta).solution
+
+        # return solutions
 
 
 class LinearB2BOperatorFactory:
@@ -183,24 +207,99 @@ def plot_evaluation(
             plt.close()
 
 
-def plot_worst_case_evaluation(
+def _plot_case(
+    model,
+    point,
+    file_name,
+    input_function_encoder,
+    output_function_encoder,
+):
+    """Helper function to plot a specific case evaluation."""
+    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+
+    pred, alpha_pred = evaluate_instance(
+        model,
+        point,
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+    )
+    pred = pred.squeeze(0).cpu().numpy()
+
+    X, u, Y, s = point
+    X = X.squeeze(0).cpu().numpy()
+    u = u.squeeze(0).cpu().numpy()
+    Y = Y.squeeze(0).cpu().numpy()
+    s = s.squeeze(0).cpu().numpy()
+
+    # Plot the input data
+    ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
+    ax[0].plot(X, pred, label="Prediction")
+
+    # Plot the output data
+    ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
+
+    plt.tight_layout()
+    plt.savefig(file_name)
+    plt.close()
+
+
+def plot_best_case_evaluation(
     model,
     dataset,
-    file_name="results/b2b_operator_worst_case_evaluation.png",
+    file_name="results/model_best_case_evaluation.png",
     input_function_encoder=None,
     output_function_encoder=None,
 ):
+    """Find and plot the best case (lowest loss) from the dataset."""
     model.eval()
     with torch.no_grad():
+        dataloader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+        )
+        best_case = None
+        best_case_loss = float("inf")
+        best_case_index = -1
 
-        # Find worst case
+        for i, point in enumerate(dataloader):
+            loss = loss_function(
+                model=model,
+                batch=point,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+            )
+            if loss < best_case_loss:
+                best_case_loss = loss
+                best_case = point
+                best_case_index = i
+
+        _plot_case(
+            model=model,
+            point=best_case,
+            file_name=file_name,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+        )
+
+
+def plot_worst_case_evaluation(
+    model,
+    dataset,
+    file_name="results/model_worst_case_evaluation.png",
+    input_function_encoder=None,
+    output_function_encoder=None,
+):
+    """Find and plot the worst case (highest loss) from the dataset."""
+    model.eval()
+    with torch.no_grad():
         dataloader = DataLoader(
             dataset,
             batch_size=1,
             shuffle=False,
         )
         worst_case = None
-        worst_case_loss = float("inf")
+        worst_case_loss = float("-inf")
         worst_case_index = -1
 
         for i, point in enumerate(dataloader):
@@ -210,33 +309,15 @@ def plot_worst_case_evaluation(
                 input_function_encoder=input_function_encoder,
                 output_function_encoder=output_function_encoder,
             )
-            if loss < worst_case_loss:
+            if loss > worst_case_loss:
                 worst_case_loss = loss
                 worst_case = point
                 worst_case_index = i
 
-        # Plot worst case
-        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-        pred, alpha_pred = evaluate_instance(
-            model,
-            worst_case,
+        _plot_case(
+            model=model,
+            point=worst_case,
+            file_name=file_name,
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
         )
-        pred = pred.squeeze(0).cpu().numpy()
-
-        X, u, Y, s = worst_case
-        X = X.squeeze(0).cpu().numpy()
-        u = u.squeeze(0).cpu().numpy()
-        Y = Y.squeeze(0).cpu().numpy()
-        s = s.squeeze(0).cpu().numpy()
-
-        # Plot the input data
-        ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
-        ax[0].plot(X, pred, label="Prediction")
-        # Plot the output data
-        ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
-
-        plt.tight_layout()
-        plt.savefig(file_name)
-        plt.close()
