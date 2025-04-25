@@ -115,15 +115,14 @@ match params.model:
 
     case "invertible_network":
         from models.invertible_network import (
-            ConditionalInvertibleNetworkFactory,
+            InvertibleNetworkFactory,
             plot_evaluation,
             plot_best_case_evaluation,
             plot_worst_case_evaluation,
         )
 
-        model = ConditionalInvertibleNetworkFactory.create(
+        model = InvertibleNetworkFactory.create(
             input_size=params.input_fe_n_basis,
-            condition_size=params.output_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
             n_coupling_layers=2,
         )

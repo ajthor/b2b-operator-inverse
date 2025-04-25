@@ -6,166 +6,97 @@ from torch.utils.data import Subset, DataLoader
 import tqdm
 
 
-class ScaleNetwork(torch.nn.Module):
+class AdditiveCoupling(torch.nn.Module):
     def __init__(
         self,
         input_size,
-        condition_size,
         hidden_sizes=[128, 128],
+        split_dim=None,
         activation=torch.nn.ReLU(),
     ):
-        super(ScaleNetwork, self).__init__()
+        super(AdditiveCoupling, self).__init__()
 
         self.input_size = input_size
+        if split_dim is None:
+            self.split_dim = input_size // 2
+        else:
+            self.split_dim = split_dim
 
-        self.scale = torch.nn.ModuleList()
+        # Neural network to transform the first part
+        self.net = torch.nn.Sequential()
 
-        sizes = [input_size // 2 + condition_size] + hidden_sizes + [input_size // 2]
-
-        for i in range(len(sizes) - 1):
-            self.scale.append(
-                torch.nn.Linear(sizes[i], sizes[i + 1]),
+        # Create layers with the specified hidden sizes
+        layer_sizes = [input_size - self.split_dim] + hidden_sizes + [self.split_dim]
+        for i in range(len(layer_sizes) - 1):
+            self.net.add_module(
+                f"linear_{i}", torch.nn.Linear(layer_sizes[i], layer_sizes[i + 1])
             )
+            if i < len(layer_sizes) - 2:  # No activation after the last layer
+                self.net.add_module(f"activation_{i}", activation)
 
-        self.activation = activation
+    def forward(self, x):
+        """
+        Forward transformation: x -> y
+        Implements the additive coupling layer: y1 = x1, y2 = x2 + f(x1)
+        """
+        x1, x2 = torch.split(x, [self.split_dim, x.size(-1) - self.split_dim], dim=-1)
+        y1 = x1
+        y2 = x2 + self.net(x1)
+        return torch.cat([y1, y2], dim=-1)
 
-    def forward(self, x, condition):
-        x = torch.cat([x, condition], dim=1)
+    def inverse(self, y):
+        """
+        Inverse transformation: y -> x
+        Implements the inverse of additive coupling: x1 = y1, x2 = y2 - f(y1)
+        """
+        y1, y2 = torch.split(y, [self.split_dim, y.size(-1) - self.split_dim], dim=-1)
+        x1 = y1
+        x2 = y2 - self.net(y1)
+        return torch.cat([x1, x2], dim=-1)
 
-        for layer in self.scale[:-1]:
-            x = self.activation(layer(x))
 
-        x = self.scale[-1](x)
+class InvertibleNeuralNetwork(torch.nn.Module):
+    def __init__(self, coupling_layers):
+        super(InvertibleNeuralNetwork, self).__init__()
+        self.coupling_layers = torch.nn.ModuleList(coupling_layers)
 
-        return torch.tanh(x)
-
-
-class TranslateNetwork(torch.nn.Module):
-    def __init__(
-        self,
-        input_size,
-        condition_size,
-        hidden_sizes=[128, 128],
-        activation=torch.nn.ReLU(),
-    ):
-        super(TranslateNetwork, self).__init__()
-
-        self.input_size = input_size
-
-        self.translate = torch.nn.ModuleList()
-
-        sizes = [input_size // 2 + condition_size] + hidden_sizes + [input_size // 2]
-        for i in range(len(sizes) - 1):
-            self.translate.append(
-                torch.nn.Linear(sizes[i], sizes[i + 1]),
-            )
-
-        self.activation = activation
-
-    def forward(self, x, condition):
-        x = torch.cat([x, condition], dim=1)
-
-        for layer in self.translate[:-1]:
-            x = self.activation(layer(x))
-
-        x = self.translate[-1](x)
-
+    def forward(self, alpha):
+        """
+        Forward transformation, applies all coupling layers in sequence.
+        """
+        x = alpha
+        for layer in self.coupling_layers:
+            x = layer.forward(x)
         return x
 
-
-class AffineCoupling(torch.nn.Module):
-    def __init__(
-        self,
-        scale_network,
-        translate_network,
-    ):
-        super(AffineCoupling, self).__init__()
-
-        self.scale_network = scale_network
-        self.translate_network = translate_network
-
-    def forward(self, x, condition):
-        x1, x2 = x.chunk(2, dim=-1)
-
-        s = self.scale_network(x1, condition)
-        t = self.translate_network(x1, condition)
-
-        x2 = x2 * torch.exp(s) + t
-
-        return torch.cat([x1, x2], dim=-1), (s, t)
-
-    def inverse(self, z, condition):
-        z1, z2 = z.chunk(2, dim=-1)
-
-        s = self.scale_network(z1, condition)
-        t = self.translate_network(z1, condition)
-
-        z2 = (z2 - t) * torch.exp(-s)
-
-        return torch.cat([z1, z2], dim=-1)
+    def inverse(self, beta):
+        """
+        Inverse transformation, applies all coupling layers in reverse order.
+        """
+        y = beta
+        for layer in reversed(self.coupling_layers):
+            y = layer.inverse(y)
+        return y
 
 
-class ConditionalInvertibleNetwork(torch.nn.Module):
-    def __init__(
-        self,
-        coupling_layers,
-    ):
-        super(ConditionalInvertibleNetwork, self).__init__()
-
-        self.layers = coupling_layers
-
-    def sample_prior(self, batch_size, device=None):
-        z = torch.randn(
-            batch_size, self.layers[0].scale_network.input_size, device=device
-        )
-        return z
-
-    def forward(self, alpha, beta):
-        log_det = 0
-
-        for layer in self.layers:
-            alpha, (s, _) = layer(alpha, beta)
-            log_det += torch.sum(torch.exp(s), dim=1)
-
-        return alpha, log_det
-
-    def inverse(self, beta, z):
-        for layer in reversed(self.layers):
-            z = layer.inverse(z, beta)
-
-        return z
-
-
-class ConditionalInvertibleNetworkFactory:
+class InvertibleNetworkFactory:
     @staticmethod
-    def create(
-        input_size,
-        condition_size,
-        hidden_sizes,
-        n_coupling_layers,
-        activation=torch.nn.ReLU(),
-    ):
-        coupling_layers = torch.nn.ModuleList(
-            [
-                AffineCoupling(
-                    ScaleNetwork(
-                        input_size=input_size,
-                        condition_size=condition_size,
-                        hidden_sizes=hidden_sizes,
-                        activation=activation,
-                    ),
-                    TranslateNetwork(
-                        input_size=input_size,
-                        condition_size=condition_size,
-                        hidden_sizes=hidden_sizes,
-                        activation=activation,
-                    ),
-                )
-                for _ in range(n_coupling_layers)
-            ]
-        )
+    def create(input_size, hidden_sizes=[128, 128], n_coupling_layers=2):
+        coupling_layers = []
 
-        return ConditionalInvertibleNetwork(coupling_layers=coupling_layers)
+        for i in range(n_coupling_layers):
+            # Alternate between splitting at different positions for better flow
+            if i % 2 == 0:
+                split_dim = input_size // 2
+            else:
+                split_dim = input_size - input_size // 2
+
+            layer = AdditiveCoupling(
+                input_size=input_size, hidden_sizes=hidden_sizes, split_dim=split_dim
+            )
+            coupling_layers.append(layer)
+
+        return InvertibleNeuralNetwork(coupling_layers=coupling_layers)
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
@@ -174,16 +105,12 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     alpha = input_function_encoder.compute_coefficients(X, u)
     beta = output_function_encoder.compute_coefficients(Y, s)
 
-    z, log_det = model(alpha, beta)
-    alpha_pred = model.inverse(beta, z)
+    alpha_pred = model.inverse(beta)
 
     # reconstruction loss
     pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
 
-    # regularization loss
-    regularization_loss = torch.mean(log_det)
-
-    return pred_loss + regularization_loss
+    return pred_loss
 
 
 def train(
@@ -256,8 +183,8 @@ def evaluate_instance(model, point, input_function_encoder, output_function_enco
         X, u, Y, s = point
 
         beta = output_function_encoder.compute_coefficients(Y, s)
-        z = model.sample_prior(1, device=X.device)
-        alpha_pred = model.inverse(beta, z)
+
+        alpha_pred = model.inverse(beta)
 
         pred = input_function_encoder(X, alpha_pred)
 
@@ -274,21 +201,13 @@ def _plot_case(
     """Helper function to plot a specific case evaluation."""
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))
 
-    predictions = []
-    for _ in range(10):
-        pred, alpha_pred = evaluate_instance(
-            model,
-            point,
-            input_function_encoder=input_function_encoder,
-            output_function_encoder=output_function_encoder,
-        )
-        pred = pred.squeeze(0).cpu().numpy()
-        predictions.append(pred)
-
-    predictions = np.array(predictions)
-    mean_prediction = predictions.mean(axis=0)
-    min_prediction = predictions.min(axis=0)
-    max_prediction = predictions.max(axis=0)
+    pred, alpha_pred = evaluate_instance(
+        model,
+        point,
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+    )
+    pred = pred.squeeze(0).cpu().numpy()
 
     X, u, Y, s = point
     X = X.squeeze(0).cpu().numpy()
@@ -298,10 +217,7 @@ def _plot_case(
 
     # Plot the input data
     ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
-    ax[0].plot(X, mean_prediction, label="Mean Prediction", color="blue")
-
-    for i in range(predictions.shape[0]):
-        ax[0].plot(X, predictions[i], color="blue", alpha=0.1)
+    ax[0].plot(X, pred, label="Prediction")
 
     # Plot the output data
     ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
@@ -418,42 +334,3 @@ def plot_evaluation(
                 input_function_encoder=input_function_encoder,
                 output_function_encoder=output_function_encoder,
             )
-
-            # fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-
-            # predictions = []
-
-            # for _ in range(10):
-            #     pred, alpha_pred = evaluate_instance(
-            #         model,
-            #         point,
-            #         input_function_encoder=input_function_encoder,
-            #         output_function_encoder=output_function_encoder,
-            #     )
-            #     pred = pred.squeeze(0).cpu().numpy()
-            #     predictions.append(pred)
-
-            # predictions = np.array(predictions)
-            # mean_prediction = predictions.mean(axis=0)
-            # min_prediction = predictions.min(axis=0)
-            # max_prediction = predictions.max(axis=0)
-
-            # X, u, Y, s = point
-            # X = X.squeeze(0).cpu().numpy()
-            # u = u.squeeze(0).cpu().numpy()
-            # Y = Y.squeeze(0).cpu().numpy()
-            # s = s.squeeze(0).cpu().numpy()
-
-            # # Plot the input data
-            # ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
-            # ax[0].plot(X, mean_prediction, label="Mean Prediction", color="blue")
-
-            # for i in range(predictions.shape[0]):
-            #     ax[0].plot(X, predictions[i], color="blue", alpha=0.1)
-
-            # # Plot the output data
-            # ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
-
-            # plt.tight_layout()
-            # plt.savefig(file_name)
-            # plt.close()
