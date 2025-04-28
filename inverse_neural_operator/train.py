@@ -19,7 +19,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="darcy_1d")
 
 # Model args
-parser.add_argument("--model", type=str, default="variational_autoencoder")
+parser.add_argument("--model", type=str, default="b2b_nonlinear")
 parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
 
 # DeepONet specific args
@@ -107,24 +107,14 @@ match params.dataset:
         raise ValueError(f"Unknown dataset: {params.dataset}")
 
 # Load train dataset
-(
-    model_train_dataset,
-    input_fe_train_dataset,
-    output_fe_train_dataset,
-    input_info,
-    output_info,
-    model_info,
-) = load_data(params, device=device, split="train")
+(model_train_dataset, input_fe_train_dataset, output_fe_train_dataset) = load_data(
+    params, device=device, split="train"
+)
 
 # Load test dataset
-(
-    model_test_dataset,
-    input_fe_test_dataset,
-    output_fe_test_dataset,
-    _,  # We already have input_info from train
-    _,  # We already have output_info from train
-    _,  # We already have model_info from train
-) = load_data(params, device=device, split="test")
+(model_test_dataset, input_fe_test_dataset, output_fe_test_dataset) = load_data(
+    params, device=device, split="test"
+)
 
 # Create DataLoaders from the datasets
 model_train_dataloader = DataLoader(
@@ -160,11 +150,7 @@ output_fe_test_dataloader = DataLoader(
     shuffle=True,
 )
 
-input_function_input_size = input_info["input_size"]
-input_function_output_size = input_info["output_size"]
-
-output_function_input_size = output_info["input_size"]
-output_function_output_size = output_info["output_size"]
+dataset_info = model_train_dataset.get_info()
 
 
 # Define model
@@ -203,9 +189,9 @@ match params.model:
         )
 
         model = DeepONetFactory.create(
-            branch_input_size=output_function_output_size * model_info["output_len"],
-            trunk_input_size=model_info["input_size"],
-            output_size=input_function_output_size,
+            branch_input_size=dataset_info["Y_size"] * dataset_info["Y_len"],
+            trunk_input_size=dataset_info["X_size"],
+            output_size=dataset_info["u_size"],
             hidden_sizes=params.hidden_sizes,
         ).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
@@ -242,16 +228,16 @@ match params.model:
 
 
 input_function_encoder = FunctionEncoderFactory.create(
-    input_size=input_function_input_size,
+    input_size=dataset_info["X_size"],
     hidden_sizes=params.input_fe_hidden_sizes,
-    output_size=input_function_output_size,
+    output_size=dataset_info["u_size"],
     n_basis=params.input_fe_n_basis,
 ).to(device)
 
 output_function_encoder = FunctionEncoderFactory.create(
-    input_size=output_function_input_size,
+    input_size=dataset_info["Y_size"],
     hidden_sizes=params.output_fe_hidden_sizes,
-    output_size=output_function_output_size,
+    output_size=dataset_info["s_size"],
     n_basis=params.output_fe_n_basis,
 ).to(device)
 

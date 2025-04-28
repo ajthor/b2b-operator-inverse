@@ -11,19 +11,20 @@ from data.process_data import (
 class ParametricHeatDataset(Dataset):
     """Custom dataset for parametric heat equation data."""
 
-    def __init__(self, hf_dataset, grid_size=51, device="cpu"):
+    def __init__(self, dataset, grid_size=51, device="cpu"):
         """
         Initialize the dataset by extracting 'u' and 's' values and creating coordinate grid.
 
         Args:
-            hf_dataset: HuggingFace dataset with 'u' and 's' fields
+            dataset: HuggingFace dataset with 'u' and 's' fields
             grid_size: Size of the square grid (default: 51)
             device: The device to put tensors on
         """
         self.device = device
+        self.n_samples = len(dataset)
 
-        self.u = torch.tensor(hf_dataset["u"], device=device)
-        self.s = torch.tensor(hf_dataset["s"], device=device)
+        self.u = torch.tensor(dataset["u"], device=device)
+        self.s = torch.tensor(dataset["s"], device=device)
 
         # Ensure correct dimensions
         if self.u.dim() == 2:  # [batch, values]
@@ -42,7 +43,7 @@ class ParametricHeatDataset(Dataset):
         self.Y = self.X  # Y coordinates are the same as X coordinates
 
     def __len__(self):
-        return len(self.u)
+        return self.n_samples
 
     def __getitem__(self, idx):
         """
@@ -63,18 +64,16 @@ class ParametricHeatDataset(Dataset):
         )
 
     def get_info(self):
-        """Extract info from the dataset."""
-
-        input_size = self.X.shape[-1]
-        output_size = self.Y.shape[-1]
-        input_len = self.X.shape[0]
-        output_len = self.Y.shape[0]
-
+        """Extract info from model dataset."""
         return {
-            "input_size": input_size,
-            "output_size": output_size,
-            "input_len": input_len,
-            "output_len": output_len,
+            "X_size": self.X.shape[-1],
+            "u_size": self.u.shape[-1],
+            "Y_size": self.Y.shape[-1],
+            "s_size": self.s.shape[-1],
+            "X_len": self.X.shape[0],
+            "u_len": self.u.shape[0],
+            "Y_len": self.Y.shape[0],
+            "s_len": self.s.shape[0],
         }
 
 
@@ -94,19 +93,7 @@ def load_data(params, device, split="train"):
     ds = load_dataset("ajthor/parametric_heat", split=split)
 
     model_dataset = ParametricHeatDataset(ds, grid_size=51, device=device)
-    model_info = model_dataset.get_info()
-
     input_fe_dataset = InputFunctionEncoderDataset(model_dataset, device=device)
-    input_info = input_fe_dataset.get_info()
-
     output_fe_dataset = OutputFunctionEncoderDataset(model_dataset, device=device)
-    output_info = output_fe_dataset.get_info()
 
-    return (
-        model_dataset,
-        input_fe_dataset,
-        output_fe_dataset,
-        input_info,
-        output_info,
-        model_info,
-    )
+    return (model_dataset, input_fe_dataset, output_fe_dataset)
