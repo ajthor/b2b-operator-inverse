@@ -22,6 +22,12 @@ parser.add_argument("--dataset", type=str, default="darcy_1d")
 parser.add_argument("--model", type=str, default="variational_autoencoder")
 parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
 
+# DeepONet specific args
+parser.add_argument("--branch_hidden_sizes", type=int, nargs="+", default=[256, 256])
+parser.add_argument("--trunk_hidden_sizes", type=int, nargs="+", default=[256, 256])
+parser.add_argument("--trunk_input_size", type=int, default=1)
+parser.add_argument("--output_channels", type=int, default=1)
+
 # Function encoder args
 parser.add_argument("--input_fe_n_basis", type=int, default=100)
 parser.add_argument("--input_fe_hidden_sizes", type=int, nargs="+", default=[256, 256])
@@ -34,10 +40,10 @@ parser.add_argument("--batch_size", type=int, default=50)
 parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 
-parser.add_argument("--input_fe_epochs", type=int, default=1000)
+parser.add_argument("--input_fe_epochs", type=int, default=5000)
 parser.add_argument("--input_fe_learning_rate", type=float, default=None)
 
-parser.add_argument("--output_fe_epochs", type=int, default=1000)
+parser.add_argument("--output_fe_epochs", type=int, default=5000)
 parser.add_argument("--output_fe_learning_rate", type=float, default=None)
 
 # SummaryWriter args
@@ -154,11 +160,11 @@ output_fe_test_dataloader = DataLoader(
     shuffle=True,
 )
 
-input_fe_input_size = input_info["input_size"]
-input_fe_output_size = input_info["output_size"]
+input_function_input_size = input_info["input_size"]
+input_function_output_size = input_info["output_size"]
 
-output_fe_input_size = output_info["input_size"]
-output_fe_output_size = output_info["output_size"]
+output_function_input_size = output_info["input_size"]
+output_function_output_size = output_info["output_size"]
 
 
 # Define model
@@ -186,6 +192,20 @@ match params.model:
         model = NonlinearB2BOperatorFactory.create(
             input_size=params.input_fe_n_basis,
             output_size=params.output_fe_n_basis,
+            hidden_sizes=params.hidden_sizes,
+        ).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+
+    case "deeponet":
+        from models.deeponet import (
+            DeepONetFactory,
+            train as train_model,
+        )
+
+        model = DeepONetFactory.create(
+            branch_input_size=output_function_output_size * model_info["output_len"],
+            trunk_input_size=model_info["input_size"],
+            output_size=input_function_output_size,
             hidden_sizes=params.hidden_sizes,
         ).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
@@ -222,16 +242,16 @@ match params.model:
 
 
 input_function_encoder = FunctionEncoderFactory.create(
-    input_size=input_fe_input_size,
+    input_size=input_function_input_size,
     hidden_sizes=params.input_fe_hidden_sizes,
-    output_size=input_fe_output_size,
+    output_size=input_function_output_size,
     n_basis=params.input_fe_n_basis,
 ).to(device)
 
 output_function_encoder = FunctionEncoderFactory.create(
-    input_size=output_fe_input_size,
+    input_size=output_function_input_size,
     hidden_sizes=params.output_fe_hidden_sizes,
-    output_size=output_fe_output_size,
+    output_size=output_function_output_size,
     n_basis=params.output_fe_n_basis,
 ).to(device)
 

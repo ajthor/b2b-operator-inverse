@@ -62,11 +62,11 @@ match params.dataset:
     model_info,
 ) = load_data(params, device=device, split="test")
 
-input_fe_input_size = input_info["input_size"]
-input_fe_output_size = input_info["output_size"]
+input_function_input_size = input_info["input_size"]
+input_function_output_size = input_info["output_size"]
 
-output_fe_input_size = output_info["input_size"]
-output_fe_output_size = output_info["output_size"]
+output_function_input_size = output_info["input_size"]
+output_function_output_size = output_info["output_size"]
 
 
 match params.model:
@@ -127,21 +127,36 @@ match params.model:
             n_coupling_layers=2,
         )
 
+    case "deeponet":
+        from models.deeponet import (
+            DeepONetFactory,
+            plot_evaluation,
+            plot_best_case_evaluation,
+            plot_worst_case_evaluation,
+        )
+
+        model = DeepONetFactory.create(
+            branch_input_size=output_function_output_size * model_info["output_len"],
+            trunk_input_size=model_info["input_size"],
+            output_size=input_function_output_size,
+            hidden_sizes=params.hidden_sizes,
+        )
+
     case _:
         raise ValueError(f"Unknown model: {params.model}")
 
 
 input_function_encoder = FunctionEncoderFactory.create(
-    input_size=input_fe_input_size,
+    input_size=input_function_input_size,
     hidden_sizes=params.input_fe_hidden_sizes,
-    output_size=input_fe_output_size,
+    output_size=input_function_output_size,
     n_basis=params.input_fe_n_basis,
 )
 
 output_function_encoder = FunctionEncoderFactory.create(
-    input_size=output_fe_input_size,
+    input_size=output_function_input_size,
     hidden_sizes=params.output_fe_hidden_sizes,
-    output_size=output_fe_output_size,
+    output_size=output_function_output_size,
     n_basis=params.output_fe_n_basis,
 )
 

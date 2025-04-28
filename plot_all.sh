@@ -3,10 +3,10 @@ set -euo pipefail
 
 #── CONFIGURATION ────────────────────────────────────────
 # Same datasets and models as in run_all.sh
-# DATASETS=(burgers_1d darcy_1d)
-# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
 DATASETS=(burgers_1d darcy_1d)
-MODELS=(invertible_network)
+MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
+# DATASETS=(burgers_1d darcy_1d)
+# MODELS=(invertible_network)
 
 # Base directory for experiment logs - same as in run_all.sh
 LOG_BASE_DIR="/store/at46867"

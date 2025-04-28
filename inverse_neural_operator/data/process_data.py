@@ -33,6 +33,9 @@ def process_input_function_encoder_dataset(ds, params, device):
     input_size = input_fe_ds[0]["xs"].shape[-1]
     output_size = input_fe_ds[0]["ys"].shape[-1]
 
+    input_len = input_fe_ds[0]["xs"].shape[0]
+    output_len = input_fe_ds[0]["ys"].shape[0]
+
     input_fe_dataset = TensorDataset(
         torch.from_numpy(input_fe_ds["example_xs"]).to(device),
         torch.from_numpy(input_fe_ds["example_ys"]).to(device),
@@ -43,6 +46,8 @@ def process_input_function_encoder_dataset(ds, params, device):
     input_info = {
         "input_size": input_size,
         "output_size": output_size,
+        "input_len": input_len,
+        "output_len": output_len,
     }
 
     return input_fe_dataset, input_info
@@ -78,6 +83,9 @@ def process_output_function_encoder_dataset(ds, params, device):
     input_size = output_fe_ds[0]["xs"].shape[-1]
     output_size = output_fe_ds[0]["ys"].shape[-1]
 
+    input_len = output_fe_ds[0]["xs"].shape[0]
+    output_len = output_fe_ds[0]["ys"].shape[0]
+
     output_fe_dataset = TensorDataset(
         torch.from_numpy(output_fe_ds["example_xs"]).to(device),
         torch.from_numpy(output_fe_ds["example_ys"]).to(device),
@@ -88,6 +96,8 @@ def process_output_function_encoder_dataset(ds, params, device):
     output_info = {
         "input_size": input_size,
         "output_size": output_size,
+        "input_len": input_len,
+        "output_len": output_len,
     }
 
     return output_fe_dataset, output_info
@@ -112,6 +122,9 @@ def process_model_dataset(ds, params, device):
     input_size = model_ds[0]["X"].shape[-1]
     output_size = model_ds[0]["Y"].shape[-1]
 
+    input_len = model_ds[0]["X"].shape[0]
+    output_len = model_ds[0]["Y"].shape[0]
+
     model_dataset = TensorDataset(
         torch.from_numpy(model_ds["X"]).to(device),
         torch.from_numpy(model_ds["u"]).to(device),
@@ -122,6 +135,8 @@ def process_model_dataset(ds, params, device):
     model_info = {
         "input_size": input_size,
         "output_size": output_size,
+        "input_len": input_len,
+        "output_len": output_len,
     }
 
     return model_dataset, model_info
