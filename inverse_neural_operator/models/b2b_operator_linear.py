@@ -68,86 +68,45 @@ def create_model(input_size, output_size):
 
 
 def save(model, path):
-    """
-    Save a model to a file.
-    
-    Args:
-        model: The model to save
-        path: Path where the model will be saved
-    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save(model.state_dict(), path)
 
 
-def load(path, input_size, output_size, device=None):
-    """
-    Load a model from a file.
-    
-    Args:
-        path: Path to the saved model
-        input_size: Size of the input coefficients (alpha)
-        output_size: Size of the output coefficients (beta)
-        device: Device to load the model to ('cpu', 'cuda', etc.)
-        
-    Returns:
-        Loaded LinearB2BOperator instance
-    """
-    model = create_model(input_size, output_size)
+def load(model, path, device=None):
     model.load_state_dict(torch.load(path, map_location=device))
-    if device is not None:
-        model = model.to(device)
-    model.eval()
     return model
 
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
-    """
-    Save a model checkpoint including training state.
-    
-    Args:
-        model: The model to save
-        optimizer: The optimizer used for training
-        epoch: Current epoch number
-        loss: Current loss value
-        path: Path where the checkpoint will be saved
-    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     checkpoint = {
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict() if optimizer is not None else None,
-        'loss': loss
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": (
+            optimizer.state_dict() if optimizer is not None else None
+        ),
+        "loss": loss,
     }
     torch.save(checkpoint, path)
 
 
-def load_checkpoint(path, input_size, output_size, optimizer=None, device=None):
-    """
-    Load a model checkpoint including training state.
-    
-    Args:
-        path: Path to the saved checkpoint
-        input_size: Size of the input coefficients (alpha)
-        output_size: Size of the output coefficients (beta)
-        optimizer: Optimizer to load state into (optional)
-        device: Device to load the model to ('cpu', 'cuda', etc.)
-        
-    Returns:
-        tuple: (model, optimizer, epoch, loss)
-    """
-    model = create_model(input_size, output_size)
-    
+def load_checkpoint(
+    model,
+    path,
+    optimizer=None,
+    device=None,
+):
     checkpoint = torch.load(path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    
+    model.load_state_dict(checkpoint["model_state_dict"])
+
     if device is not None:
         model = model.to(device)
-    
-    if optimizer is not None and checkpoint['optimizer_state_dict'] is not None:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    
+
+    if optimizer is not None and checkpoint["optimizer_state_dict"] is not None:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
     model.eval()
-    return model, optimizer, checkpoint['epoch'], checkpoint['loss']
+    return model, optimizer, checkpoint["epoch"], checkpoint["loss"]
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
@@ -177,7 +136,10 @@ def train(
     summary_writer,
     model_name,
     params,
-    device,
+    resume_from_checkpoint=False,
+    checkpoint_dir=None,
+    checkpoint_interval=100,
+    device=None,
 ):
 
     n = params.input_fe_n_basis

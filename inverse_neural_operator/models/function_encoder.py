@@ -44,93 +44,45 @@ def create_model(
 
 
 def save(model, path):
-    """
-    Save a function encoder model to a file.
-    
-    Args:
-        model: The model to save
-        path: Path where the model will be saved
-    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save(model.state_dict(), path)
 
 
-def load(path, input_size, hidden_sizes, output_size, n_basis, activation=torch.nn.ReLU(), device=None):
-    """
-    Load a function encoder model from a file.
-    
-    Args:
-        path: Path to the saved model
-        input_size: Size of the input features
-        hidden_sizes: List of hidden layer sizes for the MLP
-        output_size: Size of the output features
-        n_basis: Number of basis functions
-        activation: Activation function to use in the MLP
-        device: Device to load the model to ('cpu', 'cuda', etc.)
-        
-    Returns:
-        Loaded FunctionEncoder instance
-    """
-    model = create_model(input_size, hidden_sizes, output_size, n_basis, activation)
+def load(model, path, device=None):
     model.load_state_dict(torch.load(path, map_location=device))
-    if device is not None:
-        model = model.to(device)
-    model.eval()
     return model
 
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
-    """
-    Save a function encoder checkpoint including training state.
-    
-    Args:
-        model: The model to save
-        optimizer: The optimizer used for training
-        epoch: Current epoch number
-        loss: Current loss value
-        path: Path where the checkpoint will be saved
-    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     checkpoint = {
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict() if optimizer is not None else None,
-        'loss': loss
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": (
+            optimizer.state_dict() if optimizer is not None else None
+        ),
+        "loss": loss,
     }
     torch.save(checkpoint, path)
 
 
-def load_checkpoint(path, input_size, hidden_sizes, output_size, n_basis, 
-                   activation=torch.nn.ReLU(), optimizer=None, device=None):
-    """
-    Load a function encoder checkpoint including training state.
-    
-    Args:
-        path: Path to the saved checkpoint
-        input_size: Size of the input features
-        hidden_sizes: List of hidden layer sizes for the MLP
-        output_size: Size of the output features
-        n_basis: Number of basis functions
-        activation: Activation function to use in the MLP
-        optimizer: Optimizer to load state into (optional)
-        device: Device to load the model to ('cpu', 'cuda', etc.)
-        
-    Returns:
-        tuple: (model, optimizer, epoch, loss)
-    """
-    model = create_model(input_size, hidden_sizes, output_size, n_basis, activation)
-    
+def load_checkpoint(
+    model,
+    path,
+    optimizer=None,
+    device=None,
+):
     checkpoint = torch.load(path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    
+    model.load_state_dict(checkpoint["model_state_dict"])
+
     if device is not None:
         model = model.to(device)
-    
-    if optimizer is not None and checkpoint['optimizer_state_dict'] is not None:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    
+
+    if optimizer is not None and checkpoint["optimizer_state_dict"] is not None:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
     model.eval()
-    return model, optimizer, checkpoint['epoch'], checkpoint['loss']
+    return model, optimizer, checkpoint["epoch"], checkpoint["loss"]
 
 
 def loss_function(model, batch):
@@ -157,12 +109,28 @@ def train(
     n_epochs,
     summary_writer,
     model_name,
-    params,
-    device,
+    resume_from_checkpoint=False,
+    checkpoint_dir=None,
+    checkpoint_interval=100,
+    device=None,
 ):
+    start_epoch = 0
+    best_loss = float("inf")
 
-    tqdm_bar = tqdm.tqdm(range(n_epochs))
-    for epoch in range(n_epochs):
+    # Resume from checkpoint
+    if resume_from_checkpoint:
+        checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_checkpoint.pt")
+        if os.path.exists(checkpoint_path):
+            model, optimizer, start_epoch, loss = load_checkpoint(
+                model=model,
+                path=checkpoint_path,
+                optimizer=optimizer,
+                device=device,
+            )
+            print(f"Resuming training from epoch {start_epoch}...")
+
+    tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
+    for epoch in range(start_epoch, n_epochs):
         model.train()
         batch = next(iter(train_dataloader))
         optimizer.zero_grad()
@@ -174,6 +142,13 @@ def train(
 
         avg_test_loss = test_model(model=model, test_dataloader=test_dataloader)
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+
+        # Save checkpoint
+        if checkpoint_dir is not None and epoch % checkpoint_interval == 0:
+            checkpoint_path = os.path.join(
+                checkpoint_dir, f"{model_name}_checkpoint.pt"
+            )
+            save_checkpoint(model, optimizer, epoch, avg_test_loss, checkpoint_path)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)

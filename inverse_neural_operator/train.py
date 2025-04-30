@@ -3,7 +3,7 @@ import argparse
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-
+import os
 
 from models.function_encoder import (
     create_model as create_function_encoder,
@@ -40,10 +40,10 @@ parser.add_argument("--batch_size", type=int, default=5)
 parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 
-parser.add_argument("--input_fe_epochs", type=int, default=5000)
+parser.add_argument("--input_fe_epochs", type=int, default=500)
 parser.add_argument("--input_fe_learning_rate", type=float, default=None)
 
-parser.add_argument("--output_fe_epochs", type=int, default=5000)
+parser.add_argument("--output_fe_epochs", type=int, default=500)
 parser.add_argument("--output_fe_learning_rate", type=float, default=None)
 
 # SummaryWriter args
@@ -55,6 +55,14 @@ parser.add_argument("--device", type=str, default=None)
 
 # Seed args
 parser.add_argument("--seed", type=int, default=42)
+
+# Checkpoint args
+parser.add_argument("--checkpoint_interval", type=int, default=100)
+parser.add_argument("--checkpoint_dir", type=str, default=None)
+parser.add_argument("--input_fe_resume", type=bool, default=True)
+parser.add_argument("--output_fe_resume", type=bool, default=True)
+parser.add_argument("--model_resume", type=bool, default=False)
+
 params = parser.parse_args()
 
 # Set default values for function encoder training if none are provided
@@ -176,7 +184,7 @@ match params.model:
             input_size=params.input_fe_n_basis,
             output_size=params.output_fe_n_basis,
         ).to(device)
-        optimizer = None
+        model_optimizer = None
 
     case "b2b_nonlinear":
         from models.b2b_operator_nonlinear import (
@@ -189,7 +197,8 @@ match params.model:
             output_size=params.output_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
         ).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        model = torch.compile(model)
+        model_optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "deeponet":
         from models.deeponet import (
@@ -203,7 +212,8 @@ match params.model:
             output_size=dataset_info["u_size"],
             hidden_sizes=params.hidden_sizes,
         ).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        model = torch.compile(model)
+        model_optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "variational_autoencoder":
         from models.variational_autoencoder import (
@@ -217,7 +227,8 @@ match params.model:
             hidden_sizes=params.hidden_sizes,
             latent_size=params.output_fe_n_basis,
         ).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        model = torch.compile(model)
+        model_optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "invertible_network":
         from models.invertible_network import (
@@ -230,7 +241,8 @@ match params.model:
             hidden_sizes=params.hidden_sizes,
             n_coupling_layers=2,
         ).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        model = torch.compile(model)
+        model_optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case _:
         raise ValueError(f"Unknown model: {params.model}")
@@ -241,14 +253,24 @@ input_function_encoder = create_function_encoder(
     hidden_sizes=params.input_fe_hidden_sizes,
     output_size=dataset_info["u_size"],
     n_basis=params.input_fe_n_basis,
-).to(device)
+)
+input_function_encoder = torch.compile(input_function_encoder)
+input_function_encoder.to(device)
+input_function_encoder_optimizer = torch.optim.Adam(
+    input_function_encoder.parameters(), lr=params.input_fe_learning_rate
+)
 
 output_function_encoder = create_function_encoder(
     input_size=dataset_info["Y_size"],
     hidden_sizes=params.output_fe_hidden_sizes,
     output_size=dataset_info["s_size"],
     n_basis=params.output_fe_n_basis,
-).to(device)
+)
+output_function_encoder = torch.compile(output_function_encoder)
+output_function_encoder.to(device)
+output_function_encoder_optimizer = torch.optim.Adam(
+    output_function_encoder.parameters(), lr=params.output_fe_learning_rate
+)
 
 # Train model
 
@@ -262,18 +284,23 @@ with open(f"{log_dir}/params.txt", "w") as f:
 
 torch.save(params, f"{log_dir}/params.pth")
 
+# Create checkpoint directories
+if params.checkpoint_dir is None:
+    params.checkpoint_dir = os.path.join(log_dir, "checkpoints")
+os.makedirs(params.checkpoint_dir, exist_ok=True)
+
 # Train the input function encoder
 train_function_encoder(
     model=input_function_encoder,
     train_dataloader=input_fe_train_dataloader,
     test_dataloader=input_fe_test_dataloader,
-    optimizer=torch.optim.Adam(
-        input_function_encoder.parameters(), lr=params.input_fe_learning_rate
-    ),
+    optimizer=input_function_encoder_optimizer,
     n_epochs=params.input_fe_epochs,
     summary_writer=writer,
     model_name="input_function_encoder",
-    params=params,
+    resume_from_checkpoint=params.input_fe_resume,
+    checkpoint_dir=params.checkpoint_dir,
+    checkpoint_interval=params.checkpoint_interval,
     device=device,
 )
 
@@ -282,13 +309,13 @@ train_function_encoder(
     model=output_function_encoder,
     train_dataloader=output_fe_train_dataloader,
     test_dataloader=output_fe_test_dataloader,
-    optimizer=torch.optim.Adam(
-        output_function_encoder.parameters(), lr=params.output_fe_learning_rate
-    ),
+    optimizer=output_function_encoder_optimizer,
     n_epochs=params.output_fe_epochs,
     summary_writer=writer,
     model_name="output_function_encoder",
-    params=params,
+    resume_from_checkpoint=params.output_fe_resume,
+    checkpoint_dir=params.checkpoint_dir,
+    checkpoint_interval=params.checkpoint_interval,
     device=device,
 )
 
@@ -297,13 +324,16 @@ train_model(
     model=model,
     train_dataloader=model_train_dataloader,
     test_dataloader=model_test_dataloader,
-    optimizer=optimizer,
+    optimizer=model_optimizer,
     input_function_encoder=input_function_encoder,
     output_function_encoder=output_function_encoder,
     n_epochs=params.epochs,
     summary_writer=writer,
     model_name=params.model,
     params=params,
+    resume_from_checkpoint=params.model_resume,
+    checkpoint_dir=params.checkpoint_dir,
+    checkpoint_interval=params.checkpoint_interval,
     device=device,
 )
 
