@@ -115,11 +115,10 @@ def train(
     device=None,
 ):
     start_epoch = 0
-    best_loss = float("inf")
 
     # Resume from checkpoint
+    checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_checkpoint.pt")
     if resume_from_checkpoint:
-        checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_checkpoint.pt")
         if os.path.exists(checkpoint_path):
             model, optimizer, start_epoch, loss = load_checkpoint(
                 model=model,
@@ -144,11 +143,8 @@ def train(
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         # Save checkpoint
-        if checkpoint_dir is not None and epoch % checkpoint_interval == 0:
-            checkpoint_path = os.path.join(
-                checkpoint_dir, f"{model_name}_checkpoint.pt"
-            )
-            save_checkpoint(model, optimizer, epoch, avg_test_loss, checkpoint_path)
+        if (epoch + 1) % checkpoint_interval == 0:
+            save_checkpoint(model, optimizer, epoch + 1, avg_test_loss, checkpoint_path)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)

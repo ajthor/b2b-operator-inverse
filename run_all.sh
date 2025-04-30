@@ -30,9 +30,9 @@ LOG_BASE_DIR="/store/at46867"
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
-DATASETS=(wave_scattering)
-MODELS=(b2b_nonlinear)
-SEEDS=(1)   # add more seeds if you like
+DATASETS=(burgers_1d darcy_1d parametric_heat)
+MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
+SEEDS=(1 2 3)   # add more seeds if you like
 
 #── INITIALIZE GPU STATUS ─────────────────────────────────
 mkdir -p "$STATUS_DIR"
@@ -43,6 +43,7 @@ done
 #── EXPERIMENT WORKER ─────────────────────────────────────
 run_experiment() {
   local dataset model seed gpu count
+  local exit_code=0
 
   # parse named args
   while (( $# )); do
@@ -59,19 +60,77 @@ run_experiment() {
   # prepare logdir
   local logdir="$LOG_BASE_DIR/$dataset/$model/seed_$seed"
   mkdir -p "$logdir"
-  echo "$logdir"
+  # echo "$logdir"
   local logfile="$logdir/log.txt"
+
+  # clear the log file
+  : > "$logfile"
 
   # run and capture exit code
   echo "[$count] $dataset | $model | seed=$seed → cuda:$gpu"
+  
+  # Step 1: Train input function encoder
+  # echo "[$count] Training input function encoder..."
+  python inverse_neural_operator/train_function_encoder.py \
+    --encoder_type   "input" \
+    --dataset        "$dataset" \
+    --model          "$model" \
+    --seed           "$seed" \
+    --device         "cuda:$gpu" \
+    --log_dir        "$logdir" \
+    >>"$logfile" 2>&1
+  
+  exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+    echo "[$count] failed (exit $exit_code)"
+    # release the GPU slot and exit this function
+    flock $LOCK_FILE bash -c "
+      c=\$(< $STATUS_DIR/gpu_$gpu)
+      echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
+    "
+    return $exit_code
+  fi
+
+  sleep 1
+  
+  # Step 2: Train output function encoder
+  # echo "[$count] Training output function encoder..."
+  python inverse_neural_operator/train_function_encoder.py \
+    --encoder_type   "output" \
+    --dataset        "$dataset" \
+    --model          "$model" \
+    --seed           "$seed" \
+    --device         "cuda:$gpu" \
+    --log_dir        "$logdir" \
+    >>"$logfile" 2>&1
+  
+  exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+    echo "[$count] failed (exit $exit_code)"
+    # release the GPU slot and exit this function
+    flock $LOCK_FILE bash -c "
+      c=\$(< $STATUS_DIR/gpu_$gpu)
+      echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
+    "
+    return $exit_code
+  fi
+
+  sleep 1
+  
+  # Step 3: Train the model if both function encoders succeeded
+  # echo "[$count] Training model $model..."
   python inverse_neural_operator/train.py \
     --dataset        "$dataset" \
     --model          "$model" \
     --seed           "$seed" \
     --device         "cuda:$gpu" \
     --log_dir        "$logdir" \
-    >"$logfile" 2>&1 \
-    || echo "Experiment #$count failed (exit $?)"
+    >>"$logfile" 2>&1
+    
+  exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+    echo "[$count] failed (exit $exit_code)"
+  fi
 
   # release the GPU slot
   flock $LOCK_FILE bash -c "
@@ -79,6 +138,8 @@ run_experiment() {
     echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
   "
   sleep 1
+  
+  return $exit_code
 }
 
 export -f run_experiment
@@ -120,4 +181,3 @@ for dataset in "${DATASETS[@]}"; do
 done
 
 wait
-echo "done"

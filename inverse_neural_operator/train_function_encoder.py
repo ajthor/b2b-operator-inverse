@@ -15,6 +15,8 @@ from models.function_encoder import (
     save as save_function_encoder,
 )
 
+torch.set_float32_matmul_precision("high")
+
 # Parse command line args
 parser = argparse.ArgumentParser()
 
@@ -23,7 +25,7 @@ parser.add_argument(
     "--encoder_type",
     type=str,
     choices=["input", "output"],
-    required=True,
+    default="input",
 )
 
 # Dataset args
@@ -36,9 +38,9 @@ parser.add_argument("--n_basis", type=int, default=100)
 parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
 
 # Training args
-parser.add_argument("--batch_size", type=int, default=5)
-parser.add_argument("--epochs", type=int, default=500)
-parser.add_argument("--learning_rate", type=float, default=1e-3)
+parser.add_argument("--batch_size", type=int, default=50)
+parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--learning_rate", type=float, default=1e-4)
 
 # SummaryWriter args
 parser.add_argument("--log_dir", type=str, default=None)
@@ -69,7 +71,7 @@ if params.dataset == "wave_scattering":
 # Set device
 if params.device is None:
     if torch.cuda.is_available():
-        device = "cuda"
+        device = "cuda:1"
     elif torch.backends.mps.is_available():
         device = "mps"
     else:
@@ -80,15 +82,20 @@ else:
 print(f"Using device: {device}")
 torch.manual_seed(params.seed)
 
+if params.encoder_type == "input":
+    model_name = "input_function_encoder"
+else:  # output
+    model_name = "output_function_encoder"
+
 # Create SummaryWriter
 writer = SummaryWriter(log_dir=params.log_dir, comment=params.comment)
 log_dir = writer.log_dir
 
 # Save args
-with open(f"{log_dir}/params.txt", "w") as f:
+with open(f"{log_dir}/{model_name}_params.txt", "w") as f:
     f.write(str(params))
 
-torch.save(params, f"{log_dir}/params.pth")
+torch.save(params, f"{log_dir}/{model_name}_params.pth")
 
 # Create checkpoint directories
 if params.checkpoint_dir is None:
@@ -113,15 +120,13 @@ match params.dataset:
 model_train_dataset = load_data(params, device=device, split="train")
 model_test_dataset = load_data(params, device=device, split="test")
 
-if params.encoder_type == "input":
-    model_name = "input_function_encoder"
+dataset_info = model_train_dataset.get_info()
 
+if params.encoder_type == "input":
     train_dataset = InputFunctionEncoderDataset(model_train_dataset, device=device)
     test_dataset = InputFunctionEncoderDataset(model_test_dataset, device=device)
 
 else:  # output
-    model_name = "output_function_encoder"
-
     train_dataset = OutputFunctionEncoderDataset(model_train_dataset, device=device)
     test_dataset = OutputFunctionEncoderDataset(model_test_dataset, device=device)
 
@@ -136,8 +141,6 @@ test_dataloader = DataLoader(
     shuffle=True,
 )
 
-dataset_info = train_dataset.get_info()
-
 if params.encoder_type == "input":
     input_size = dataset_info["X_size"]
     output_size = dataset_info["u_size"]
@@ -151,7 +154,7 @@ function_encoder = create_function_encoder(
     output_size=output_size,
     n_basis=params.n_basis,
 )
-function_encoder = torch.compile(function_encoder)
+# function_encoder = torch.compile(function_encoder)
 function_encoder.to(device)
 optimizer = torch.optim.Adam(function_encoder.parameters(), lr=params.learning_rate)
 

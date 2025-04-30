@@ -133,9 +133,22 @@ def train(
     checkpoint_interval=100,
     device=None,
 ):
-    tqdm_bar = tqdm.tqdm(range(n_epochs))
-    for epoch in range(n_epochs):
+    start_epoch = 0
 
+    # Resume from checkpoint
+    checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_checkpoint.pt")
+    if resume_from_checkpoint:
+        if os.path.exists(checkpoint_path):
+            model, optimizer, start_epoch, loss = load_checkpoint(
+                model=model,
+                path=checkpoint_path,
+                optimizer=optimizer,
+                device=device,
+            )
+            print(f"Resuming training from epoch {start_epoch}...")
+
+    tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
+    for epoch in range(start_epoch, n_epochs):
         model.train()
         batch = next(iter(train_dataloader))
         optimizer.zero_grad()
@@ -157,6 +170,10 @@ def train(
             output_function_encoder=output_function_encoder,
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+
+        # Save checkpoint
+        if (epoch + 1) % checkpoint_interval == 0:
+            save_checkpoint(model, optimizer, epoch + 1, avg_test_loss, checkpoint_path)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)

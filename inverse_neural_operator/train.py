@@ -11,6 +11,7 @@ from models.function_encoder import (
     load as load_function_encoder,
 )
 
+torch.set_float32_matmul_precision("high")
 
 # Parse command line args
 
@@ -31,8 +32,8 @@ parser.add_argument("--output_channels", type=int, default=1)
 
 
 # Training args
-parser.add_argument("--batch_size", type=int, default=5)
-parser.add_argument("--epochs", type=int, default=10000)
+parser.add_argument("--batch_size", type=int, default=50)
+parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 
 # SummaryWriter args
@@ -52,17 +53,6 @@ parser.add_argument("--resume", type=bool, default=False)
 
 params = parser.parse_args()
 
-# Set default values for function encoder training if none are provided
-if params.input_fe_epochs is None:
-    params.input_fe_epochs = params.epochs
-if params.output_fe_epochs is None:
-    params.output_fe_epochs = params.epochs
-
-if params.input_fe_learning_rate is None:
-    params.input_fe_learning_rate = params.learning_rate
-if params.output_fe_learning_rate is None:
-    params.output_fe_learning_rate = params.learning_rate
-
 # If the dataset is wave_scattering, limit the batch size to 5.
 if params.dataset == "wave_scattering":
     if params.batch_size > 5:
@@ -74,7 +64,7 @@ if params.dataset == "wave_scattering":
 
 if params.device is None:
     if torch.cuda.is_available():
-        device = "cuda"
+        device = "cuda:1"
     elif torch.backends.mps.is_available():
         device = "mps"
     else:
@@ -125,42 +115,47 @@ match params.dataset:
 
 # Load data
 
-model_train_dataset = load_data(params, device=device, split="train")
-model_test_dataset = load_data(params, device=device, split="test")
+train_dataset = load_data(params, device=device, split="train")
+test_dataset = load_data(params, device=device, split="test")
+dataset_info = train_dataset.get_info()
 
-# Load the function encoders
+# Load the input function encoder
 
-dataset_info = model_train_dataset.get_info()
-
-
+input_function_encoder_params = torch.load(
+    os.path.join(log_dir, "input_function_encoder_params.pth"), weights_only=False
+)
 input_function_encoder = create_function_encoder(
     input_size=dataset_info["X_size"],
-    hidden_sizes=params.input_fe_hidden_sizes,
+    hidden_sizes=input_function_encoder_params.hidden_sizes,
     output_size=dataset_info["u_size"],
-    n_basis=params.input_fe_n_basis,
+    n_basis=input_function_encoder_params.n_basis,
 )
+# input_function_encoder = torch.compile(input_function_encoder)
+input_function_encoder.to(device)
 input_function_encoder = load_function_encoder(
     input_function_encoder,
     os.path.join(log_dir, "input_function_encoder.pth"),
     device=device,
 )
-input_function_encoder = torch.compile(input_function_encoder)
-input_function_encoder.to(device)
 
+# Load the output function encoder
 
+output_function_encoder_params = torch.load(
+    os.path.join(log_dir, "output_function_encoder_params.pth"), weights_only=False
+)
 output_function_encoder = create_function_encoder(
     input_size=dataset_info["Y_size"],
-    hidden_sizes=params.output_fe_hidden_sizes,
+    hidden_sizes=output_function_encoder_params.hidden_sizes,
     output_size=dataset_info["s_size"],
-    n_basis=params.output_fe_n_basis,
+    n_basis=output_function_encoder_params.n_basis,
 )
+# output_function_encoder = torch.compile(output_function_encoder)
+output_function_encoder.to(device)
 output_function_encoder = load_function_encoder(
     output_function_encoder,
     os.path.join(log_dir, "output_function_encoder.pth"),
     device=device,
 )
-output_function_encoder = torch.compile(output_function_encoder)
-output_function_encoder.to(device)
 
 
 # Define model
@@ -171,32 +166,35 @@ match params.model:
         from models.b2b_operator_linear import (
             create_model,
             train as train_model,
+            save as save_model,
         )
 
         model = create_model(
-            input_size=params.input_fe_n_basis,
-            output_size=params.output_fe_n_basis,
+            input_size=input_function_encoder_params.n_basis,
+            output_size=output_function_encoder_params.n_basis,
         ).to(device)
-        model_optimizer = None
+        optimizer = None
 
     case "b2b_nonlinear":
         from models.b2b_operator_nonlinear import (
             create_model,
             train as train_model,
+            save as save_model,
         )
 
         model = create_model(
-            input_size=params.input_fe_n_basis,
-            output_size=params.output_fe_n_basis,
+            input_size=input_function_encoder_params.n_basis,
+            output_size=output_function_encoder_params.n_basis,
             hidden_sizes=params.hidden_sizes,
         ).to(device)
-        model = torch.compile(model)
-        model_optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        # model = torch.compile(model)
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "deeponet":
         from models.deeponet import (
             create_model,
             train as train_model,
+            save as save_model,
         )
 
         model = create_model(
@@ -205,66 +203,68 @@ match params.model:
             output_size=dataset_info["u_size"],
             hidden_sizes=params.hidden_sizes,
         ).to(device)
-        model = torch.compile(model)
-        model_optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        # model = torch.compile(model)
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "variational_autoencoder":
         from models.variational_autoencoder import (
             create_model,
             train as train_model,
+            save as save_model,
         )
 
         model = create_model(
-            alpha_size=params.input_fe_n_basis,
-            beta_size=params.output_fe_n_basis,
+            alpha_size=input_function_encoder_params.n_basis,
+            beta_size=output_function_encoder_params.n_basis,
             hidden_sizes=params.hidden_sizes,
-            latent_size=params.output_fe_n_basis,
+            latent_size=output_function_encoder_params.n_basis,
         ).to(device)
-        model = torch.compile(model)
-        model_optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        # model = torch.compile(model)
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case "invertible_network":
         from models.invertible_network import (
             create_model,
             train as train_model,
+            save as save_model,
         )
 
         model = create_model(
-            input_size=params.input_fe_n_basis,
+            input_size=input_function_encoder_params.n_basis,
             hidden_sizes=params.hidden_sizes,
             n_coupling_layers=2,
         ).to(device)
-        model = torch.compile(model)
-        model_optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        # model = torch.compile(model)
+        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
     case _:
         raise ValueError(f"Unknown model: {params.model}")
 
 # Train model
 
-model_train_dataloader = DataLoader(
-    model_train_dataset,
+train_dataloader = DataLoader(
+    train_dataset,
     batch_size=params.batch_size,
     shuffle=True,
 )
-model_test_dataloader = DataLoader(
-    model_test_dataset,
+test_dataloader = DataLoader(
+    test_dataset,
     batch_size=params.batch_size,
     shuffle=True,
 )
 
 train_model(
     model=model,
-    train_dataloader=model_train_dataloader,
-    test_dataloader=model_test_dataloader,
-    optimizer=model_optimizer,
+    train_dataloader=train_dataloader,
+    test_dataloader=test_dataloader,
+    optimizer=optimizer,
     input_function_encoder=input_function_encoder,
     output_function_encoder=output_function_encoder,
     n_epochs=params.epochs,
     summary_writer=writer,
     model_name=params.model,
     params=params,
-    resume_from_checkpoint=params.model_resume,
+    resume_from_checkpoint=params.resume,
     checkpoint_dir=params.checkpoint_dir,
     checkpoint_interval=params.checkpoint_interval,
     device=device,
@@ -272,7 +272,4 @@ train_model(
 
 # Save model
 
-torch.save(
-    model.state_dict(),
-    f"{log_dir}/model.pth",
-)
+save_model(model=model, path=os.path.join(log_dir, "model.pth"))

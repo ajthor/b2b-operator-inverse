@@ -142,8 +142,8 @@ def train(
     device=None,
 ):
 
-    n = params.input_fe_n_basis
-    m = params.output_fe_n_basis
+    n = 100
+    m = 100
 
     SXX = torch.zeros((n, n), device=device)
     SXY = torch.zeros((n, m), device=device)
