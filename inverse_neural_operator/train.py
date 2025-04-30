@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 
 from models.function_encoder import (
-    FunctionEncoderFactory,
+    create_model as create_function_encoder,
     train as train_function_encoder,
 )
 
@@ -16,7 +16,7 @@ from models.function_encoder import (
 parser = argparse.ArgumentParser()
 
 # Dataset args
-parser.add_argument("--dataset", type=str, default="darcy_1d")
+parser.add_argument("--dataset", type=str, default="wave_scattering")
 
 # Model args
 parser.add_argument("--model", type=str, default="b2b_nonlinear")
@@ -36,7 +36,7 @@ parser.add_argument("--output_fe_n_basis", type=int, default=100)
 parser.add_argument("--output_fe_hidden_sizes", type=int, nargs="+", default=[256, 256])
 
 # Training args
-parser.add_argument("--batch_size", type=int, default=50)
+parser.add_argument("--batch_size", type=int, default=5)
 parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 
@@ -67,6 +67,15 @@ if params.input_fe_learning_rate is None:
     params.input_fe_learning_rate = params.learning_rate
 if params.output_fe_learning_rate is None:
     params.output_fe_learning_rate = params.learning_rate
+
+# If the dataset is wave_scattering, limit the batch size to 5.
+if params.dataset == "wave_scattering":
+    if params.batch_size > 5:
+        print(
+            f"Batch size {params.batch_size} is too large for the wave_scattering dataset. "
+            "Setting batch size to 5."
+        )
+        params.batch_size = 5
 
 if params.device is None:
     if torch.cuda.is_available():
@@ -159,11 +168,11 @@ match params.model:
 
     case "b2b_linear":
         from models.b2b_operator_linear import (
-            LinearB2BOperatorFactory,
+            create_model,
             train as train_model,
         )
 
-        model = LinearB2BOperatorFactory.create(
+        model = create_model(
             input_size=params.input_fe_n_basis,
             output_size=params.output_fe_n_basis,
         ).to(device)
@@ -171,11 +180,11 @@ match params.model:
 
     case "b2b_nonlinear":
         from models.b2b_operator_nonlinear import (
-            NonlinearB2BOperatorFactory,
+            create_model,
             train as train_model,
         )
 
-        model = NonlinearB2BOperatorFactory.create(
+        model = create_model(
             input_size=params.input_fe_n_basis,
             output_size=params.output_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
@@ -184,11 +193,11 @@ match params.model:
 
     case "deeponet":
         from models.deeponet import (
-            DeepONetFactory,
+            create_model,
             train as train_model,
         )
 
-        model = DeepONetFactory.create(
+        model = create_model(
             branch_input_size=dataset_info["Y_size"] * dataset_info["Y_len"],
             trunk_input_size=dataset_info["X_size"],
             output_size=dataset_info["u_size"],
@@ -198,11 +207,11 @@ match params.model:
 
     case "variational_autoencoder":
         from models.variational_autoencoder import (
-            ConditionalVariationalAutoencoderFactory,
+            create_model,
             train as train_model,
         )
 
-        model = ConditionalVariationalAutoencoderFactory.create(
+        model = create_model(
             alpha_size=params.input_fe_n_basis,
             beta_size=params.output_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
@@ -212,11 +221,11 @@ match params.model:
 
     case "invertible_network":
         from models.invertible_network import (
-            InvertibleNetworkFactory,
+            create_model,
             train as train_model,
         )
 
-        model = InvertibleNetworkFactory.create(
+        model = create_model(
             input_size=params.input_fe_n_basis,
             hidden_sizes=params.hidden_sizes,
             n_coupling_layers=2,
@@ -227,14 +236,14 @@ match params.model:
         raise ValueError(f"Unknown model: {params.model}")
 
 
-input_function_encoder = FunctionEncoderFactory.create(
+input_function_encoder = create_function_encoder(
     input_size=dataset_info["X_size"],
     hidden_sizes=params.input_fe_hidden_sizes,
     output_size=dataset_info["u_size"],
     n_basis=params.input_fe_n_basis,
 ).to(device)
 
-output_function_encoder = FunctionEncoderFactory.create(
+output_function_encoder = create_function_encoder(
     input_size=dataset_info["Y_size"],
     hidden_sizes=params.output_fe_hidden_sizes,
     output_size=dataset_info["s_size"],

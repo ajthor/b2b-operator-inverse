@@ -1,9 +1,9 @@
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
 from torch.utils.data import Subset, DataLoader
 
 import tqdm
+import os
 
 
 class LinearB2BOperator(torch.nn.Module):
@@ -50,13 +50,104 @@ class LinearB2BOperator(torch.nn.Module):
         # return solutions
 
 
-class LinearB2BOperatorFactory:
-    @staticmethod
-    def create(input_size, output_size):
-        return LinearB2BOperator(
-            input_size=input_size,
-            output_size=output_size,
-        )
+def create_model(input_size, output_size):
+    """
+    Create a linear B2B operator model.
+
+    Args:
+        input_size: Size of the input coefficients (alpha)
+        output_size: Size of the output coefficients (beta)
+
+    Returns:
+        LinearB2BOperator instance
+    """
+    return LinearB2BOperator(
+        input_size=input_size,
+        output_size=output_size,
+    )
+
+
+def save(model, path):
+    """
+    Save a model to a file.
+    
+    Args:
+        model: The model to save
+        path: Path where the model will be saved
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save(model.state_dict(), path)
+
+
+def load(path, input_size, output_size, device=None):
+    """
+    Load a model from a file.
+    
+    Args:
+        path: Path to the saved model
+        input_size: Size of the input coefficients (alpha)
+        output_size: Size of the output coefficients (beta)
+        device: Device to load the model to ('cpu', 'cuda', etc.)
+        
+    Returns:
+        Loaded LinearB2BOperator instance
+    """
+    model = create_model(input_size, output_size)
+    model.load_state_dict(torch.load(path, map_location=device))
+    if device is not None:
+        model = model.to(device)
+    model.eval()
+    return model
+
+
+def save_checkpoint(model, optimizer, epoch, loss, path):
+    """
+    Save a model checkpoint including training state.
+    
+    Args:
+        model: The model to save
+        optimizer: The optimizer used for training
+        epoch: Current epoch number
+        loss: Current loss value
+        path: Path where the checkpoint will be saved
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict() if optimizer is not None else None,
+        'loss': loss
+    }
+    torch.save(checkpoint, path)
+
+
+def load_checkpoint(path, input_size, output_size, optimizer=None, device=None):
+    """
+    Load a model checkpoint including training state.
+    
+    Args:
+        path: Path to the saved checkpoint
+        input_size: Size of the input coefficients (alpha)
+        output_size: Size of the output coefficients (beta)
+        optimizer: Optimizer to load state into (optional)
+        device: Device to load the model to ('cpu', 'cuda', etc.)
+        
+    Returns:
+        tuple: (model, optimizer, epoch, loss)
+    """
+    model = create_model(input_size, output_size)
+    
+    checkpoint = torch.load(path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    if device is not None:
+        model = model.to(device)
+    
+    if optimizer is not None and checkpoint['optimizer_state_dict'] is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    
+    model.eval()
+    return model, optimizer, checkpoint['epoch'], checkpoint['loss']
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
@@ -67,7 +158,10 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
 
     alpha_pred = model.inverse(beta)
 
-    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
+    u_pred = input_function_encoder(X, alpha_pred)
+
+    # pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
+    pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     return pred_loss
 
@@ -115,7 +209,7 @@ def train(
 
         model.linear.weight.copy_(W.T)
 
-        avg_test_loss = evaluate_model(
+        avg_test_loss = test_model(
             model=model,
             test_dataloader=test_dataloader,
             input_function_encoder=input_function_encoder,
@@ -124,7 +218,7 @@ def train(
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss})
 
 
-def evaluate_model(
+def test_model(
     model,
     test_dataloader,
     input_function_encoder,
@@ -146,178 +240,13 @@ def evaluate_model(
     return avg_test_loss
 
 
-def evaluate_instance(model, point, input_function_encoder, output_function_encoder):
+def evaluate(model, point, input_function_encoder, output_function_encoder):
     model.eval()
     with torch.no_grad():
         X, u, Y, s = point
 
         beta = output_function_encoder.compute_coefficients(Y, s)
         alpha_pred = model.inverse(beta)
-
         pred = input_function_encoder(X, alpha_pred)
 
-        return pred, alpha_pred
-
-
-def plot_evaluation(
-    model,
-    dataset,
-    file_name="results/b2b_operator_evaluation.png",
-    input_function_encoder=None,
-    output_function_encoder=None,
-):
-    model.eval()
-    with torch.no_grad():
-
-        index = np.random.choice(len(dataset), 1, replace=False)[0]
-        subset = Subset(dataset, [index])
-
-        dataloader = DataLoader(
-            subset,
-            batch_size=1,
-            shuffle=False,
-        )
-
-        for point in dataloader:
-            fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-
-            pred, alpha_pred = evaluate_instance(
-                model,
-                point,
-                input_function_encoder=input_function_encoder,
-                output_function_encoder=output_function_encoder,
-            )
-            pred = pred.squeeze(0).cpu().numpy()
-
-            X, u, Y, s = point
-            X = X.squeeze(0).cpu().numpy()
-            u = u.squeeze(0).cpu().numpy()
-            Y = Y.squeeze(0).cpu().numpy()
-            s = s.squeeze(0).cpu().numpy()
-
-            # Plot the input data
-            ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
-            ax[0].plot(X, pred, label="Prediction")
-
-            # Plot the output data
-            ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
-
-            plt.tight_layout()
-            plt.savefig(file_name)
-            plt.close()
-
-
-def _plot_case(
-    model,
-    point,
-    file_name,
-    input_function_encoder,
-    output_function_encoder,
-):
-    """Helper function to plot a specific case evaluation."""
-    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-
-    pred, alpha_pred = evaluate_instance(
-        model,
-        point,
-        input_function_encoder=input_function_encoder,
-        output_function_encoder=output_function_encoder,
-    )
-    pred = pred.squeeze(0).cpu().numpy()
-
-    X, u, Y, s = point
-    X = X.squeeze(0).cpu().numpy()
-    u = u.squeeze(0).cpu().numpy()
-    Y = Y.squeeze(0).cpu().numpy()
-    s = s.squeeze(0).cpu().numpy()
-
-    # Plot the input data
-    ax[0].plot(X, u, label="Input Function", color="gray", alpha=0.5)
-    ax[0].plot(X, pred, label="Prediction")
-
-    # Plot the output data
-    ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
-
-    plt.tight_layout()
-    plt.savefig(file_name)
-    plt.close()
-
-
-def plot_best_case_evaluation(
-    model,
-    dataset,
-    file_name="results/model_best_case_evaluation.png",
-    input_function_encoder=None,
-    output_function_encoder=None,
-):
-    """Find and plot the best case (lowest loss) from the dataset."""
-    model.eval()
-    with torch.no_grad():
-        dataloader = DataLoader(
-            dataset,
-            batch_size=1,
-            shuffle=False,
-        )
-        best_case = None
-        best_case_loss = float("inf")
-        best_case_index = -1
-
-        for i, point in enumerate(dataloader):
-            loss = loss_function(
-                model=model,
-                batch=point,
-                input_function_encoder=input_function_encoder,
-                output_function_encoder=output_function_encoder,
-            )
-            if loss < best_case_loss:
-                best_case_loss = loss
-                best_case = point
-                best_case_index = i
-
-        _plot_case(
-            model=model,
-            point=best_case,
-            file_name=file_name,
-            input_function_encoder=input_function_encoder,
-            output_function_encoder=output_function_encoder,
-        )
-
-
-def plot_worst_case_evaluation(
-    model,
-    dataset,
-    file_name="results/model_worst_case_evaluation.png",
-    input_function_encoder=None,
-    output_function_encoder=None,
-):
-    """Find and plot the worst case (highest loss) from the dataset."""
-    model.eval()
-    with torch.no_grad():
-        dataloader = DataLoader(
-            dataset,
-            batch_size=1,
-            shuffle=False,
-        )
-        worst_case = None
-        worst_case_loss = float("-inf")
-        worst_case_index = -1
-
-        for i, point in enumerate(dataloader):
-            loss = loss_function(
-                model=model,
-                batch=point,
-                input_function_encoder=input_function_encoder,
-                output_function_encoder=output_function_encoder,
-            )
-            if loss > worst_case_loss:
-                worst_case_loss = loss
-                worst_case = point
-                worst_case_index = i
-
-        _plot_case(
-            model=model,
-            point=worst_case,
-            file_name=file_name,
-            input_function_encoder=input_function_encoder,
-            output_function_encoder=output_function_encoder,
-        )
+        return pred

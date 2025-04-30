@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Subset, DataLoader
 
 import tqdm
+import os
 
 
 class DeepONet(torch.nn.Module):
@@ -77,39 +78,137 @@ def create_mlp(input_size, hidden_sizes, output_size, activation=torch.nn.ReLU()
     return torch.nn.Sequential(*layers)
 
 
-class DeepONetFactory:
-    @staticmethod
-    def create(
-        branch_input_size,  # Size of input for the branch network (s values)
-        trunk_input_size,  # Dimension of spatial coordinates for trunk network (X)
-        output_size,  # Size of the output (u values)
-        hidden_sizes=[128, 128, 128],
-    ):
-        # Width of the last hidden layer, used for branch-trunk dot product
-        dot_product_dim = hidden_sizes[-1]
+def create_model(
+    branch_input_size,  # Size of input for the branch network (s values)
+    trunk_input_size,  # Dimension of spatial coordinates for trunk network (X)
+    output_size,  # Size of the output (u values)
+    hidden_sizes=[128, 128, 128],
+):
+    """
+    Create a DeepONet model.
 
-        # Create branch network to process output function values (s)
-        branch_net = create_mlp(
-            input_size=branch_input_size,
-            hidden_sizes=hidden_sizes,
-            output_size=output_size * dot_product_dim,
-            activation=torch.nn.ReLU(),
-        )
+    Args:
+        branch_input_size: Size of input for the branch network (s values)
+        trunk_input_size: Dimension of spatial coordinates for trunk network (X)
+        output_size: Size of the output (u values)
+        hidden_sizes: List of hidden layer sizes
 
-        # Create trunk network to process spatial coordinates (X)
-        trunk_net = create_mlp(
-            input_size=trunk_input_size,
-            hidden_sizes=hidden_sizes,
-            output_size=dot_product_dim,
-            activation=torch.nn.ReLU(),
-        )
+    Returns:
+        DeepONet instance
+    """
+    # Width of the last hidden layer, used for branch-trunk dot product
+    dot_product_dim = hidden_sizes[-1]
 
-        # Create DeepONet
-        return DeepONet(
-            branch_net=branch_net,
-            trunk_net=trunk_net,
-            output_channels=output_size,
-        )
+    # Create branch network to process output function values (s)
+    branch_net = create_mlp(
+        input_size=branch_input_size,
+        hidden_sizes=hidden_sizes,
+        output_size=output_size * dot_product_dim,
+        activation=torch.nn.ReLU(),
+    )
+
+    # Create trunk network to process spatial coordinates (X)
+    trunk_net = create_mlp(
+        input_size=trunk_input_size,
+        hidden_sizes=hidden_sizes,
+        output_size=dot_product_dim,
+        activation=torch.nn.ReLU(),
+    )
+
+    # Create DeepONet
+    return DeepONet(
+        branch_net=branch_net,
+        trunk_net=trunk_net,
+        output_channels=output_size,
+    )
+
+
+def save(model, path):
+    """
+    Save a DeepONet model to a file.
+    
+    Args:
+        model: The model to save
+        path: Path where the model will be saved
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save(model.state_dict(), path)
+
+
+def load(path, branch_input_size, trunk_input_size, output_size, hidden_sizes=[128, 128, 128], device=None):
+    """
+    Load a DeepONet model from a file.
+    
+    Args:
+        path: Path to the saved model
+        branch_input_size: Size of input for the branch network (s values)
+        trunk_input_size: Dimension of spatial coordinates for trunk network (X)
+        output_size: Size of the output (u values)
+        hidden_sizes: List of hidden layer sizes
+        device: Device to load the model to ('cpu', 'cuda', etc.)
+        
+    Returns:
+        Loaded DeepONet instance
+    """
+    model = create_model(branch_input_size, trunk_input_size, output_size, hidden_sizes)
+    model.load_state_dict(torch.load(path, map_location=device))
+    if device is not None:
+        model = model.to(device)
+    model.eval()
+    return model
+
+
+def save_checkpoint(model, optimizer, epoch, loss, path):
+    """
+    Save a DeepONet checkpoint including training state.
+    
+    Args:
+        model: The model to save
+        optimizer: The optimizer used for training
+        epoch: Current epoch number
+        loss: Current loss value
+        path: Path where the checkpoint will be saved
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict() if optimizer is not None else None,
+        'loss': loss
+    }
+    torch.save(checkpoint, path)
+
+
+def load_checkpoint(path, branch_input_size, trunk_input_size, output_size, 
+                   hidden_sizes=[128, 128, 128], optimizer=None, device=None):
+    """
+    Load a DeepONet checkpoint including training state.
+    
+    Args:
+        path: Path to the saved checkpoint
+        branch_input_size: Size of input for the branch network (s values)
+        trunk_input_size: Dimension of spatial coordinates for trunk network (X)
+        output_size: Size of the output (u values)
+        hidden_sizes: List of hidden layer sizes
+        optimizer: Optimizer to load state into (optional)
+        device: Device to load the model to ('cpu', 'cuda', etc.)
+        
+    Returns:
+        tuple: (model, optimizer, epoch, loss)
+    """
+    model = create_model(branch_input_size, trunk_input_size, output_size, hidden_sizes)
+    
+    checkpoint = torch.load(path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    if device is not None:
+        model = model.to(device)
+    
+    if optimizer is not None and checkpoint['optimizer_state_dict'] is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    
+    model.eval()
+    return model, optimizer, checkpoint['epoch'], checkpoint['loss']
 
 
 def loss_function(model, batch):
@@ -154,7 +253,7 @@ def train(
         if summary_writer:
             summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
-        avg_test_loss = evaluate_model(
+        avg_test_loss = test_model(
             model=model,
             test_dataloader=test_dataloader,
         )
@@ -166,7 +265,7 @@ def train(
         tqdm_bar.update(1)
 
 
-def evaluate_model(
+def test_model(
     model,
     test_dataloader,
     input_function_encoder=None,  # Not used but kept for API compatibility
@@ -186,161 +285,11 @@ def evaluate_model(
     return avg_test_loss
 
 
-def evaluate_instance(model, point):
-    """Evaluate the model on a single data point."""
+def evaluate(model, point):
     model.eval()
     with torch.no_grad():
         X, u, Y, s = point
 
-        u_pred = model.inverse(s, X)
+        pred = model.inverse(s, X)
 
-        return u_pred
-
-
-def plot_evaluation(
-    model,
-    dataset,
-    file_name="results/deeponet_evaluation.png",
-    input_function_encoder=None,  # Not used but kept for API compatibility
-    output_function_encoder=None,  # Not used but kept for API compatibility
-):
-    model.eval()
-    with torch.no_grad():
-        index = np.random.choice(len(dataset), 1, replace=False)[0]
-        subset = Subset(dataset, [index])
-
-        dataloader = DataLoader(
-            subset,
-            batch_size=1,
-            shuffle=False,
-        )
-
-        for point in dataloader:
-            fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-
-            u_pred = evaluate_instance(model, point)
-            u_pred = u_pred.squeeze(0).cpu().numpy()
-
-            X, u, Y, s = point
-            X = X.squeeze(0).cpu().numpy()
-            u = u.squeeze(0).cpu().numpy()
-            Y = Y.squeeze(0).cpu().numpy()
-            s = s.squeeze(0).cpu().numpy()
-
-            # Plot the input and predicted data
-            ax[0].plot(X, u, label="True Input Function", color="gray", alpha=0.5)
-            ax[0].plot(X, u_pred, label="Predicted Input Function")
-            ax[0].legend()
-
-            # Plot the output data
-            ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
-            ax[1].legend()
-
-            plt.tight_layout()
-            plt.savefig(file_name)
-            plt.close()
-
-
-def _plot_case(
-    model,
-    point,
-    file_name,
-    input_function_encoder=None,  # Not used but kept for API compatibility
-    output_function_encoder=None,  # Not used but kept for API compatibility
-):
-    """Helper function to plot a specific case evaluation."""
-    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-
-    u_pred = evaluate_instance(model, point)
-    u_pred = u_pred.squeeze(0).cpu().numpy()
-
-    X, u, Y, s = point
-    X = X.squeeze(0).cpu().numpy()
-    u = u.squeeze(0).cpu().numpy()
-    Y = Y.squeeze(0).cpu().numpy()
-    s = s.squeeze(0).cpu().numpy()
-
-    # Plot the input and predicted data
-    ax[0].plot(X, u, label="True Input Function", color="gray", alpha=0.5)
-    ax[0].plot(X, u_pred, label="Predicted Input Function")
-    ax[0].legend()
-
-    # Plot the output data
-    ax[1].plot(Y, s, label="Output Function", color="gray", alpha=0.5)
-    ax[1].legend()
-
-    plt.tight_layout()
-    plt.savefig(file_name)
-    plt.close()
-
-
-def plot_best_case_evaluation(
-    model,
-    dataset,
-    file_name="results/model_best_case_evaluation.png",
-    input_function_encoder=None,  # Not used but kept for API compatibility
-    output_function_encoder=None,  # Not used but kept for API compatibility
-):
-    """Find and plot the best case (lowest loss) from the dataset."""
-    model.eval()
-    with torch.no_grad():
-        dataloader = DataLoader(
-            dataset,
-            batch_size=1,
-            shuffle=False,
-        )
-        best_case = None
-        best_case_loss = float("inf")
-        best_case_index = -1
-
-        for i, point in enumerate(dataloader):
-            loss = loss_function(
-                model=model,
-                batch=point,
-            )
-            if loss < best_case_loss:
-                best_case_loss = loss
-                best_case = point
-                best_case_index = i
-
-        _plot_case(
-            model=model,
-            point=best_case,
-            file_name=file_name,
-        )
-
-
-def plot_worst_case_evaluation(
-    model,
-    dataset,
-    file_name="results/model_worst_case_evaluation.png",
-    input_function_encoder=None,  # Not used but kept for API compatibility
-    output_function_encoder=None,  # Not used but kept for API compatibility
-):
-    """Find and plot the worst case (highest loss) from the dataset."""
-    model.eval()
-    with torch.no_grad():
-        dataloader = DataLoader(
-            dataset,
-            batch_size=1,
-            shuffle=False,
-        )
-        worst_case = None
-        worst_case_loss = float("-inf")
-        worst_case_index = -1
-
-        for i, point in enumerate(dataloader):
-            loss = loss_function(
-                model=model,
-                batch=point,
-            )
-            if loss > worst_case_loss:
-                worst_case_loss = loss
-                worst_case = point
-                worst_case_index = i
-
-        _plot_case(
-            model=model,
-            point=worst_case,
-            file_name=file_name,
-        )
+        return pred

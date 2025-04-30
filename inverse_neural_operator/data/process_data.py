@@ -113,10 +113,10 @@ class InputFunctionEncoderDataset(Dataset):
 
         # Do a randperm split
         B = X.shape[0]
-        idx = torch.randperm(B, device=self.device)
+        indices = torch.randperm(B, device=self.device)
         cut = B // 2
-        example_indices = idx[:cut]
-        remaining_indices = idx[cut:]
+        example_indices = indices[:cut]
+        remaining_indices = indices[cut:]
 
         example_xs = X[example_indices]
         example_ys = u[example_indices]
@@ -192,10 +192,10 @@ class OutputFunctionEncoderDataset(Dataset):
 
         # Do a randperm split
         B = Y.shape[0]
-        idx = torch.randperm(B, device=self.device)
+        indices = torch.randperm(B, device=self.device)
         cut = B // 2
-        example_indices = idx[:cut]
-        remaining_indices = idx[cut:]
+        example_indices = indices[:cut]
+        remaining_indices = indices[cut:]
 
         example_xs = Y[example_indices]
         example_ys = s[example_indices]

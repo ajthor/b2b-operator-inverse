@@ -8,27 +8,129 @@ from function_encoder.function_encoder import FunctionEncoder
 from function_encoder.losses import basis_normalization_loss
 
 import tqdm
+import os
 from torch.utils.tensorboard import SummaryWriter
 
 
-class FunctionEncoderFactory:
-    @staticmethod
-    def create(
-        input_size,
-        hidden_sizes,
-        output_size,
-        n_basis,
-        activation=torch.nn.ReLU(),
-    ):
-        layer_sizes = [input_size] + hidden_sizes + [output_size]
+def create_model(
+    input_size,
+    hidden_sizes,
+    output_size,
+    n_basis,
+    activation=torch.nn.ReLU(),
+):
+    """
+    Create a function encoder model.
 
-        basis_functions = MultiHeadedMLP(
-            layer_sizes=layer_sizes,
-            num_heads=n_basis,
-            activation=activation,
-        )
+    Args:
+        input_size: Size of the input features
+        hidden_sizes: List of hidden layer sizes for the MLP
+        output_size: Size of the output features
+        n_basis: Number of basis functions
+        activation: Activation function to use in the MLP
 
-        return FunctionEncoder(basis_functions=basis_functions)
+    Returns:
+        FunctionEncoder instance
+    """
+    layer_sizes = [input_size] + hidden_sizes + [output_size]
+
+    basis_functions = MultiHeadedMLP(
+        layer_sizes=layer_sizes,
+        num_heads=n_basis,
+        activation=activation,
+    )
+
+    return FunctionEncoder(basis_functions=basis_functions)
+
+
+def save(model, path):
+    """
+    Save a function encoder model to a file.
+    
+    Args:
+        model: The model to save
+        path: Path where the model will be saved
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save(model.state_dict(), path)
+
+
+def load(path, input_size, hidden_sizes, output_size, n_basis, activation=torch.nn.ReLU(), device=None):
+    """
+    Load a function encoder model from a file.
+    
+    Args:
+        path: Path to the saved model
+        input_size: Size of the input features
+        hidden_sizes: List of hidden layer sizes for the MLP
+        output_size: Size of the output features
+        n_basis: Number of basis functions
+        activation: Activation function to use in the MLP
+        device: Device to load the model to ('cpu', 'cuda', etc.)
+        
+    Returns:
+        Loaded FunctionEncoder instance
+    """
+    model = create_model(input_size, hidden_sizes, output_size, n_basis, activation)
+    model.load_state_dict(torch.load(path, map_location=device))
+    if device is not None:
+        model = model.to(device)
+    model.eval()
+    return model
+
+
+def save_checkpoint(model, optimizer, epoch, loss, path):
+    """
+    Save a function encoder checkpoint including training state.
+    
+    Args:
+        model: The model to save
+        optimizer: The optimizer used for training
+        epoch: Current epoch number
+        loss: Current loss value
+        path: Path where the checkpoint will be saved
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict() if optimizer is not None else None,
+        'loss': loss
+    }
+    torch.save(checkpoint, path)
+
+
+def load_checkpoint(path, input_size, hidden_sizes, output_size, n_basis, 
+                   activation=torch.nn.ReLU(), optimizer=None, device=None):
+    """
+    Load a function encoder checkpoint including training state.
+    
+    Args:
+        path: Path to the saved checkpoint
+        input_size: Size of the input features
+        hidden_sizes: List of hidden layer sizes for the MLP
+        output_size: Size of the output features
+        n_basis: Number of basis functions
+        activation: Activation function to use in the MLP
+        optimizer: Optimizer to load state into (optional)
+        device: Device to load the model to ('cpu', 'cuda', etc.)
+        
+    Returns:
+        tuple: (model, optimizer, epoch, loss)
+    """
+    model = create_model(input_size, hidden_sizes, output_size, n_basis, activation)
+    
+    checkpoint = torch.load(path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    if device is not None:
+        model = model.to(device)
+    
+    if optimizer is not None and checkpoint['optimizer_state_dict'] is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    
+    model.eval()
+    return model, optimizer, checkpoint['epoch'], checkpoint['loss']
 
 
 def loss_function(model, batch):
@@ -70,14 +172,14 @@ def train(
 
         summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
-        avg_test_loss = evaluate_model(model=model, test_dataloader=test_dataloader)
+        avg_test_loss = test_model(model=model, test_dataloader=test_dataloader)
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
 
 
-def evaluate_model(
+def test_model(
     model,
     test_dataloader,
 ):
@@ -92,7 +194,7 @@ def evaluate_model(
     return avg_test_loss
 
 
-def evaluate_instance(model, point):
+def evaluate(model, point):
     model.eval()
     with torch.no_grad():
         example_xs, example_ys, xs, ys = point
@@ -123,7 +225,7 @@ def plot_evaluations(
         fig, axs = plt.subplots(3, 3, figsize=(12, 12))
 
         for i, point in enumerate(dataloader):
-            pred = evaluate_instance(model, point)
+            pred = evaluate(model, point)
             pred = pred.squeeze(0).cpu().numpy()
 
             example_xs, example_ys, xs, ys = point

@@ -30,9 +30,9 @@ LOG_BASE_DIR="/store/at46867"
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
-DATASETS=(burgers_1d darcy_1d parametric_heat)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
-SEEDS=(1 2 3)   # add more seeds if you like
+DATASETS=(wave_scattering)
+MODELS=(b2b_nonlinear)
+SEEDS=(1)   # add more seeds if you like
 
 #── INITIALIZE GPU STATUS ─────────────────────────────────
 mkdir -p "$STATUS_DIR"
