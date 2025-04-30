@@ -4,11 +4,6 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
 from datasets import load_dataset
 
-from data.process_data import (
-    InputFunctionEncoderDataset,
-    OutputFunctionEncoderDataset,
-)
-
 
 class WaveScatteringDataset(Dataset):
     """Custom dataset for wave scattering data."""
@@ -104,10 +99,8 @@ def load_data(params, device, split="train"):
     ds = load_dataset("ajthor/wave_scattering", split=split)
 
     model_dataset = WaveScatteringDataset(ds, device=device)
-    input_fe_dataset = InputFunctionEncoderDataset(model_dataset, device=device)
-    output_fe_dataset = OutputFunctionEncoderDataset(model_dataset, device=device)
 
-    return (model_dataset, input_fe_dataset, output_fe_dataset)
+    return model_dataset
 
 
 def plot_instance(dataset, idx, axs=None):

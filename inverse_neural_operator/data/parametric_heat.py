@@ -4,11 +4,6 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
 from datasets import load_dataset
 
-from data.process_data import (
-    InputFunctionEncoderDataset,
-    OutputFunctionEncoderDataset,
-)
-
 
 class ParametricHeatDataset(Dataset):
     """Custom dataset for parametric heat equation data."""
@@ -95,10 +90,8 @@ def load_data(params, device, split="train"):
     ds = load_dataset("ajthor/parametric_heat", split=split)
 
     model_dataset = ParametricHeatDataset(ds, grid_size=51, device=device)
-    input_fe_dataset = InputFunctionEncoderDataset(model_dataset, device=device)
-    output_fe_dataset = OutputFunctionEncoderDataset(model_dataset, device=device)
 
-    return (model_dataset, input_fe_dataset, output_fe_dataset)
+    return model_dataset
 
 
 def plot_instance(dataset, idx, axs=None):

@@ -3,11 +3,7 @@ import matplotlib.pyplot as plt
 
 from datasets import load_dataset
 
-from data.process_data import (
-    ModelDataset,
-    InputFunctionEncoderDataset,
-    OutputFunctionEncoderDataset,
-)
+from data.process_data import ModelDataset
 
 
 def load_data(params, device, split="train"):
@@ -26,10 +22,8 @@ def load_data(params, device, split="train"):
     ds = load_dataset("ajthor/burgers_1d", split=split)
 
     model_dataset = ModelDataset(ds, device=device)
-    input_fe_dataset = InputFunctionEncoderDataset(model_dataset, device=device)
-    output_fe_dataset = OutputFunctionEncoderDataset(model_dataset, device=device)
 
-    return (model_dataset, input_fe_dataset, output_fe_dataset)
+    return model_dataset
 
 
 def plot_instance(dataset, idx, axs=None):
