@@ -94,79 +94,27 @@ def load_data(params, device, split="train"):
     return model_dataset
 
 
-def plot_instance(dataset, idx, axs=None):
-    """Plot a single instance from the Parametric Heat dataset."""
-    if axs is None:
-        fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+def plot_input(ax, x, y):
+    """
+    Plot the input data.
 
-    X, u, Y, s = dataset[idx]
+    Args:
+        ax: The axis to plot on
+        x: The x-coordinates of the data
+        y: The y-coordinates of the data
+    """
 
-    # For 2D heat equation, reshape the data into a grid
-    grid_size = int(np.sqrt(u.shape[0]))
-    u_grid = u.reshape(grid_size, grid_size).cpu().numpy()
-    s_grid = s.reshape(grid_size, grid_size).cpu().numpy()
-
-    # Create 2D heatmaps for input and output functions
-    im0 = axs[0].imshow(u_grid, origin="lower", extent=[0, 1, 0, 1], cmap="viridis")
-    im1 = axs[1].imshow(s_grid, origin="lower", extent=[0, 1, 0, 1], cmap="viridis")
-
-    # Add color bars
-    fig = plt.gcf()
-    fig.colorbar(im0, ax=axs[0], shrink=0.8)
-    fig.colorbar(im1, ax=axs[1], shrink=0.8)
-
-    # Add a single legend at the top center
-    fig.legend(
-        ["Input", "Output"], loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=2
-    )
-
-    plt.tight_layout()
-
-    return axs
+    ax.imshow(y)
 
 
-def plot_evaluation(result, dataset, idx, axs=None):
-    """Plot the evaluation results against the ground truth for Parametric Heat."""
-    if axs is None:
-        fig, axs = plt.subplots(2, 2, figsize=(14, 10))
-        axs = axs.flatten()
+def plot_output(ax, x, y):
+    """
+    Plot the output data.
 
-    X, u, Y, s = dataset[idx]
+    Args:
+        ax: The axis to plot on
+        x: The x-coordinates of the data
+        y: The y-coordinates of the data
+    """
 
-    # For 2D heat equation, reshape the data into a grid
-    grid_size = int(np.sqrt(u.shape[0]))
-    u_grid = u.reshape(grid_size, grid_size).cpu().numpy()
-    s_grid = s.reshape(grid_size, grid_size).cpu().numpy()
-    result_grid = result.reshape(grid_size, grid_size).cpu().numpy()
-
-    # Plot ground truth input
-    im0 = axs[0].imshow(u_grid, origin="lower", extent=[0, 1, 0, 1], cmap="viridis")
-    fig = plt.gcf()
-    fig.colorbar(im0, ax=axs[0], shrink=0.8)
-
-    # Plot predicted input
-    im1 = axs[1].imshow(
-        result_grid, origin="lower", extent=[0, 1, 0, 1], cmap="viridis"
-    )
-    fig.colorbar(im1, ax=axs[1], shrink=0.8)
-
-    # Plot output
-    im2 = axs[2].imshow(s_grid, origin="lower", extent=[0, 1, 0, 1], cmap="viridis")
-    fig.colorbar(im2, ax=axs[2], shrink=0.8)
-
-    # Plot difference between ground truth and prediction
-    diff = u_grid - result_grid
-    im3 = axs[3].imshow(diff, origin="lower", extent=[0, 1, 0, 1], cmap="coolwarm")
-    fig.colorbar(im3, ax=axs[3], shrink=0.8)
-
-    # Add a single legend at the top center
-    fig.legend(
-        ["Ground Truth", "Prediction", "Output", "Difference"],
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.0),
-        ncol=4,
-    )
-
-    plt.tight_layout()
-
-    return axs
+    ax.imshow(y)

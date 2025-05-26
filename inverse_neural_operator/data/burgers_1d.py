@@ -26,56 +26,33 @@ def load_data(params, device, split="train"):
     return model_dataset
 
 
-def plot_instance(dataset, idx, axs=None):
-    """Plot a single instance from the Burgers 1D dataset."""
-    if axs is None:
-        fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+def plot_input(ax, x, y):
+    """
+    Plot the input data.
 
-    X, u, Y, s = dataset[idx]
-    X = X.cpu().numpy()
-    u = u.cpu().numpy()
-    Y = Y.cpu().numpy()
-    s = s.cpu().numpy()
+    Args:
+        ax: The axis to plot on
+        x: The x-coordinates of the data
+        y: The y-coordinates of the data
+    """
 
-    axs[0].plot(X, u)
-    axs[1].plot(Y, s)
-
-    # Add a single legend at the top center
-    fig = plt.gcf()
-    fig.legend(
-        ["Input", "Output"], loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=2
-    )
-
-    plt.tight_layout()
-
-    return axs
+    ax.plot(x, y, label="Input", color="blue")
 
 
-def plot_evaluation(result, dataset, idx, axs=None):
-    """Plot the evaluation results against the ground truth for Burgers 1D."""
-    if axs is None:
-        fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+def plot_output(ax, x, y):
+    """
+    Plot the output data.
 
-    result = result.cpu().numpy()
-    X, u, Y, s = dataset[idx]
-    X = X.cpu().numpy()
-    u = u.cpu().numpy()
-    Y = Y.cpu().numpy()
-    s = s.cpu().numpy()
+    Args:
+        ax: The axis to plot on
+        x: The x-coordinates of the data
+        y: The y-coordinates of the data
+    """
 
-    axs[0].plot(X, u, color="blue")
-    axs[0].plot(X, result, color="red", linestyle="--")
-    axs[1].plot(Y, s, color="green")
+    ax.plot(x, y, label="Output", color="red")
 
-    # Add a single legend at the top center
-    fig = plt.gcf()
-    fig.legend(
-        ["Ground Truth", "Prediction", "Output"],
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.0),
-        ncol=3,
-    )
 
-    plt.tight_layout()
+def plot_comparison(X_true, X_pred, Y_true, Y_pred):
 
-    return axs
+    Xt, true = X_true
+    Xp, pred = X_pred

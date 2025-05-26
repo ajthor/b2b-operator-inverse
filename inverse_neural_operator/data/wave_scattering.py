@@ -103,99 +103,27 @@ def load_data(params, device, split="train"):
     return model_dataset
 
 
-def plot_instance(dataset, idx, axs=None):
-    """Plot a single instance from the Wave Scattering dataset."""
-    if axs is None:
-        fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+def plot_input(ax, x, y):
+    """
+    Plot the input data.
 
-    X, u, Y, s = dataset[idx]
+    Args:
+        ax: The axis to plot on
+        x: The x-coordinates of the data
+        y: The y-coordinates of the data
+    """
 
-    # Wave scattering has theta (X) as input parameters, u as input function
-    # X is the parameters, u is the function values
-    theta = X.cpu().numpy()
-    u_values = u.cpu().numpy()
-
-    # For the wave scattering problem, s is a 2D field
-    grid_size = int(np.sqrt(s.shape[0]))
-    s_grid = s.reshape(grid_size, grid_size).cpu().numpy()
-
-    # Plot input parameters
-    axs[0].bar(range(len(theta)), theta, color="blue")
-
-    # Plot input function
-    if u_values.size > 1:  # If there's an input function
-        axs[1].plot(u_values, color="red")
-    else:
-        axs[1].text(
-            0.5,
-            0.5,
-            "No input function data",
-            horizontalalignment="center",
-            verticalalignment="center",
-        )
-
-    # Plot output field as a 2D heatmap
-    im = axs[2].imshow(s_grid, origin="lower", extent=[0, 1, 0, 1], cmap="viridis")
-    fig = plt.gcf()
-    fig.colorbar(im, ax=axs[2], shrink=0.8)
-
-    # Add a single legend at the top center
-    fig.legend(
-        ["Parameters", "Input Function", "Output Field"],
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.0),
-        ncol=3,
-    )
-
-    plt.tight_layout()
-
-    return axs
+    ax.imshow(y)
 
 
-def plot_evaluation(result, dataset, idx, axs=None):
-    """Plot the evaluation results against the ground truth for Wave Scattering."""
-    if axs is None:
-        fig, axs = plt.subplots(2, 2, figsize=(14, 10))
-        axs = axs.flatten()
+def plot_output(ax, x, y):
+    """
+    Plot the output data.
 
-    X, u, Y, s = dataset[idx]
+    Args:
+        ax: The axis to plot on
+        x: The x-coordinates of the data
+        y: The y-coordinates of the data
+    """
 
-    # Wave scattering has theta (X) as input parameters
-    theta = X.cpu().numpy()
-    result = result.cpu().numpy()
-
-    # For 2D wave scattering, s is the 2D field
-    grid_size = int(np.sqrt(s.shape[0]))
-    s_grid = s.reshape(grid_size, grid_size).cpu().numpy()
-
-    # Plot ground truth parameters and prediction
-    axs[0].bar(range(len(theta)), theta, color="blue", alpha=0.6)
-    axs[0].bar(range(len(result)), result, color="red", alpha=0.6)
-
-    # Plot absolute difference between ground truth and prediction
-    diff = np.abs(theta - result)
-    axs[1].bar(range(len(diff)), diff, color="purple")
-
-    # Plot output field
-    im = axs[2].imshow(s_grid, origin="lower", extent=[0, 1, 0, 1], cmap="viridis")
-    fig = plt.gcf()
-    fig.colorbar(im, ax=axs[2], shrink=0.8)
-
-    # Plot scatter of prediction vs ground truth
-    axs[3].scatter(theta, result, color="green", alpha=0.7)
-    # Add perfect prediction line
-    min_val = min(np.min(theta), np.min(result))
-    max_val = max(np.max(theta), np.max(result))
-    axs[3].plot([min_val, max_val], [min_val, max_val], "k--")
-
-    # Add a single legend at the top center
-    fig.legend(
-        ["Ground Truth", "Prediction", "Difference", "Output", "Perfect Match"],
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.0),
-        ncol=5,
-    )
-
-    plt.tight_layout()
-
-    return axs
+    ax.imshow(y)

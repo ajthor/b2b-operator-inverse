@@ -22,10 +22,7 @@ parser = argparse.ArgumentParser()
 
 # Encoder type arg
 parser.add_argument(
-    "--encoder_type",
-    type=str,
-    choices=["input", "output"],
-    default="input",
+    "--encoder_type", type=str, choices=["input", "output"], default="input"
 )
 
 # Dataset args
@@ -39,7 +36,7 @@ parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--epochs", type=int, default=5000)
 parser.add_argument("--learning_rate", type=float, default=1e-4)
 
 # SummaryWriter args
@@ -58,6 +55,9 @@ parser.add_argument("--checkpoint_dir", type=str, default=None)
 parser.add_argument("--resume", type=bool, default=True)
 
 params = parser.parse_args()
+
+if params.encoder_type not in ["input", "output"]:
+    raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
 # If the dataset is wave_scattering, limit the batch size to 5.
 if params.dataset == "wave_scattering":
@@ -82,10 +82,13 @@ else:
 print(f"Using device: {device}")
 torch.manual_seed(params.seed)
 
-if params.encoder_type == "input":
-    model_name = "input_function_encoder"
-else:  # output
-    model_name = "output_function_encoder"
+match params.encoder_type:
+    case "input":
+        model_name = "input_function_encoder"
+    case "output":
+        model_name = "output_function_encoder"
+    case _:
+        raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
 # Create SummaryWriter
 writer = SummaryWriter(log_dir=params.log_dir, comment=params.comment)
@@ -122,13 +125,15 @@ model_test_dataset = load_data(params, device=device, split="test")
 
 dataset_info = model_train_dataset.get_info()
 
-if params.encoder_type == "input":
-    train_dataset = InputFunctionEncoderDataset(model_train_dataset, device=device)
-    test_dataset = InputFunctionEncoderDataset(model_test_dataset, device=device)
-
-else:  # output
-    train_dataset = OutputFunctionEncoderDataset(model_train_dataset, device=device)
-    test_dataset = OutputFunctionEncoderDataset(model_test_dataset, device=device)
+match params.encoder_type:
+    case "input":
+        train_dataset = InputFunctionEncoderDataset(model_train_dataset, device=device)
+        test_dataset = InputFunctionEncoderDataset(model_test_dataset, device=device)
+    case "output":
+        train_dataset = OutputFunctionEncoderDataset(model_train_dataset, device=device)
+        test_dataset = OutputFunctionEncoderDataset(model_test_dataset, device=device)
+    case _:
+        raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
 train_dataloader = DataLoader(
     train_dataset,
@@ -141,12 +146,15 @@ test_dataloader = DataLoader(
     shuffle=True,
 )
 
-if params.encoder_type == "input":
-    input_size = dataset_info["X_size"]
-    output_size = dataset_info["u_size"]
-else:  # output
-    input_size = dataset_info["Y_size"]
-    output_size = dataset_info["s_size"]
+match params.encoder_type:
+    case "input":
+        input_size = dataset_info["X_size"]
+        output_size = dataset_info["u_size"]
+    case "output":
+        input_size = dataset_info["Y_size"]
+        output_size = dataset_info["s_size"]
+    case _:
+        raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
 function_encoder = create_function_encoder(
     input_size=input_size,

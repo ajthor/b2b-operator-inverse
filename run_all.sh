@@ -2,20 +2,12 @@
 set -euo pipefail
 
 #── CONFIGURATION ────────────────────────────────────────
-# Default: use all available GPUs if not specified
-GPU_LIST=${GPU_LIST:-}  # Can be set externally, e.g., GPU_LIST="0 2 3"
 
-if [ -z "$GPU_LIST" ]; then
-  # Auto-detect all available GPUs
-  ALL_GPUS=($(nvidia-smi --query-gpu=index --format=csv,noheader))
-else
-  # Use user-specified GPUs
-  ALL_GPUS=($GPU_LIST)
-fi
-
-NUM_GPUS=${#ALL_GPUS[@]}
-if [ $NUM_GPUS -eq 0 ]; then
-  echo "Error: No GPUs specified or detected" >&2
+# List of GPUs to use
+GPUS=(1 2 3)
+ALL_GPUS=("${GPUS[@]}")
+if [ ${#ALL_GPUS[@]} -eq 0 ]; then
+  echo "Error: No GPUs specified" >&2
   exit 1
 fi
 
@@ -26,11 +18,11 @@ LOCK_FILE=/tmp/gpu_lock_file
 STATUS_DIR=/tmp/gpu_status
 
 # Base directory for experiment logs
-LOG_BASE_DIR="/store/at46867"
+LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
-DATASETS=(burgers_1d darcy_1d parametric_heat)
+DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering)
 MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
 SEEDS=(1 2 3)   # add more seeds if you like
 
@@ -70,76 +62,50 @@ run_experiment() {
   echo "[$count] $dataset | $model | seed=$seed → cuda:$gpu"
   
   # Step 1: Train input function encoder
-  # echo "[$count] Training input function encoder..."
   python inverse_neural_operator/train_function_encoder.py \
-    --encoder_type   "input" \
-    --dataset        "$dataset" \
-    --model          "$model" \
-    --seed           "$seed" \
-    --device         "cuda:$gpu" \
-    --log_dir        "$logdir" \
-    >>"$logfile" 2>&1
-  
-  exit_code=$?
-  if [ $exit_code -ne 0 ]; then
-    echo "[$count] failed (exit $exit_code)"
-    # release the GPU slot and exit this function
-    flock $LOCK_FILE bash -c "
-      c=\$(< $STATUS_DIR/gpu_$gpu)
-      echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
-    "
-    return $exit_code
-  fi
+    --encoder_type "input" \
+    --dataset "$dataset" \
+    --model "$model" \
+    --seed "$seed" \
+    --device "cuda:$gpu" \
+    --log_dir "$logdir" \
+    >>"$logfile" 2>&1 \
+    || echo "[$count] Training input function encoder failed with exit code $?"
 
   sleep 1
   
   # Step 2: Train output function encoder
-  # echo "[$count] Training output function encoder..."
   python inverse_neural_operator/train_function_encoder.py \
-    --encoder_type   "output" \
-    --dataset        "$dataset" \
-    --model          "$model" \
-    --seed           "$seed" \
-    --device         "cuda:$gpu" \
-    --log_dir        "$logdir" \
-    >>"$logfile" 2>&1
-  
-  exit_code=$?
-  if [ $exit_code -ne 0 ]; then
-    echo "[$count] failed (exit $exit_code)"
-    # release the GPU slot and exit this function
-    flock $LOCK_FILE bash -c "
-      c=\$(< $STATUS_DIR/gpu_$gpu)
-      echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
-    "
-    return $exit_code
-  fi
+    --encoder_type "output" \
+    --dataset "$dataset" \
+    --model "$model" \
+    --seed "$seed" \
+    --device "cuda:$gpu" \
+    --log_dir "$logdir" \
+    >>"$logfile" 2>&1 \
+    || echo "[$count] Training output function encoder failed with exit code $?"
 
   sleep 1
   
   # Step 3: Train the model if both function encoders succeeded
-  # echo "[$count] Training model $model..."
-  python inverse_neural_operator/train.py \
-    --dataset        "$dataset" \
-    --model          "$model" \
-    --seed           "$seed" \
-    --device         "cuda:$gpu" \
-    --log_dir        "$logdir" \
-    >>"$logfile" 2>&1
-    
-  exit_code=$?
-  if [ $exit_code -ne 0 ]; then
-    echo "[$count] failed (exit $exit_code)"
-  fi
+  python inverse_neural_operator/train_model.py \
+    --dataset "$dataset" \
+    --model "$model" \
+    --seed "$seed" \
+    --device "cuda:$gpu" \
+    --log_dir "$logdir" \
+    >>"$logfile" 2>&1 \
+    || echo "[$count] Training model $model failed with exit code $?"
 
-  # release the GPU slot
-  flock $LOCK_FILE bash -c "
+  sleep 1
+
+  # free the GPU slot
+  flock "$LOCK_FILE" bash -c "
     c=\$(< $STATUS_DIR/gpu_$gpu)
     echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
   "
-  sleep 1
-  
-  return $exit_code
+    
+  return 0
 }
 
 export -f run_experiment
@@ -158,18 +124,24 @@ for dataset in "${DATASETS[@]}"; do
         for gpu_idx in "${!ALL_GPUS[@]}"; do
           gpu="${ALL_GPUS[$gpu_idx]}"
           if flock $LOCK_FILE bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
+
             # claim it
             flock $LOCK_FILE bash -c "
               c=\$(< $STATUS_DIR/gpu_$gpu)
               echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
             "
-            # launch
+
             run_experiment \
-              --dataset      "$dataset" \
-              --model        "$model" \
-              --seed         "$seed" \
-              --gpu          "$gpu" \
-              --count        "$count" &
+              --dataset "$dataset" \
+              --model   "$model" \
+              --seed    "$seed"  \
+              --gpu     "$gpu"  \
+              --count   "$count" &
+
+            sleep 1
+
+
+            # break out so we move on to the next (dataset, model, seed)
             break 2
           fi
         done
