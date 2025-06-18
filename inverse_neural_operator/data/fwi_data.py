@@ -4,10 +4,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
-import data.transforms as T
 from datasets import load_dataset
 
 # Data is located in /store/at46867/fwi_data/{curve_vel,flat_vel}/data{1-60}.npy
+
+
+# Utility functions to replace transforms.py dependency
+
+
+def log_transform(data, k=1, c=0):
+    """Apply log transform to data."""
+    return (np.log1p(np.abs(k * data) + c)) * np.sign(data)
+
+
+def minmax_normalize(data, datamin, datamax, scale=2):
+    """Min-max normalize data to [-1, 1] if scale=2, else [0, 1]."""
+    data = data - datamin
+    data = data / (datamax - datamin)
+    if scale == 2:
+        return (data - 0.5) * 2
+    else:
+        return data
 
 
 def load_fwi_data(basepath, split="train"):
@@ -49,16 +66,11 @@ def load_fwi_data(basepath, split="train"):
     inputs = np.concatenate(inputs, axis=0)  # Shape: (n_samples, 5, 1000, 70)
     outputs = np.concatenate(outputs, axis=0)  # Shape: (n_samples, 1, 70, 70)
 
-    transform_data = Compose(
-        [
-            T.LogTransform(k=1),
-            T.MinMaxNormalize(T.log_transform(-61, k=1), T.log_transform(120, k=1)),
-        ]
-    )
-    transform_label = Compose([T.MinMaxNormalize(2000, 6000)])
-
-    inputs = transform_data(inputs)
-    outputs = transform_label(outputs)
+    # Apply log transform and minmax normalization to inputs
+    inputs = log_transform(inputs, k=1)
+    inputs = minmax_normalize(inputs, log_transform(-61, k=1), log_transform(120, k=1))
+    # Apply minmax normalization to outputs
+    outputs = minmax_normalize(outputs, 2000, 6000)
 
     return inputs, outputs
 
