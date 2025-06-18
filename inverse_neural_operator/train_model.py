@@ -110,6 +110,12 @@ match params.dataset:
     case "wave_scattering":
         from data.wave_scattering import load_data
 
+    case "fwi_flat":
+        from data.fwi_data import load_data
+
+    case "fwi_curve":
+        from data.fwi_data import load_data
+
     case _:
         raise ValueError(f"Unknown dataset: {params.dataset}")
 

@@ -4,11 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
-import transforms as T
+import data.transforms as T
 from datasets import load_dataset
 
 # Data is located in /store/at46867/fwi_data/{curve_vel,flat_vel}/data{1-60}.npy
-device = "cuda:1" if torch.cuda.is_available() else "cpu"
 
 
 def load_fwi_data(basepath, split="train"):
@@ -83,7 +82,7 @@ def load_fwi_curve_vel(split="train"):
 class FWIData(Dataset):
     """Custom dataset for Full Waveform Inversion (FWI) data."""
 
-    def __init__(self, fwi_dataset: str, device="cpu", split: str = "train"):
+    def __init__(self, dataset: str, device="cpu", split: str = "train"):
         """
         Extract 'u' and 's' values from the data.
 
@@ -96,15 +95,15 @@ class FWIData(Dataset):
         """
         self.device = device
 
-        if fwi_dataset == "flat_vel":
+        if dataset == "fwi_flat":
             u, s = load_fwi_flat_vel(split=split)
-        elif fwi_dataset == "curve_vel":
+        elif dataset == "fwi_curve":
             u, s = load_fwi_curve_vel(split=split)
         else:
-            raise ValueError(f"Unknown dataset: {fwi_dataset}")
+            raise ValueError(f"Unknown dataset: {dataset}")
 
-        self.u = torch.tensor(u, device=device)  # Input function values
-        self.s = torch.tensor(s, device=device)  # Output function values
+        self.u = torch.tensor(u)  # Input function values
+        self.s = torch.tensor(s)  # Output function values
 
         self.n_samples = self.u.shape[0]  # Number of samples
 
@@ -114,17 +113,17 @@ class FWIData(Dataset):
         self.s = self.s.view(self.s.shape[0], -1, 1)
 
         # Create an ndgrid for X coordinates
-        s = torch.linspace(0, 1, 5, device=device)
-        t = torch.linspace(0, 1, 1000, device=device)
-        d = torch.linspace(0, 1, 70, device=device)
+        s = torch.linspace(0, 1, 5)
+        t = torch.linspace(0, 1, 1000)
+        d = torch.linspace(0, 1, 70)
         _S, _T, _G = torch.meshgrid(s, t, d, indexing="ij")
 
         self.X = torch.stack([_S.flatten(), _T.flatten(), _G.flatten()], dim=1)
         self.X = self.X.unsqueeze(0).expand(self.u.shape[0], -1, -1)
 
         # Create a meshgrid for Y coordinates
-        x = torch.linspace(0, 1, 70, device=device)
-        y = torch.linspace(0, 1, 70, device=device)
+        x = torch.linspace(0, 1, 70)
+        y = torch.linspace(0, 1, 70)
         X, Y = torch.meshgrid(x, y, indexing="ij")
 
         self.Y = torch.stack([X.flatten(), Y.flatten()], dim=1)
@@ -146,10 +145,10 @@ class FWIData(Dataset):
             - s is the output function values
         """
         return (
-            self.X[idx],
-            self.u[idx],
-            self.Y[idx],
-            self.s[idx],
+            self.X[idx].to(self.device),
+            self.u[idx].to(self.device),
+            self.Y[idx].to(self.device),
+            self.s[idx].to(self.device),
         )
 
     def get_info(self):
@@ -166,19 +165,17 @@ class FWIData(Dataset):
         }
 
 
-def load_data(fwi_dataset="flat_vel", device=device, split="train"):
+def load_data(params, device, split="train"):
     """
     Load a dataset from a specific split.
 
     Args:
-        fwi_dataset (str): The dataset to load, either 'flat_vel' or 'curve_vel'.
+        params (dict): Parameters containing dataset information.
         device (str): The device to load the data on, e.g., 'cpu' or 'cuda'.
         split (str): The split of the dataset to load, either 'train' or 'test'.
 
     Returns:
         FWIData: An instance of the FWIData class containing the dataset.
     """
-    return FWIData(fwi_dataset=fwi_dataset, device=device, split=split)
 
-
-load_data("flat_vel", device=device, split="test")
+    return FWIData(dataset=params.dataset, device=device, split=split)
