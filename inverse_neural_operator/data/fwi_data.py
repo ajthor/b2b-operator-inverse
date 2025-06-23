@@ -6,11 +6,6 @@ from torch.utils.data import Dataset
 from torchvision.transforms import Compose
 from datasets import load_dataset
 
-# Data is located in /store/at46867/fwi_data/{curve_vel,flat_vel}/data{1-60}.npy
-
-
-# Utility functions to replace transforms.py dependency
-
 
 def log_transform(data, k=1, c=0):
     """Apply log transform to data."""
@@ -27,122 +22,115 @@ def minmax_normalize(data, datamin, datamax, scale=2):
         return data
 
 
-def load_fwi_data(basepath, split="train"):
-    """Load the FWI data from the specified base path."""
-
-    # If the split is train, we load the first 25k samples
-    if split == "train":
-        split_range = range(1, 51)
-    if split == "test":
-        split_range = range(51, 61)
-
-    # Assuming the input data files are named data1.npy, data2.npy, ..., data60.npy
-    input_files = [os.path.join(basepath, f"data{i}.npy") for i in split_range]
-    inputs = []
-    for input_file in input_files:
-        if os.path.exists(input_file):
-            contents = np.load(input_file)
-            print(f"Loaded {input_file} with shape {contents.shape}")
-            inputs.append(contents)
-        else:
-            print(f"File {input_file} does not exist.")
-
-    # Assuming the output data files are named model1.npy, model2.npy, ..., model60.npy
-    output_files = [os.path.join(basepath, f"model{i}.npy") for i in split_range]
-    outputs = []
-    for output_file in output_files:
-        if os.path.exists(output_file):
-            output = np.load(output_file)
-            print(f"Loaded {output_file} with shape {output.shape}")
-            outputs.append(output)
-        else:
-            print(f"File {output_file} does not exist.")
-
-    # Convert lists to numpy arrays
-    inputs = np.array(inputs)  # Shape: (n_files, 500, 5, 1000, 70)
-    outputs = np.array(outputs)  # Shape: (n_files, 500, 1, 70, 70)
-
-    # Stack inputs and outputs along the first dimension
-    inputs = np.concatenate(inputs, axis=0)  # Shape: (n_samples, 5, 1000, 70)
-    outputs = np.concatenate(outputs, axis=0)  # Shape: (n_samples, 1, 70, 70)
-
+def process_data_batch(inputs, outputs):
+    """Process a batch of data with transforms."""
     # Apply log transform and minmax normalization to inputs
     inputs = log_transform(inputs, k=1)
     inputs = minmax_normalize(inputs, log_transform(-61, k=1), log_transform(120, k=1))
     # Apply minmax normalization to outputs
     outputs = minmax_normalize(outputs, 2000, 6000)
-
-    return inputs, outputs
-
-
-def load_fwi_flat_vel(split="train"):
-    """Load the FWI flat velocity dataset."""
-    basepath = "/store/at46867/fwi_data/flat_vel"
-    inputs, outputs = load_fwi_data(basepath, split=split)
-
-    return inputs, outputs
-
-
-def load_fwi_curve_vel(split="train"):
-    """Load the FWI curve velocity dataset."""
-    basepath = "/store/at46867/fwi_data/curve_vel"
-    inputs, outputs = load_fwi_data(basepath, split=split)
-
     return inputs, outputs
 
 
 class FWIData(Dataset):
-    """Custom dataset for Full Waveform Inversion (FWI) data."""
+    """Custom dataset for Full Waveform Inversion (FWI) data with dynamic loading."""
 
     def __init__(self, dataset: str, device="cpu", split: str = "train"):
         """
-        Extract 'u' and 's' values from the data.
+        Initialize dataset with file paths instead of loading all data.
 
         The data is stored in 60 npy files. Each file has 500 samples.
         Input data is (5,1000,70)
         Output data is (1,70,70)
 
-        The first 25k samples are used for training, the next 5k for validation.
-
+        The first 50 files (25k samples) are used for training, the last 10 for testing.
         """
         self.device = device
+        self.split = split
 
+        # Set base path based on dataset
         if dataset == "fwi_flat":
-            u, s = load_fwi_flat_vel(split=split)
+            self.basepath = "/store/at46867/fwi_data/flat_vel"
         elif dataset == "fwi_curve":
-            u, s = load_fwi_curve_vel(split=split)
+            self.basepath = "/store/at46867/fwi_data/curve_vel"
         else:
             raise ValueError(f"Unknown dataset: {dataset}")
 
-        self.u = torch.tensor(u)  # Input function values
-        self.s = torch.tensor(s)  # Output function values
+        # Define file ranges for splits
+        if split == "train":
+            self.file_range = range(1, 51)  # Files 1-50
+        elif split == "test":
+            self.file_range = range(51, 61)  # Files 51-60
+        else:
+            raise ValueError(f"Unknown split: {split}")
 
-        self.n_samples = self.u.shape[0]  # Number of samples
+        # Each file contains 500 samples
+        self.samples_per_file = 500
+        self.n_files = len(self.file_range)
+        self.n_samples = self.n_files * self.samples_per_file
 
-        # Reshape u to [batch, values, 1]
-        self.u = self.u.view(self.u.shape[0], -1, 1)
-        # Reshape s to [batch, values, 1]
-        self.s = self.s.view(self.s.shape[0], -1, 1)
+        # Cache for currently loaded file
+        self._current_file_idx = None
+        self._current_data = None
+        self._current_targets = None
 
-        # Create an ndgrid for X coordinates
+        # Setup coordinate grids directly in __init__
+        # Create an ndgrid for X coordinates (input space)
         s = torch.linspace(0, 1, 5)
         t = torch.linspace(0, 1, 1000)
         d = torch.linspace(0, 1, 70)
         _S, _T, _G = torch.meshgrid(s, t, d, indexing="ij")
 
-        self.X = torch.stack([_S.flatten(), _T.flatten(), _G.flatten()], dim=1)
-        self.X = self.X.unsqueeze(0).expand(self.u.shape[0], -1, -1)
+        self.X_template = torch.stack([_S.flatten(), _T.flatten(), _G.flatten()], dim=1)
 
-        # Create a meshgrid for Y coordinates
+        # Create a meshgrid for Y coordinates (output space)
         x = torch.linspace(0, 1, 70)
         y = torch.linspace(0, 1, 70)
         X, Y = torch.meshgrid(x, y, indexing="ij")
 
-        self.Y = torch.stack([X.flatten(), Y.flatten()], dim=1)
-        self.Y = self.Y.unsqueeze(0).expand(self.u.shape[0], -1, -1)
+        self.Y_template = torch.stack([X.flatten(), Y.flatten()], dim=1)
+
+    def _load_file(self, file_idx):
+        """Load a specific file and cache it."""
+        if self._current_file_idx == file_idx:
+            return  # Already loaded
+
+        file_num = list(self.file_range)[file_idx]
+
+        # Load input data
+        input_file = os.path.join(self.basepath, f"data{file_num}.npy")
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Input file {input_file} does not exist.")
+
+        # Load output data
+        output_file = os.path.join(self.basepath, f"model{file_num}.npy")
+        if not os.path.exists(output_file):
+            raise FileNotFoundError(f"Output file {output_file} does not exist.")
+
+        # Load and process data
+        inputs = np.load(input_file)  # Shape: (500, 5, 1000, 70)
+        outputs = np.load(output_file)  # Shape: (500, 1, 70, 70)
+
+        # Apply transforms
+        inputs, outputs = process_data_batch(inputs, outputs)
+
+        # Convert to tensors and reshape
+        inputs = torch.tensor(inputs, dtype=torch.float32)
+        outputs = torch.tensor(outputs, dtype=torch.float32)
+
+        # Reshape for the neural operator
+        inputs = inputs.view(inputs.shape[0], -1, 1)  # [batch, values, 1]
+        outputs = outputs.view(outputs.shape[0], -1, 1)  # [batch, values, 1]
+
+        # Cache the data
+        self._current_file_idx = file_idx
+        self._current_data = inputs
+        self._current_targets = outputs
+
+        print(f"Loaded file {file_num} with {inputs.shape[0]} samples")
 
     def __len__(self):
-        """Return the number of samples in the dataset."""
+        """Return the total number of samples in the dataset."""
         return self.n_samples
 
     def __getitem__(self, idx):
@@ -156,24 +144,36 @@ class FWIData(Dataset):
             - Y is the grid coordinates
             - s is the output function values
         """
+        # Determine which file and which sample within that file
+        file_idx = idx // self.samples_per_file
+        sample_idx = idx % self.samples_per_file
+
+        # Load the file if not already loaded
+        self._load_file(file_idx)
+
+        # Get the sample
+        u = self._current_data[sample_idx]
+        s = self._current_targets[sample_idx]
+
+        # Return with coordinate grids
         return (
-            self.X[idx].to(self.device),
-            self.u[idx].to(self.device),
-            self.Y[idx].to(self.device),
-            self.s[idx].to(self.device),
+            self.X_template.to(self.device),
+            u.to(self.device),
+            self.Y_template.to(self.device),
+            s.to(self.device),
         )
 
     def get_info(self):
         """Extract info from model dataset."""
         return {
-            "X_size": self.X.shape[-1],
-            "u_size": self.u.shape[-1],
-            "Y_size": self.Y.shape[-1],
-            "s_size": self.s.shape[-1],
-            "X_len": self.X.shape[0],
-            "u_len": self.u.shape[0],
-            "Y_len": self.Y.shape[0],
-            "s_len": self.s.shape[0],
+            "X_size": self.X_template.shape[-1],
+            "u_size": 1,  # After reshaping
+            "Y_size": self.Y_template.shape[-1],
+            "s_size": 1,  # After reshaping
+            "X_len": self.X_template.shape[0],
+            "u_len": 5 * 1000 * 70,  # Total flattened input size
+            "Y_len": self.Y_template.shape[0],
+            "s_len": 70 * 70,  # Total flattened output size
         }
 
 

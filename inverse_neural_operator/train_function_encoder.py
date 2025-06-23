@@ -13,6 +13,7 @@ from models.function_encoder import (
     create_model as create_function_encoder,
     train as train_function_encoder,
     save as save_function_encoder,
+    memory_efficient_inner_product,
 )
 
 torch.set_float32_matmul_precision("high")
@@ -26,7 +27,7 @@ parser.add_argument(
 )
 
 # Dataset args
-parser.add_argument("--dataset", type=str, default="wave_scattering")
+parser.add_argument("--dataset", type=str, default="fwi_flat")
 
 parser.add_argument("--model", type=str, default="b2b_nonlinear")
 
@@ -60,10 +61,10 @@ if params.encoder_type not in ["input", "output"]:
     raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
 # If the dataset is wave_scattering, limit the batch size to 5.
-if params.dataset == "wave_scattering":
+if params.dataset in ["wave_scattering", "fwi_flat", "fwi_curve"]:
     if params.batch_size > 5:
         print(
-            f"Batch size {params.batch_size} is too large for the wave_scattering dataset. "
+            f"Batch size {params.batch_size} is too large for the dataset. "
             "Setting batch size to 5."
         )
         params.batch_size = 5
@@ -118,9 +119,9 @@ match params.dataset:
 
     case "fwi_flat":
         from data.fwi_data import load_data
-
     case "fwi_curve":
         from data.fwi_data import load_data
+
     case _:
         raise ValueError(f"Unknown dataset: {params.dataset}")
 
@@ -144,12 +145,12 @@ match params.encoder_type:
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=params.batch_size,
-    shuffle=True,
+    # shuffle=True,
 )
 test_dataloader = DataLoader(
     test_dataset,
     batch_size=params.batch_size,
-    shuffle=True,
+    # shuffle=True,
 )
 
 match params.encoder_type:
@@ -162,11 +163,17 @@ match params.encoder_type:
     case _:
         raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
+
 function_encoder = create_function_encoder(
     input_size=input_size,
     hidden_sizes=params.hidden_sizes,
     output_size=output_size,
     n_basis=params.n_basis,
+    inner_product=(
+        memory_efficient_inner_product
+        if params.dataset in ["fwi_flat", "fwi_curve"]
+        else None
+    ),
 )
 # function_encoder = torch.compile(function_encoder)
 function_encoder.to(device)

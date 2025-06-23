@@ -9,6 +9,7 @@ import os
 from models.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
+    memory_efficient_inner_product,
 )
 
 torch.set_float32_matmul_precision("high")
@@ -100,19 +101,15 @@ match params.dataset:
 
     case "burgers_1d":
         from data.burgers_1d import load_data
-
     case "darcy_1d":
         from data.darcy_1d import load_data
-
     case "parametric_heat":
         from data.parametric_heat import load_data
-
     case "wave_scattering":
         from data.wave_scattering import load_data
 
     case "fwi_flat":
         from data.fwi_data import load_data
-
     case "fwi_curve":
         from data.fwi_data import load_data
 
@@ -135,6 +132,11 @@ input_function_encoder = create_function_encoder(
     hidden_sizes=input_function_encoder_params.hidden_sizes,
     output_size=dataset_info["u_size"],
     n_basis=input_function_encoder_params.n_basis,
+    inner_product=(
+        memory_efficient_inner_product
+        if params.dataset in ["fwi_flat", "fwi_curve"]
+        else None
+    ),
 )
 # input_function_encoder = torch.compile(input_function_encoder)
 input_function_encoder.to(device)
@@ -154,6 +156,11 @@ output_function_encoder = create_function_encoder(
     hidden_sizes=output_function_encoder_params.hidden_sizes,
     output_size=dataset_info["s_size"],
     n_basis=output_function_encoder_params.n_basis,
+    inner_product=(
+        memory_efficient_inner_product
+        if params.dataset in ["fwi_flat", "fwi_curve"]
+        else None
+    ),
 )
 # output_function_encoder = torch.compile(output_function_encoder)
 output_function_encoder.to(device)
