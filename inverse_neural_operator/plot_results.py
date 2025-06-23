@@ -8,6 +8,7 @@ import torch
 from models.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
+    memory_efficient_inner_product,
 )
 
 from models.model_evaluation import evaluate_random, find_best_case, find_worst_case
@@ -71,6 +72,20 @@ match params.dataset:
             plot_output,
         )
 
+    case "fwi_flat":
+        from data.fwi_data import (
+            load_data,
+            plot_input,
+            plot_output,
+        )
+
+    case "fwi_curve":
+        from data.fwi_data import (
+            load_data,
+            plot_input,
+            plot_output,
+        )
+
     case _:
         raise ValueError(f"Unknown dataset: {params.dataset}")
 
@@ -78,6 +93,54 @@ match params.dataset:
 
 test_dataset = load_data(params, device=device, split="test")
 dataset_info = test_dataset.get_info()
+
+# Load the input function encoder
+
+input_function_encoder_params = torch.load(
+    os.path.join(log_dir, "input_function_encoder_params.pth"), weights_only=False
+)
+input_function_encoder = create_function_encoder(
+    input_size=dataset_info["X_size"],
+    hidden_sizes=input_function_encoder_params.hidden_sizes,
+    output_size=dataset_info["u_size"],
+    n_basis=input_function_encoder_params.n_basis,
+    inner_product=(
+        memory_efficient_inner_product
+        if params.dataset in ["fwi_flat", "fwi_curve"]
+        else None
+    ),
+)
+# input_function_encoder = torch.compile(input_function_encoder)
+input_function_encoder.to(device)
+input_function_encoder = load_function_encoder(
+    input_function_encoder,
+    os.path.join(log_dir, "input_function_encoder.pth"),
+    device=device,
+)
+
+# Load the output function encoder
+
+output_function_encoder_params = torch.load(
+    os.path.join(log_dir, "output_function_encoder_params.pth"), weights_only=False
+)
+output_function_encoder = create_function_encoder(
+    input_size=dataset_info["Y_size"],
+    hidden_sizes=output_function_encoder_params.hidden_sizes,
+    output_size=dataset_info["s_size"],
+    n_basis=output_function_encoder_params.n_basis,
+    inner_product=(
+        memory_efficient_inner_product
+        if params.dataset in ["fwi_flat", "fwi_curve"]
+        else None
+    ),
+)
+# output_function_encoder = torch.compile(output_function_encoder)
+output_function_encoder.to(device)
+output_function_encoder = load_function_encoder(
+    output_function_encoder,
+    os.path.join(log_dir, "output_function_encoder.pth"),
+    device=device,
+)
 
 # Load model
 
@@ -90,8 +153,8 @@ match params.model:
         )
 
         model = create_model(
-            input_size=params.input_fe_n_basis,
-            output_size=params.output_fe_n_basis,
+            input_size=input_function_encoder_params.n_basis,
+            output_size=output_function_encoder_params.n_basis,
         ).to(device)
         model = load(
             model=model, path=os.path.join(log_dir, "model.pth"), device=device
@@ -105,8 +168,8 @@ match params.model:
         )
 
         model = create_model(
-            input_size=params.input_fe_n_basis,
-            output_size=params.output_fe_n_basis,
+            input_size=input_function_encoder_params.n_basis,
+            output_size=output_function_encoder_params.n_basis,
             hidden_sizes=params.hidden_sizes,
         ).to(device)
         model = load(
@@ -138,10 +201,10 @@ match params.model:
         )
 
         model = create_model(
-            alpha_size=params.input_fe_n_basis,
-            beta_size=params.output_fe_n_basis,
+            alpha_size=input_function_encoder_params.n_basis,
+            beta_size=output_function_encoder_params.n_basis,
             hidden_sizes=params.hidden_sizes,
-            latent_size=params.output_fe_n_basis,
+            latent_size=output_function_encoder_params.n_basis,
         ).to(device)
         model = load(
             model=model, path=os.path.join(log_dir, "model.pth"), device=device
@@ -155,7 +218,7 @@ match params.model:
         )
 
         model = create_model(
-            input_size=params.input_fe_n_basis,
+            input_size=input_function_encoder_params.n_basis,
             hidden_sizes=params.hidden_sizes,
             n_coupling_layers=2,
         ).to(device)
@@ -165,47 +228,6 @@ match params.model:
 
     case _:
         raise ValueError(f"Unknown model: {params.model}")
-
-
-# Load the input function encoder
-
-input_function_encoder_params = torch.load(
-    os.path.join(log_dir, "input_function_encoder_params.pth"), weights_only=False
-)
-input_function_encoder = create_function_encoder(
-    input_size=dataset_info["X_size"],
-    hidden_sizes=input_function_encoder_params.hidden_sizes,
-    output_size=dataset_info["u_size"],
-    n_basis=input_function_encoder_params.n_basis,
-)
-# input_function_encoder = torch.compile(input_function_encoder)
-input_function_encoder.to(device)
-input_function_encoder = load_function_encoder(
-    input_function_encoder,
-    os.path.join(log_dir, "input_function_encoder.pth"),
-    device=device,
-)
-
-# Load the output function encoder
-
-output_function_encoder_params = torch.load(
-    os.path.join(log_dir, "output_function_encoder_params.pth"), weights_only=False
-)
-output_function_encoder = create_function_encoder(
-    input_size=dataset_info["Y_size"],
-    hidden_sizes=output_function_encoder_params.hidden_sizes,
-    output_size=dataset_info["s_size"],
-    n_basis=output_function_encoder_params.n_basis,
-)
-# output_function_encoder = torch.compile(output_function_encoder)
-output_function_encoder.to(device)
-output_function_encoder = load_function_encoder(
-    output_function_encoder,
-    os.path.join(log_dir, "output_function_encoder.pth"),
-    device=device,
-)
-
-# Load model
 
 
 # Helper function for function encoder plots
