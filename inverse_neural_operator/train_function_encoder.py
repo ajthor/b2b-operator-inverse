@@ -35,7 +35,7 @@ parser.add_argument("--n_basis", type=int, default=100)
 parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
 
 # Training args
-parser.add_argument("--batch_size", type=int, default=50)
+parser.add_argument("--batch_size", type=int, default=100)
 parser.add_argument("--epochs", type=int, default=5000)
 parser.add_argument("--learning_rate", type=float, default=1e-4)
 
@@ -115,10 +115,10 @@ match params.dataset:
         from data.parametric_heat import load_data
     case "wave_scattering":
         from data.wave_scattering import load_data
-
+    case "chladni_2d":
+        from data.chladni_2d import load_data
     case "fwi_flat":
         from data.fwi_data import load_data
-
     case "fwi_curve":
         from data.fwi_data import load_data
     case _:

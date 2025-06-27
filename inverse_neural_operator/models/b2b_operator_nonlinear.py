@@ -104,8 +104,18 @@ def load_checkpoint(
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
     X, u, Y, s = batch
 
-    alpha = input_function_encoder.compute_coefficients(X, u)
-    beta = output_function_encoder.compute_coefficients(Y, s)
+    # Handle tuple return from compute_coefficients
+    alpha_result = input_function_encoder.compute_coefficients(X, u)
+    if isinstance(alpha_result, tuple):
+        alpha = alpha_result[0]
+    else:
+        alpha = alpha_result
+        
+    beta_result = output_function_encoder.compute_coefficients(Y, s)
+    if isinstance(beta_result, tuple):
+        beta = beta_result[0]
+    else:
+        beta = beta_result
 
     alpha_pred = model.inverse(beta)
 
@@ -206,7 +216,13 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
     with torch.no_grad():
         X, u, Y, s = point
 
-        beta = output_function_encoder.compute_coefficients(Y, s)
+        # Handle tuple return from compute_coefficients
+        beta_result = output_function_encoder.compute_coefficients(Y, s)
+        if isinstance(beta_result, tuple):
+            beta = beta_result[0]
+        else:
+            beta = beta_result
+            
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)
 

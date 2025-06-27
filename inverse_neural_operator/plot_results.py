@@ -71,6 +71,13 @@ match params.dataset:
             plot_output,
         )
 
+    case "chladni_2d":
+        from data.chladni_2d import (
+            load_data,
+            plot_input,
+            plot_output,
+        )
+
     case _:
         raise ValueError(f"Unknown dataset: {params.dataset}")
 

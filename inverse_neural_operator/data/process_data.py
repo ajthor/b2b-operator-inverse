@@ -113,7 +113,7 @@ class InputFunctionEncoderDataset(Dataset):
 
         # Do a randperm split
         B = X.shape[0]
-        indices = torch.randperm(B, device=self.device)
+        indices = torch.randperm(B, device=X.device)
         cut = B // 2
         example_indices = indices[:cut]
         remaining_indices = indices[cut:]
