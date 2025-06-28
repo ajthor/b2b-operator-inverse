@@ -4,7 +4,6 @@ import sys
 import os 
 from datetime import datetime 
 import argparse
-from datasets import load_from_disk
 from tqdm import trange
 
 # Add the project root directory to sys.path
@@ -15,6 +14,7 @@ if project_root not in sys.path:
 
 # Import required modules
 from deeponet_model import DeepONet, MLP
+from data.chladni_2d import load_data
 import torch.nn as nn
 
 def parse_arguments():
@@ -47,33 +47,24 @@ def get_activation_function(activation_name):
     activation_map = {'relu': nn.ReLU, 'tanh': nn.Tanh, 'gelu': nn.GELU, 'swish': nn.SiLU}
     return activation_map.get(activation_name.lower(), nn.ReLU)
 
-class ChladniDatasetDeepONet:
-    def __init__(self, dataset, batch_size=64, device='cuda'):
-        print("📊 Loading pre-normalized dataset...")
+class ChladniDataLoader:
+    """Data loader for Chladni dataset with fast tensor indexing."""
+    
+    def __init__(self, dataset, batch_size=64):
+        self.dataset = dataset
         self.batch_size = batch_size
-        self.device = device
-        train_data = dataset['train']
-        self.n_samples = len(train_data)
+        self.n_samples = len(dataset)
+        self.device = dataset.device
         
-        sample_0 = train_data[0]
-        self.n_points = len(sample_0['X'])
-        self.input_dim = len(sample_0['X'][0])
+        # Extract tensors for fast indexing (like the old implementation)
+        self.u_data = dataset.u.squeeze(-1) if dataset.u.dim() == 3 else dataset.u  # [N, 625]
+        self.Y_data = dataset.Y  # [N, 625, 2]
+        self.s_data = dataset.s.squeeze(-1) if dataset.s.dim() == 3 else dataset.s  # [N, 625]
         
-        # Pre-allocate and load all pre-normalized data to GPU
-        self.u_data = torch.zeros(self.n_samples, self.n_points, device=device, dtype=torch.float32)
-        self.Y_data = torch.zeros(self.n_samples, self.n_points, self.input_dim, device=device, dtype=torch.float32)
-        self.s_data = torch.zeros(self.n_samples, self.n_points, device=device, dtype=torch.float32)
-        
-        for i in range(self.n_samples):
-            sample = train_data[i]
-            self.u_data[i] = torch.tensor(sample['u'], device=device, dtype=torch.float32)
-            self.Y_data[i] = torch.tensor(sample['Y'], device=device, dtype=torch.float32)
-            self.s_data[i] = torch.tensor(sample['s'], device=device, dtype=torch.float32)
-        
-        print(f"✅ Dataset loaded: {self.n_samples} samples, {self.n_points} points")
-        
-    def sample(self, device=None):
+    def sample(self):
+        """Sample a batch from the dataset using fast tensor indexing."""
         indices = torch.randint(0, self.n_samples, (self.batch_size,), device=self.device)
+        # Direct tensor indexing - much faster than looping through __getitem__
         return self.u_data[indices], self.Y_data[indices], self.s_data[indices]
 
 def create_model(args, device):
@@ -84,7 +75,7 @@ def create_model(args, device):
     
     return DeepONet(branch_net, trunk_net).to(device)
 
-def train_model(model, dataset, args, device, log_dir):
+def train_model(model, train_loader, args, device, log_dir):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.don_lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_schedule_steps, gamma=0.5)
     criterion = nn.MSELoss()
@@ -95,7 +86,7 @@ def train_model(model, dataset, args, device, log_dir):
     bar = trange(args.don_epochs)
     for epoch in bar:
         current_lr = optimizer.param_groups[0]['lr']
-        branch_input, trunk_input, target = dataset.sample(device=device)
+        branch_input, trunk_input, target = train_loader.sample()
         
         optimizer.zero_grad()
         pred = model(branch_input, trunk_input)
@@ -118,23 +109,37 @@ def train_model(model, dataset, args, device, log_dir):
     
     return epoch_losses
 
-def evaluate_model(model, dataset, device, n_test_samples=100):
+def evaluate_model(model, test_dataset, device, n_test_samples=100):
     model.eval()
-    test_data = dataset['test']
-    n_test = min(n_test_samples, len(test_data))
+    n_test = min(n_test_samples, len(test_dataset))
+    
+    # Use fast tensor indexing for evaluation too
+    u_data = test_dataset.u.squeeze(-1) if test_dataset.u.dim() == 3 else test_dataset.u
+    Y_data = test_dataset.Y
+    s_data = test_dataset.s.squeeze(-1) if test_dataset.s.dim() == 3 else test_dataset.s
+    
+    # Process in batches for memory efficiency
+    batch_size = 32
     total_loss = total_rel_error = 0.0
     
     with torch.no_grad():
-        for i in range(n_test):
-            sample = test_data[i]
-            # Data is already normalized
-            us = torch.tensor(sample['u'], dtype=torch.float32, device=device).unsqueeze(0)
-            ys = torch.tensor(sample['Y'], dtype=torch.float32, device=device).unsqueeze(0)
-            target = torch.tensor(sample['s'], dtype=torch.float32, device=device).unsqueeze(0)
+        for i in range(0, n_test, batch_size):
+            end_idx = min(i + batch_size, n_test)
+            batch_indices = torch.arange(i, end_idx, device=device)
             
-            pred = model(us, ys)
-            total_loss += torch.nn.MSELoss()(pred, target).item()
-            total_rel_error += (torch.norm(pred - target) / torch.norm(target)).item()
+            # Fast tensor indexing
+            u_batch = u_data[batch_indices]
+            Y_batch = Y_data[batch_indices] 
+            s_batch = s_data[batch_indices]
+            
+            pred_batch = model(u_batch, Y_batch)
+            
+            # Compute losses for the batch
+            batch_loss = torch.nn.MSELoss()(pred_batch, s_batch).item()
+            batch_rel_error = (torch.norm(pred_batch - s_batch) / torch.norm(s_batch)).item()
+            
+            total_loss += batch_loss * (end_idx - i)
+            total_rel_error += batch_rel_error * (end_idx - i)
     
     avg_loss, avg_rel_error = total_loss / n_test, total_rel_error / n_test
     print(f"Test Results - MSE Loss: {avg_loss:.6e}, Relative Error: {avg_rel_error:.6f}")
@@ -142,21 +147,26 @@ def evaluate_model(model, dataset, device, n_test_samples=100):
     model.train()
     return avg_loss, avg_rel_error
 
-
-
 def main():
     args = parse_arguments()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     log_dir = setup_logging(project_root)
     
     try:
-        dataset = load_from_disk(args.data_path)
-        print(f"Dataset loaded: {len(dataset['train'])} train, {len(dataset['test'])} test samples")
+        # Load training and test datasets using the new format
+        print("Loading training dataset...")
+        train_dataset = load_data(device=str(device), split="train")
+        print("Loading test dataset...")
+        test_dataset = load_data(device=str(device), split="test")
+        
+        print(f"Dataset loaded: {len(train_dataset)} train, {len(test_dataset)} test samples")
     except Exception as e:
         print(f"Error loading dataset: {e}")
         return
     
-    chladni_dataset = ChladniDatasetDeepONet(dataset, batch_size=args.batch_size, device=str(device))
+    # Create data loader
+    train_loader = ChladniDataLoader(train_dataset, batch_size=args.batch_size)
+    
     model = create_model(args, device)
     print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
     
@@ -165,8 +175,8 @@ def main():
         model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
         print("Pre-trained model loaded")
     
-    train_model(model, chladni_dataset, args, device, log_dir)
-    evaluate_model(model, dataset, device, n_test_samples=1000)
+    train_model(model, train_loader, args, device, log_dir)
+    evaluate_model(model, test_dataset, device, n_test_samples=1000)
     
     torch.save(model.state_dict(), os.path.join(log_dir, "deeponet_model.pth"))
     print("Training completed!")

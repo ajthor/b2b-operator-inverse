@@ -1,21 +1,109 @@
 """
-Generate 11000 Forcing Samples for Chladni Plate (Python Version)
-- Precompute everything that does NOT depend on alpha(n,m).
-- Split into 10000 Training Samples + 1000 Testing Samples.
-- Save to ChladniData.npz, including S(x,y) arrays.
-- Optimized using NumPy vectorization for better performance.
+Chladni plate dataset for B2B operator inverse problems.
+Generates normalized force and displacement data for neural operator training.
 """
 
+import torch
 import numpy as np
+import matplotlib.pyplot as plt
+from torch.utils.data import Dataset
+from datasets import Dataset as HFDataset, load_from_disk
 from scipy.integrate import quad
-from datasets import Dataset
 import tqdm
 import time
 import os
 
 
+class ChladniDataset(Dataset):
+    """Custom dataset for Chladni plate data."""
+
+    def __init__(self, dataset, device="cpu"):
+        """
+        Initialize the dataset by extracting 'X', 'u', 'Y', 's' values.
+
+        Args:
+            dataset: HuggingFace dataset with 'X', 'u', 'Y', 's' fields
+            device: The device to put tensors on
+        """
+        self.device = device
+        self.n_samples = len(dataset)
+
+        # Preload all data to GPU for fast training
+        print(f"📊 Loading {self.n_samples} samples to {device}...")
+        
+        self.X = torch.tensor(dataset["X"], device=device, dtype=torch.float32)  # Input coordinates
+        self.u = torch.tensor(dataset["u"], device=device, dtype=torch.float32)  # Input function (forces) 
+        self.Y = torch.tensor(dataset["Y"], device=device, dtype=torch.float32)  # Output coordinates
+        self.s = torch.tensor(dataset["s"], device=device, dtype=torch.float32)  # Output function (displacements)
+        
+        # Ensure correct dimensions
+        if self.u.dim() == 2:  # [batch, values]
+            self.u = self.u.unsqueeze(-1)  # [batch, values, 1]
+        if self.s.dim() == 2:  # [batch, values]
+            self.s = self.s.unsqueeze(-1)  # [batch, values, 1]
+            
+        print(f"✅ Dataset loaded: {self.n_samples} samples, {self.X.shape[1]} points")
+
+    def __len__(self):
+        return self.n_samples
+
+    def __getitem__(self, idx):
+        """
+        Get a sample from the dataset.
+
+        Returns:
+            A tuple of (X, u, Y, s) where:
+            - X is the input grid coordinates (normalized)
+            - u is the input function values (forces, normalized)
+            - Y is the output grid coordinates (normalized, same as X)
+            - s is the output function values (displacements, normalized)
+        """
+        return (
+            self.X[idx],
+            self.u[idx],
+            self.Y[idx], 
+            self.s[idx],
+        )
+
+    def get_info(self):
+        """Extract info from model dataset."""
+        return {
+            "X_size": self.X.shape[-1],
+            "u_size": self.u.shape[-1], 
+            "Y_size": self.Y.shape[-1],
+            "s_size": self.s.shape[-1],
+            "X_len": self.X.shape[0],
+            "u_len": self.u.shape[0],
+            "Y_len": self.Y.shape[0],
+            "s_len": self.s.shape[0],
+        }
+
+
+def load_data(params=None, device="cpu", split="train"):
+    """
+    Load Chladni dataset from a specific split.
+
+    Args:
+        params: Parameters for processing (unused, for compatibility)
+        device: The device to use
+        split: The dataset split to load (default: "train")
+
+    Returns:
+        A ChladniDataset instance for the specified split
+    """
+    try:
+        # Load the pre-generated dataset
+        ds = load_from_disk('Data/chladni_dataset')
+        model_dataset = ChladniDataset(ds[split], device=device)
+        return model_dataset
+    except Exception as e:
+        print(f"Error loading Chladni dataset: {e}")
+        print("Please run generate_chladni_data() first to create the dataset.")
+        raise
+
+
 def generate_chladni_data():
-    """Generate Chladni plate simulation data."""
+    """Generate Chladni plate simulation data in HuggingFace format."""
     
     print("Starting Chladni plate data generation...")
     
@@ -23,19 +111,23 @@ def generate_chladni_data():
     os.makedirs('Data', exist_ok=True)
     
     # 1) Basic Setup
-    L = 8.75 * 0.0254   
+    L = 8.75 * 0.0254   # Dimensions in meters
     M = 8.75 * 0.0254
     omega = 55 * np.pi / M  # Frequency
     t_fixed = 4             # Time at which to evaluate the solution
+    
     gamma = 0.02  # damping_adjustment
     v = 0.5
+    
     numPoints = 25
     x = np.linspace(0, L, numPoints)
     y = np.linspace(0, M, numPoints)
+    
     n_range = 10
     m_range = 10
-
+    
     N_total = 11000   # total number of samples
+    N_train = 10000   # number of training samples
     N_test = 1000     # number of testing samples
     
     # Initialize storage arrays
@@ -88,7 +180,6 @@ def generate_chladni_data():
     print("Precomputation complete. Generating samples...")
     
     # 3) Main Loop: Generate Data
-    # Using vectorized operations for significant speedup
     # ------------------------------------------------------------------------
     
     for k in range(N_total):
@@ -108,18 +199,17 @@ def generate_chladni_data():
         Z_k = np.einsum('nm,ni,mj->ij', alpha_weighted, cosX, cosY)
         Z_full[:, :, k] = Z_k
     
-    print("Sample generation complete. Splitting and saving data...")
+    print("Sample generation complete. Preparing HuggingFace format...")
     
-    # 4) Prepare data for SetONet training
+    # 4) Prepare data for HuggingFace format
     # ------------------------------------
-    print("Preparing data for SetONet format...")
     
     # Create coordinate meshgrid
     X_coords, Y_coords = np.meshgrid(x, y, indexing='ij')
     coords_flat = np.stack([X_coords.flatten(), Y_coords.flatten()], axis=1)
     n_points = numPoints * numPoints
     
-    # Prepare data arrays for SetONet format
+    # Prepare data arrays
     setONet_data = {
         "X": np.zeros((N_total, n_points, 2), dtype=np.float32),  # Input coordinates
         "u": np.zeros((N_total, n_points), dtype=np.float32),     # Input function (S forces)
@@ -154,10 +244,10 @@ def generate_chladni_data():
     setONet_data["X"] = (setONet_data["X"] - xy_mean) / xy_std
     setONet_data["Y"] = (setONet_data["Y"] - xy_mean) / xy_std
     
-    # Convert to Hugging Face dataset format
-    print("Converting to Hugging Face format...")
+    # Convert to HuggingFace dataset format
+    print("Converting to HuggingFace format...")
     hf_ready = {k: v.tolist() for k, v in setONet_data.items()}
-    ds = Dataset.from_dict(hf_ready)
+    ds = HFDataset.from_dict(hf_ready)
     
     # Create train/test split
     ds = ds.train_test_split(test_size=N_test, shuffle=False)
@@ -166,7 +256,7 @@ def generate_chladni_data():
     dataset_path = "Data/chladni_dataset"
     ds.save_to_disk(dataset_path)
     
-    print("Data saved in SetONet format!")
+    print("Data saved in HuggingFace format!")
     print(f"Training samples: {len(ds['train'])}")
     print(f"Testing samples: {len(ds['test'])}")
     print(f"Grid size: {numPoints}x{numPoints} = {n_points} points")
@@ -192,8 +282,7 @@ def generate_chladni_data():
 
 
 def load_chladni_data():
-    """Load the generated Chladni data in SetONet format."""
-    from datasets import load_from_disk
+    """Load the generated Chladni data in HuggingFace format."""
     try:
         return load_from_disk('Data/chladni_dataset')
     except:
@@ -213,15 +302,50 @@ def load_normalization_stats():
     return {key: data[key] for key in data.keys()}
 
 
+def plot_input(ax, x, y):
+    """
+    Plot the input data (forces).
+
+    Args:
+        ax: The axis to plot on
+        x: The x-coordinates of the data  
+        y: The y-coordinates of the data (force values)
+    """
+    # Placeholder - reshape y to 2D grid for visualization
+    grid_size = int(np.sqrt(len(y)))
+    y_2d = y.reshape(grid_size, grid_size)
+    ax.imshow(y_2d, cmap='viridis')
+    ax.set_title('Input Forces')
+
+
+def plot_output(ax, x, y):
+    """
+    Plot the output data (displacements).
+
+    Args:
+        ax: The axis to plot on
+        x: The x-coordinates of the data
+        y: The y-coordinates of the data (displacement values)
+    """
+    # Placeholder - reshape y to 2D grid for visualization  
+    grid_size = int(np.sqrt(len(y)))
+    y_2d = y.reshape(grid_size, grid_size)
+    ax.contour(y_2d, levels=[0], colors=['gold'], linewidths=2)
+    ax.set_title('Output Displacements')
+
+
 if __name__ == "__main__":
     start_time = time.time()
     
     # Generate the data
     ds = generate_chladni_data()
-
+    
+    end_time = time.time()
+    print(f"Total execution time: {end_time - start_time:.2f} seconds")
+    
     # Print dataset info
     print("\nDataset Summary:")
     print(f"Training samples: {len(ds['train'])}")
     print(f"Testing samples: {len(ds['test'])}")
     print(f"Input/Output dimensions: 2D coordinates")
-    print("Ready for SetONet training!") 
+    print("Ready for neural operator training!") 
