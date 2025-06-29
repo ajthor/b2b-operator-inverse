@@ -37,8 +37,8 @@ parser.add_argument("--regularization", type=float, default=1e-4)
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=100)
-parser.add_argument("--epochs", type=int, default=5000)
-parser.add_argument("--learning_rate", type=float, default=1e-3)
+parser.add_argument("--epochs", type=int, default=5)
+parser.add_argument("--learning_rate", type=float, default=1e-4)
 
 # SummaryWriter args
 parser.add_argument("--log_dir", type=str, default=None)
