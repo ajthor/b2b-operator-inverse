@@ -33,11 +33,12 @@ parser.add_argument("--model", type=str, default="b2b_nonlinear")
 # Function encoder args
 parser.add_argument("--n_basis", type=int, default=100)
 parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
+parser.add_argument("--regularization", type=float, default=1e-4)
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=100)
 parser.add_argument("--epochs", type=int, default=5000)
-parser.add_argument("--learning_rate", type=float, default=1e-4)
+parser.add_argument("--learning_rate", type=float, default=1e-3)
 
 # SummaryWriter args
 parser.add_argument("--log_dir", type=str, default=None)
@@ -167,6 +168,7 @@ function_encoder = create_function_encoder(
     hidden_sizes=params.hidden_sizes,
     output_size=output_size,
     n_basis=params.n_basis,
+    regularization=params.regularization,
 )
 # function_encoder = torch.compile(function_encoder)
 function_encoder.to(device)

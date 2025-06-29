@@ -2,10 +2,12 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Subset, DataLoader
+from functools import partial
 
 from function_encoder.model.mlp import MultiHeadedMLP
 from function_encoder.function_encoder import FunctionEncoder
 from function_encoder.losses import basis_normalization_loss
+from function_encoder.coefficients import least_squares
 
 import tqdm
 import os
@@ -18,6 +20,7 @@ def create_model(
     output_size,
     n_basis,
     activation=torch.nn.ReLU(),
+    regularization=1e-3,
 ):
     """
     Create a function encoder model.
@@ -28,6 +31,7 @@ def create_model(
         output_size: Size of the output features
         n_basis: Number of basis functions
         activation: Activation function to use in the MLP
+        regularization: Regularization parameter for least squares computation
 
     Returns:
         FunctionEncoder instance
@@ -40,7 +44,13 @@ def create_model(
         activation=activation,
     )
 
-    return FunctionEncoder(basis_functions=basis_functions)
+    # Create a custom coefficients method with the specified regularization
+    coefficients_method = partial(least_squares, regularization=regularization)
+
+    return FunctionEncoder(
+        basis_functions=basis_functions,
+        coefficients_method=coefficients_method,
+    )
 
 
 def save(model, path):
