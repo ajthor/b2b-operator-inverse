@@ -154,7 +154,12 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     X, u, Y, s = batch
 
     alpha = input_function_encoder.compute_coefficients(X, u)
+    if isinstance(alpha, tuple):
+        alpha = alpha[0]
+    
     beta = output_function_encoder.compute_coefficients(Y, s)
+    if isinstance(beta, tuple):
+        beta = beta[0]
 
     alpha_pred = model.inverse(beta)
 
@@ -256,6 +261,9 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         X, u, Y, s = point
 
         beta = output_function_encoder.compute_coefficients(Y, s)
+        if isinstance(beta, tuple):
+            beta = beta[0]
+            
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)
 

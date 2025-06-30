@@ -10,9 +10,9 @@
 		"all"
 	],
 
-	"mounts": [
-		"source=/store/${localEnv:USER},target=/store/${localEnv:USER},type=bind,consistency=cached"
-	],
+//	"mounts": [
+//		"source=/store/${localEnv:USER},target=/store/${localEnv:USER},type=bind,consistency=cached"
+//	],
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
