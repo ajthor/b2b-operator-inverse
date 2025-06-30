@@ -259,7 +259,7 @@ def test_model(
     return avg_test_loss
 
 
-def evaluate(model, point):
+def evaluate(model, point, input_function_encoder=None, output_function_encoder=None):
     model.eval()
     with torch.no_grad():
         X, u, Y, s = point

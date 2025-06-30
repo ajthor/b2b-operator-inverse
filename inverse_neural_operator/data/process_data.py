@@ -71,32 +71,9 @@ class InputFunctionEncoderDataset(Dataset):
         self.device = device
         self.n_samples = len(dataset)
 
-        self.X = dataset.X
-        self.u = dataset.u
-
-        # # Do a randperm split
-        # B = X.shape[0]
-        # N = X.shape[1]
-        # idx = torch.multinomial(torch.ones(B, N, device=device), N, replacement=False)
-
-        # X = X.gather(dim=1, index=idx.unsqueeze(-1).expand(-1, -1, X.shape[2]))
-        # u = u.gather(dim=1, index=idx.unsqueeze(-1).expand(-1, -1, u.shape[2]))
-
-        # cut = N // 2
-        # n1, n2 = cut, N - cut
-
-        # self.example_xs, self.xs = X.split([n1, n2], dim=1)
-        # self.example_ys, self.ys = u.split([n1, n2], dim=1)
-
-        # # Ensure correct dimensions
-        # if self.example_xs.dim() == 2:
-        #     self.example_xs = self.example_xs.unsqueeze(-1)
-        # if self.example_ys.dim() == 2:
-        #     self.example_ys = self.example_ys.unsqueeze(-1)
-        # if self.xs.dim() == 2:
-        #     self.xs = self.xs.unsqueeze(-1)
-        # if self.ys.dim() == 2:
-        #     self.ys = self.ys.unsqueeze(-1)
+        # self.X = dataset.X
+        # self.u = dataset.u
+        self.dataset = dataset
 
     def __len__(self):
         return self.n_samples
@@ -108,8 +85,9 @@ class InputFunctionEncoderDataset(Dataset):
         Returns:
             A tuple of (example_xs, example_ys, xs, ys)
         """
-        X = self.X[idx]
-        u = self.u[idx]
+        # X = self.X[idx]
+        # u = self.u[idx]
+        X, u, Y, s = self.dataset[idx]
 
         # Do a randperm split
         B = X.shape[0]
@@ -122,16 +100,6 @@ class InputFunctionEncoderDataset(Dataset):
         example_ys = u[example_indices]
         xs = X[remaining_indices]
         ys = u[remaining_indices]
-
-        # # Ensure correct dimensions
-        # if example_xs.dim() == 2:
-        #     example_xs = example_xs.unsqueeze(-1)
-        # if example_ys.dim() == 2:
-        #     example_ys = example_ys.unsqueeze(-1)
-        # if xs.dim() == 2:
-        #     xs = xs.unsqueeze(-1)
-        # if ys.dim() == 2:
-        #     ys = ys.unsqueeze(-1)
 
         return (example_xs, example_ys, xs, ys)
 
@@ -150,32 +118,9 @@ class OutputFunctionEncoderDataset(Dataset):
         self.device = device
         self.n_samples = len(dataset)
 
-        self.Y = dataset.Y
-        self.s = dataset.s
-
-        # # Do a randperm split
-        # B = Y.shape[0]
-        # N = Y.shape[1]
-        # idx = torch.multinomial(torch.ones(B, N, device=device), N, replacement=False)
-
-        # Y = Y.gather(dim=1, index=idx.unsqueeze(-1).expand(-1, -1, Y.shape[2]))
-        # s = s.gather(dim=1, index=idx.unsqueeze(-1).expand(-1, -1, s.shape[2]))
-
-        # cut = N // 2
-        # n1, n2 = cut, N - cut
-
-        # self.example_xs, self.xs = Y.split([n1, n2], dim=1)
-        # self.example_ys, self.ys = s.split([n1, n2], dim=1)
-
-        # # Ensure correct dimensions
-        # if self.example_xs.dim() == 2:
-        #     self.example_xs = self.example_xs.unsqueeze(-1)
-        # if self.example_ys.dim() == 2:
-        #     self.example_ys = self.example_ys.unsqueeze(-1)
-        # if self.xs.dim() == 2:
-        #     self.xs = self.xs.unsqueeze(-1)
-        # if self.ys.dim() == 2:
-        #     self.ys = self.ys.unsqueeze(-1)
+        # self.Y = dataset.Y
+        # self.s = dataset.s
+        self.dataset = dataset
 
     def __len__(self):
         return self.n_samples
@@ -187,8 +132,9 @@ class OutputFunctionEncoderDataset(Dataset):
         Returns:
             A tuple of (example_xs, example_ys, xs, ys)
         """
-        Y = self.Y[idx]
-        s = self.s[idx]
+        # Y = self.Y[idx]
+        # s = self.s[idx]
+        X, u, Y, s = self.dataset[idx]
 
         # Do a randperm split
         B = Y.shape[0]
@@ -201,15 +147,5 @@ class OutputFunctionEncoderDataset(Dataset):
         example_ys = s[example_indices]
         xs = Y[remaining_indices]
         ys = s[remaining_indices]
-
-        # # Ensure correct dimensions
-        # if example_xs.dim() == 2:
-        #     example_xs = example_xs.unsqueeze(-1)
-        # if example_ys.dim() == 2:
-        #     example_ys = example_ys.unsqueeze(-1)
-        # if xs.dim() == 2:
-        #     xs = xs.unsqueeze(-1)
-        # if ys.dim() == 2:
-        #     ys = ys.unsqueeze(-1)
 
         return (example_xs, example_ys, xs, ys)

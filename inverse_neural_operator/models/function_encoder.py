@@ -12,12 +12,26 @@ import os
 from torch.utils.tensorboard import SummaryWriter
 
 
+def memory_efficient_inner_product(f: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
+    # f: (b, m, d, k), g: (b, m, d, l)
+    # Reshape to (b, m*d, k) and (b, m*d, l)
+    b, m, d, k = f.shape
+    l = g.shape[-1]
+    f_flat = f.reshape(b, m * d, k)
+    g_flat = g.reshape(b, m * d, l)
+    # Compute (b, k, l): (b, k, m*d) @ (b, m*d, l)
+    result = torch.matmul(f_flat.transpose(1, 2), g_flat) / m
+
+    return result
+
+
 def create_model(
     input_size,
     hidden_sizes,
     output_size,
     n_basis,
     activation=torch.nn.ReLU(),
+    inner_product=None,
 ):
     """
     Create a function encoder model.
@@ -40,7 +54,7 @@ def create_model(
         activation=activation,
     )
 
-    return FunctionEncoder(basis_functions=basis_functions)
+    return FunctionEncoder(basis_functions=basis_functions, inner_product=inner_product)
 
 
 def save(model, path):
@@ -88,7 +102,7 @@ def load_checkpoint(
 def loss_function(model, batch):
     example_xs, example_ys, xs, ys = batch
 
-    coefficients = model.compute_coefficients(example_xs, example_ys)
+    coefficients, _ = model.compute_coefficients(example_xs, example_ys)
     y_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(y_pred, ys)
@@ -170,7 +184,7 @@ def evaluate(model, point):
     with torch.no_grad():
         example_xs, example_ys, xs, ys = point
 
-        coefficients = model.compute_coefficients(example_xs, example_ys)
+        coefficients, _ = model.compute_coefficients(example_xs, example_ys)
         pred = model(xs, coefficients)
 
         return pred

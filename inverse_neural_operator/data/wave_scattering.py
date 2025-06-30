@@ -101,29 +101,3 @@ def load_data(params, device, split="train"):
     model_dataset = WaveScatteringDataset(ds, device=device)
 
     return model_dataset
-
-
-def plot_input(ax, x, y):
-    """
-    Plot the input data.
-
-    Args:
-        ax: The axis to plot on
-        x: The x-coordinates of the data
-        y: The y-coordinates of the data
-    """
-
-    ax.imshow(y)
-
-
-def plot_output(ax, x, y):
-    """
-    Plot the output data.
-
-    Args:
-        ax: The axis to plot on
-        x: The x-coordinates of the data
-        y: The y-coordinates of the data
-    """
-
-    ax.imshow(y)
