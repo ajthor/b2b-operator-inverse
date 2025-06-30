@@ -4,8 +4,9 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Subset, DataLoader
 
 from function_encoder.model.mlp import MultiHeadedMLP
-from function_encoder.function_encoder import FunctionEncoder
+from function_encoder.function_encoder import FunctionEncoder, least_squares
 from function_encoder.losses import basis_normalization_loss
+import functools
 
 import tqdm
 import os
@@ -32,6 +33,7 @@ def create_model(
     n_basis,
     activation=torch.nn.ReLU(),
     inner_product=None,
+    regularization=1e-3,
 ):
     """
     Create a function encoder model.
@@ -42,6 +44,8 @@ def create_model(
         output_size: Size of the output features
         n_basis: Number of basis functions
         activation: Activation function to use in the MLP
+        inner_product: Custom inner product function (optional)
+        regularization: Regularization parameter for least squares (default: 1e-4)
 
     Returns:
         FunctionEncoder instance
@@ -54,9 +58,13 @@ def create_model(
         activation=activation,
     )
 
+    # Create a custom coefficients method with the desired regularization
+    coefficients_method = functools.partial(least_squares, regularization=regularization)
+
     kwargs = {}
     if inner_product is not None:
         kwargs['inner_product'] = inner_product
+    kwargs['coefficients_method'] = coefficients_method
     return FunctionEncoder(basis_functions=basis_functions, **kwargs)
 
 
@@ -137,8 +145,8 @@ def train(
 ):
     start_epoch = 0
 
-    # Resume from checkpoint
-    checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_checkpoint.pt")
+    # Resume from checkpoint  
+    checkpoint_path = os.path.join(checkpoint_dir or ".", f"{model_name}_checkpoint.pt")
     if resume_from_checkpoint:
         if os.path.exists(checkpoint_path):
             model, optimizer, start_epoch, loss = load_checkpoint(
@@ -210,7 +218,7 @@ def plot_evaluations(
     with torch.no_grad():
 
         indices = np.random.choice(len(dataset), 9, replace=False)
-        subset = Subset(dataset, indices)
+        subset = Subset(dataset, indices.tolist())
 
         dataloader = DataLoader(
             subset,
