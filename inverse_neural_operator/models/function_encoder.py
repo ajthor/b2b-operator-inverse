@@ -54,7 +54,10 @@ def create_model(
         activation=activation,
     )
 
-    return FunctionEncoder(basis_functions=basis_functions, inner_product=inner_product)
+    kwargs = {}
+    if inner_product is not None:
+        kwargs['inner_product'] = inner_product
+    return FunctionEncoder(basis_functions=basis_functions, **kwargs)
 
 
 def save(model, path):
@@ -102,7 +105,11 @@ def load_checkpoint(
 def loss_function(model, batch):
     example_xs, example_ys, xs, ys = batch
 
-    coefficients, _ = model.compute_coefficients(example_xs, example_ys)
+    result = model.compute_coefficients(example_xs, example_ys)
+    if isinstance(result, tuple):
+        coefficients = result[0]
+    else:
+        coefficients = result
     y_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(y_pred, ys)
@@ -184,7 +191,11 @@ def evaluate(model, point):
     with torch.no_grad():
         example_xs, example_ys, xs, ys = point
 
-        coefficients, _ = model.compute_coefficients(example_xs, example_ys)
+        result = model.compute_coefficients(example_xs, example_ys)
+        if isinstance(result, tuple):
+            coefficients = result[0]
+        else:
+            coefficients = result
         pred = model(xs, coefficients)
 
         return pred
