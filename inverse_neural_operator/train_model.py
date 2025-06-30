@@ -107,6 +107,8 @@ match params.dataset:
         from data.parametric_heat import load_data
     case "wave_scattering":
         from data.wave_scattering import load_data
+    case "chladni_2d":
+        from data.chladni_2d import load_data
 
     case "fwi_flat":
         from data.fwi_data import load_data

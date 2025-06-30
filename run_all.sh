@@ -20,9 +20,9 @@ STATUS_DIR=/tmp/gpu_status
 # Base directory for experiment logs
 LOG_BASE_DIR="/workspaces/b2b-operator-inverse/logs"
 
-# DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi_flat fwi_curve)
+# DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi_flat fwi_curve chladni_2d)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
-DATASETS=(burgers_1d)
+DATASETS=(chladni_2d)
 MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
 SEEDS=(1)   # add more seeds if you like
 
