@@ -1,47 +1,11 @@
-import time
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.utils.data
-import torch.nn.functional as F
-from neuralop.layers.fno_block import FNOBlocks
-import argparse
-import random
+from torch.utils.data import DataLoader
+import tqdm
 import os
-from tqdm import tqdm
-from torch.nn.utils import clip_grad_norm_
-
-import torch
-from torch import nn
-from torch.nn import functional as F
-
-import torch
-import warnings
-import torch.nn as nn
-import torch.nn.functional as F
-
-import logging
-
-
-def get_logger(logpath, displaying=True, saving=True, debug=False, append=False):
-    logger = logging.getLogger()
-    if debug:
-        level = logging.DEBUG
-    else:
-        level = logging.INFO
-    logger.setLevel(level)
-    if saving:
-        if append:
-            info_file_handler = logging.FileHandler(logpath, mode="a")
-        else:
-            info_file_handler = logging.FileHandler(logpath, mode="w+")
-        info_file_handler.setLevel(level)
-        logger.addHandler(info_file_handler)
-    if displaying:
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(level)
-        logger.addHandler(console_handler)
-    return logger
+from neuralop.layers.fno_block import FNOBlocks
 
 
 class MLP(nn.Module):
@@ -57,138 +21,8 @@ class MLP(nn.Module):
         return x
 
 
-# loss function with rel/abs Lp loss
-class LpLoss(object):
-    def __init__(self, d=2, p=2, size_average=True, reduction=True):
-        super(LpLoss, self).__init__()
-
-        # Dimension and Lp-norm type are postive
-        assert d > 0 and p > 0
-
-        self.d = d
-        self.p = p
-        self.reduction = reduction
-        self.size_average = size_average
-
-    def abs(self, x, y):
-        num_examples = x.size()[0]
-
-        # Assume uniform mesh
-        h = 1.0 / (x.size()[1] - 1.0)
-
-        all_norms = (h ** (self.d / self.p)) * torch.norm(
-            x.view(num_examples, -1) - y.view(num_examples, -1), self.p, 1
-        )
-
-        if self.reduction:
-            if self.size_average:
-                return torch.mean(all_norms)
-            else:
-                return torch.sum(all_norms)
-
-        return all_norms
-
-    def rel(self, x, y):
-        num_examples = x.size()[0]
-
-        diff_norms = torch.norm(
-            x.reshape(num_examples, -1) -
-            y.reshape(num_examples, -1), self.p, 1
-        )
-        y_norms = torch.norm(y.reshape(num_examples, -1), self.p, 1)
-
-        if self.reduction:
-            if self.size_average:
-                return torch.mean(diff_norms / y_norms)
-            else:
-                return torch.sum(diff_norms / y_norms)
-
-        return diff_norms / y_norms
-
-    def __call__(self, x, y):
-        return self.rel(x, y)
-
-
-# normalization, pointwise gaussian
-class UnitGaussianNormalizer:
-    def __init__(self, x, eps=0.00001, reduce_dim=[0], verbose=True):
-        super().__init__()
-
-        msg = (
-            "neuralop.utils.UnitGaussianNormalizer has been deprecated. "
-            "Please use the newer neuralop.datasets.UnitGaussianNormalizer instead."
-        )
-        warnings.warn(msg, DeprecationWarning)
-        n_samples, *shape = x.shape
-        self.sample_shape = shape
-        self.verbose = verbose
-        self.reduce_dim = reduce_dim
-
-        # x could be in shape of ntrain*n or ntrain*T*n or ntrain*n*T
-        self.mean = torch.mean(x, reduce_dim, keepdim=True).squeeze(0)
-        self.std = torch.std(x, reduce_dim, keepdim=True).squeeze(0)
-        self.eps = eps
-
-        if verbose:
-            print(
-                f"UnitGaussianNormalizer init on {n_samples}, reducing over {reduce_dim}, samples of shape {shape}."
-            )
-            print(f"   Mean and std of shape {self.mean.shape}, eps={eps}")
-
-    def encode(self, x):
-        x -= self.mean
-        x /= self.std + self.eps
-        return x
-
-    def decode(self, x, sample_idx=None):
-        if sample_idx is None:
-            std = self.std + self.eps  # n
-            mean = self.mean
-        else:
-            if len(self.mean.shape) == len(sample_idx[0].shape):
-                std = self.std[sample_idx] + self.eps  # batch*n
-                mean = self.mean[sample_idx]
-            if len(self.mean.shape) > len(sample_idx[0].shape):
-                std = self.std[:, sample_idx] + self.eps  # T*batch*n
-                mean = self.mean[:, sample_idx]
-
-        x *= std
-        x += mean
-
-        return x
-
-    def cuda(self):
-        self.mean = self.mean.cuda()
-        self.std = self.std.cuda()
-        return self
-
-    def cpu(self):
-        self.mean = self.mean.cpu()
-        self.std = self.std.cpu()
-        return self
-
-    def to(self, device):
-        self.mean = self.mean.to(device)
-        self.std = self.std.to(device)
-        return self
-
-
-def count_model_params(model):
-    """Returns the total number of parameters of a PyTorch model
-
-    Notes
-    -----
-    One complex number is counted as two parameters (we count real and imaginary parts)'
-    """
-    return sum(
-        [p.numel() * 2 if p.is_complex() else p.numel()
-         for p in model.parameters()]
-    )
-
-
 class VanillaVAE(nn.Module):
-
-    def __init__(self, in_channels, latent_dim, hidden_dims=None, **kwargs):
+    def __init__(self, in_channels, latent_dim, hidden_dims=None):
         super(VanillaVAE, self).__init__()
         self.latent_dim = latent_dim
         modules = []
@@ -253,7 +87,6 @@ class VanillaVAE(nn.Module):
         result = torch.flatten(result, start_dim=1)
         mu = self.fc_mu(result)
         log_var = self.fc_var(result)
-
         return [mu, log_var]
 
     def decode(self, z):
@@ -268,114 +101,104 @@ class VanillaVAE(nn.Module):
         eps = torch.randn_like(std)
         return eps * std + mu
 
-    def forward(self, input, **kwargs):
+    def forward(self, input):
         mu, log_var = self.encode(input)
         z = self.reparameterize(mu, log_var)
         return [self.decode(z), input, mu, log_var]
 
-    def forward2(self, input, **kwargs):
+    def forward2(self, input):
         mu, log_var = self.encode(input)
         return [self.decode(mu), input, mu, log_var]
 
-    def loss_function(self, *args, **kwargs):
-        recons = args[0]
-        input = args[1]
-        mu = args[2]
-        log_var = args[3]
-        kld_weight = kwargs["M_N"]
-        recons_loss = F.mse_loss(recons, input)
-
-        kld_loss = torch.mean(
-            -0.5 * torch.sum(1 + log_var - mu**2 - log_var.exp(), dim=1), dim=0
-        )
-
-        loss = recons_loss + kld_weight * kld_loss
-        return {
-            "loss": loss,
-            "Reconstruction_Loss": recons_loss.detach(),
-            "KLD": -kld_loss.detach(),
-        }
-
-    def sample(self, num_samples, current_device, **kwargs):
-        z = torch.randn(num_samples, self.latent_dim)
-        z = z.to(current_device)
-        samples = self.decode(z)
-        return samples
-
-    def generate(self, x, **kwargs):
-        return self.forward(x)[0]
-
 
 class IFNO(nn.Module):
-    def __init__(self, modes1, modes2, width, beta):
+    def __init__(
+        self,
+        modes1: int = 16,
+        modes2: int = 16,
+        width: int = 64,
+        beta: float = 2.0,
+        n_layers: int = 4,
+        padding: int = 20,
+        vae_latent_dim: int = 24,
+        resolution: int = 64,
+        mm: int = 64,  # Additional dimension parameter
+        input_channels: int = 3,  # Input channels for projection layers
+        output_channels: int = 3,  # Output channels
+        intermediate_dim: int = 64,  # Intermediate dimension for p1, p2
+        vae_hidden_dims: list = None,  # VAE hidden dimensions
+    ):
         super(IFNO, self).__init__()
         self.beta = beta
         self.modes1 = modes1
         self.modes2 = modes2
         self.width = width
-        self.padding = args.padding
+        self.padding = padding
+        self.n_layers = n_layers
+        self.resolution = resolution
+        self.mm = mm
+        self.input_channels = input_channels
+        self.output_channels = output_channels
+        self.intermediate_dim = intermediate_dim
 
-        self.p0 = nn.Linear(3, 1)
-        self.p1 = nn.Linear(64, self.width)
-        self.p2 = nn.Linear(64, self.width)
-        self.p4 = nn.Linear(3, 1)
+        # Input/output projection layers (configurable)
+        self.p0 = nn.Linear(input_channels, 1)
+        self.p1 = nn.Linear(intermediate_dim, self.width)
+        self.p2 = nn.Linear(intermediate_dim, self.width)
+        self.p4 = nn.Linear(input_channels, 1)
 
-        self.q1 = MLP(self.width, 3, self.width * 4)
-        self.q2 = MLP(self.width, 64, self.width * 4)
-        self.q3 = MLP(mm, 3, self.width * 4)
+        # Output projection layers (configurable)
+        self.q1 = MLP(self.width, output_channels, self.width * 4)
+        self.q2 = MLP(self.width, intermediate_dim, self.width * 4)
+        self.q3 = MLP(self.mm, output_channels, self.width * 4)
 
-        self.width = int(self.width / 2)
+        # Half the width for the coupling layers
+        self.half_width = int(self.width / 2)
+
+        # FNO blocks and MLP layers
         self.convs = nn.ModuleList()
         self.mlps = nn.ModuleList()
         self.ws = nn.ModuleList()
 
-        for _ in range(2 * args.n_layers):
+        for _ in range(2 * self.n_layers):
             self.convs.append(
-                FNOBlocks(self.width, self.width, (self.modes1, self.modes2)))
-            self.mlps.append(MLP(self.width, self.width, self.width))
-            self.ws.append(nn.Conv2d(self.width, self.width, 1))
-
-        self.vae_net = VanillaVAE(in_channels=1, latent_dim=12)
-
-    def VAE_train(self, x, y, return_mu=False):
-        size = x.shape[0]
-        kl_scale = args.kl
-        recon_img, _, mu, log_var = self.vae_net.forward(x[:, :1, :, :])
-        kl_loss = torch.mean(-0.5 * torch.sum(1 + log_var -
-                             mu**2 - log_var.exp(), dim=1), dim=0)
-        myloss = LpLoss(size_average=False)
-        unnorm_img = x_normalizer.decode(y.permute(0, 2, 3, 1).clone())
-        unnorm_recon_img = x_normalizer.decode(
-            torch.cat(
-                (
-                    recon_img.permute(0, 2, 3, 1).clone(),
-                    y.permute(0, 2, 3, 1).clone()[:, :, :, 1:],
-                ),
-                axis=-1,
+                FNOBlocks(self.half_width, self.half_width,
+                          (self.modes1, self.modes2))
             )
-        )
-        mse_loss = myloss(unnorm_recon_img.reshape(
-            size, -1), unnorm_img.reshape(size, -1))
-        loss = 0.01 * kl_loss + mse_loss
-        if return_mu:
-            return loss, recon_img
-        return loss
+            self.mlps.append(
+                MLP(self.half_width, self.half_width, self.half_width))
+            self.ws.append(nn.Conv2d(self.half_width, self.half_width, 1))
 
-    def sp(self, x):
-        sp = torch.nn.Softplus(beta=self.beta)
-        return sp(x)
+        # VAE for reconstruction (configurable)
+        self.vae_net = VanillaVAE(
+            in_channels=1, 
+            latent_dim=vae_latent_dim,
+            hidden_dims=vae_hidden_dims
+        )
+
+    def _softplus(self, x):
+        """Softplus activation with beta parameter"""
+        return torch.nn.Softplus(beta=self.beta)(x)
 
     def forward(self, x):
+        """Forward pass from input to output"""
+        s = self.resolution
+        mm = self.mm
+        awidth = self.half_width
+        
+        # Input processing
         x = self.p0(x)
         x = x.reshape(x.shape[0], s, s, 1).repeat(1, 1, 1, mm)
         x = x.permute(0, 3, 2, 1)
         x = self.p1(x)
         x = x.permute(0, 3, 1, 2)
+        
+        # Split for coupling layers
         u1 = x[:, :awidth, :, :]
         u2 = x[:, awidth:, :, :]
-        loss_recon = 0
 
-        for i in range(args.n_layers):
+        # Coupling layers
+        for i in range(self.n_layers):
             u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
             x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
             x2 = self.ws[2 * i](u2_pad)
@@ -383,805 +206,475 @@ class IFNO(nn.Module):
             s2 = s2[..., : (s2.size(-2) - self.padding),
                     : (s2.size(-1) - self.padding)]
 
-            v1 = u1 * self.sp(s2)
+            v1 = u1 * self._softplus(s2)
+            
             v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
             x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
             x2 = self.ws[2 * i + 1](v1_pad)
             s1 = F.gelu(x1 + x2)
             s1 = s1[..., : (s1.size(-2) - self.padding),
                     : (s1.size(-1) - self.padding)]
-            v2 = u2 * self.sp(s1)
+            v2 = u2 * self._softplus(s1)
 
             u1 = v1
             u2 = v2
 
+        # Output processing
         x = torch.cat((u1, u2), axis=1)
         y_pred = self.q1(x)
         y_pred = y_pred.permute(0, 2, 3, 1)
 
-        return y_pred, loss_recon
+        return y_pred
 
-    def backward(self, y):
+    def inverse(self, y):
+        """Backward pass from output to input (inverse operation)"""
+        s = self.resolution
+        mm = self.mm
+        awidth = self.half_width
+        
+        # Input processing for inverse
         y = self.p4(y)
-        y = y.reshape(y.shape[0], mm, s, 1).repeat(1, 1, 1, 64)
+        y = y.reshape(y.shape[0], mm, s, 1).repeat(1, 1, 1, self.intermediate_dim)
         v = self.p2(y)
         v = v.permute(0, 3, 1, 2)
-        loss_recon = 0
+        
+        # Split for inverse coupling layers
         v1 = v[:, :awidth, :, :]
         v2 = v[:, awidth:, :, :]
 
-        for i in range(args.n_layers - 1, -1, -1):
+        # Inverse coupling layers (reverse order)
+        for i in range(self.n_layers - 1, -1, -1):
             v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
             x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
             x2 = self.ws[2 * i + 1](v1_pad)
             s1 = F.gelu(x1 + x2)
             s1 = s1[..., : (s1.size(-2) - self.padding),
                     : (s1.size(-1) - self.padding)]
-            u2 = v2 * self.sp(s1) ** (-1)
+            u2 = v2 * self._softplus(s1) ** (-1)
+            
             u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
             x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
             x2 = self.ws[2 * i](u2_pad)
             s2 = F.gelu(x1 + x2)
             s2 = s2[..., : (s2.size(-2) - self.padding),
                     : (s2.size(-1) - self.padding)]
-            u1 = v1 * self.sp(s2) ** (-1)
+            u1 = v1 * self._softplus(s2) ** (-1)
+            
             v1 = u1
             v2 = u2
 
+        # Output processing for inverse
         x = torch.cat((v1, v2), axis=1)
         x = self.q2(x)
         x = x.permute(0, 2, 1, 3)
         x_preds = self.q3(x)
         x_preds = x_preds.permute(0, 2, 3, 1)
 
-        return x_preds, loss_recon
+        return x_preds
 
 
-mm = 62
+def create_model(
+    modes1=16,
+    modes2=16,
+    width=64,
+    beta=2.0,
+    n_layers=4,
+    padding=20,
+    vae_latent_dim=24,
+    resolution=64,
+    mm=64,
+    input_channels=3,
+    output_channels=3,
+    intermediate_dim=64,
+    vae_hidden_dims=None,
+):
+    """
+    Create an IFNO model with configurable parameters.
+
+    Args:
+        modes1: Number of modes in first dimension
+        modes2: Number of modes in second dimension
+        width: Hidden dimension width
+        beta: Beta parameter for softplus activation
+        n_layers: Number of coupling layers
+        padding: Padding for convolutions
+        vae_latent_dim: Latent dimension for VAE
+        resolution: Spatial resolution
+        mm: Additional dimension parameter
+        input_channels: Number of input channels
+        output_channels: Number of output channels
+        intermediate_dim: Intermediate dimension for projections
+        vae_hidden_dims: VAE hidden dimensions list
+
+    Returns:
+        IFNO instance
+    """
+    return IFNO(
+        modes1=modes1,
+        modes2=modes2,
+        width=width,
+        beta=beta,
+        n_layers=n_layers,
+        padding=padding,
+        vae_latent_dim=vae_latent_dim,
+        resolution=resolution,
+        mm=mm,
+        input_channels=input_channels,
+        output_channels=output_channels,
+        intermediate_dim=intermediate_dim,
+        vae_hidden_dims=vae_hidden_dims,
+    )
 
 
-dataset = "Wave-Equation-Oval"
-parser = argparse.ArgumentParser()
-parser.add_argument("--rank", type=int, help="Rank of VAE", default=24)
-parser.add_argument("--padding", type=int,
-                    help="padding num for FNO", default=20)
-parser.add_argument("--nl", type=float, help="noise level", default=0.0)
-parser.add_argument("--lr-VAE", type=float,
-                    help="learning rate for VAE Training", default=0.0001)
-parser.add_argument("--lr-IFNO", type=float,
-                    help="learning rate for IFNO Training", default=0.0005)
-parser.add_argument("--lr-forward", type=float,
-                    help="learning rate for joint Training-forward", default=0.0001)
-parser.add_argument("--lr-backward", type=float,
-                    help="learning rate for joint Training-backward", default=0.0001)
-parser.add_argument("--kl", type=float,
-                    help="KL divergence weight in VAE loss", default=0.01)
-parser.add_argument("--modes", type=int,
-                    help="number of modes in IFNO", default=16)
-parser.add_argument("--epochs-VAE", type=int,
-                    help="epochs setting for VAE", default=2)
-parser.add_argument("--epochs-IFNO", type=int,
-                    help="epochs setting for IFNO", default=2)
-parser.add_argument("--epochs", type=int,
-                    help="epochs setting for joint training", default=2)
-parser.add_argument("--n-train", type=int,
-                    help="num of train dataset", default=400)
-parser.add_argument("--n-valid", type=int,
-                    help="num of valid dataset", default=100)
-parser.add_argument("--n-test", type=int,
-                    help="num of test dataset", default=100)
-parser.add_argument("--batchsize", type=int,
-                    help="num of batchsize for training", default=10)
-parser.add_argument("--batchsize2", type=int,
-                    help="num of batchsize for vae training", default=100)
-parser.add_argument("--batchsize3", type=int,
-                    help="num of batchsize for testing", default=10)
-parser.add_argument("--valid", action="store_true",
-                    help="wheter or not do validation process")
-parser.add_argument("--n-layers", type=int, default=4,
-                    metavar="N", help="data resolution (default: 4)")
-parser.add_argument("--hidden", type=int,
-                    help="dimension of hidden layer in IFNO", default=64)
-parser.add_argument("--beta", type=float, help="beta in softplus", default=2.0)
-parser.add_argument("--seed", type=int, default=0,
-                    metavar="S", help="random seed (default: 0)")
-parser.add_argument("--count", type=int, help="number of test", default=0)
-args = parser.parse_args()
-hyperparams = {
-    "rank": args.rank,
-    "noise-level": args.nl,
-    "KL-weight": args.kl,
-    "modes": args.modes,
-    "hidden-dimension": args.hidden,
-    "padding": args.padding,
-    "beta": args.beta,
-    "lr-VAE": args.lr_VAE,
-    "lr-IFNO": args.lr_IFNO,
-    "lr-forward": args.lr_forward,
-    "lr-backward": args.lr_backward,
-    "ntrain": args.n_train,
-    "nvalid": args.n_valid,
-    "ntest": args.n_test,
-    "bz": args.batchsize,
-    "bz2": args.batchsize2,
-    "bz3": args.batchsize3,
-    "valid": args.valid,
-    "seed": args.seed,
-}
-exp_name = f"dataset_{dataset}/nl{args.nl}/s{args.seed}"
-log_path = os.path.join("logger_grid_greedy", exp_name)
-if not os.path.exists(log_path):
-    os.makedirs(log_path)
+def compute_vae_loss(model, pred_x, x_true, x_normalizer, kl_weight=0.01):
+    """Compute VAE training loss separate from model"""
+    batch_size = pred_x.shape[0]
+    recon_img, _, mu, log_var = model.vae_net.forward(pred_x[:, :1, :, :])
 
-torch.manual_seed(args.seed)
-np.random.seed(args.seed)
-random.seed(args.seed)
+    # KL divergence loss
+    kl_loss = torch.mean(-0.5 * torch.sum(1 + log_var -
+                         mu**2 - log_var.exp(), dim=1), dim=0)
+
+    # Reconstruction loss
+    myloss = LpLoss(size_average=False)
+    unnorm_img = x_normalizer.decode(x_true.permute(0, 2, 3, 1).clone())
+    unnorm_recon_img = x_normalizer.decode(
+        torch.cat(
+            (
+                recon_img.permute(0, 2, 3, 1).clone(),
+                x_true.permute(0, 2, 3, 1).clone()[:, :, :, 1:],
+            ),
+            axis=-1,
+        )
+    )
+
+    mse_loss = myloss(unnorm_recon_img.reshape(
+        batch_size, -1), unnorm_img.reshape(batch_size, -1))
+    loss = kl_weight * kl_loss + mse_loss
+
+    return loss, recon_img
 
 
-class IFNO(nn.Module):
-    def __init__(self, modes1, modes2, width, beta):
-        super(IFNO, self).__init__()
-        self.beta = beta
-        self.modes1 = modes1
-        self.modes2 = modes2
-        self.width = width
-        self.padding = args.padding
-        self.p1 = nn.Linear(3, self.width)
-        self.p2 = nn.Linear(3, self.width)
+def compute_reconstruction_loss(pred, target):
+    """Compute reconstruction loss for consistency"""
+    return ((pred - target) ** 2).mean()
 
-        self.q1 = MLP(self.width, 3, self.width * 4)
-        self.q2 = MLP(self.width, 3, self.width * 4)
 
-        self.width = int(self.width / 2)
-        self.convs = nn.ModuleList()
-        self.mlps = nn.ModuleList()
-        self.ws = nn.ModuleList()
+def save(model, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save(model.state_dict(), path)
 
-        for _ in range(2 * args.n_layers):
-            self.convs.append(
-                FNOBlocks(self.width, self.width, (self.modes1, self.modes2)))
-            self.mlps.append(MLP(self.width, self.width, self.width))
-            self.ws.append(nn.Conv2d(self.width, self.width, 1))
 
-        self.vae_net = VanillaVAE(in_channels=1, latent_dim=args.rank)
+def load(model, path, device=None):
+    model.load_state_dict(torch.load(path, map_location=device))
+    return model
 
-    def VAE_train(self, x, y, return_mu=False):
-        size = x.shape[0]
-        kl_scale = args.kl
-        recon_img, _, mu, log_var = self.vae_net.forward(x[:, :1, :, :])
-        kl_loss = torch.mean(-0.5 * torch.sum(1 + log_var -
-                             mu**2 - log_var.exp(), dim=1), dim=0)
-        myloss = LpLoss(size_average=False)
-        unnorm_img = x_normalizer.decode(y.permute(0, 2, 3, 1).clone())
-        unnorm_recon_img = x_normalizer.decode(
+
+def save_checkpoint(model, optimizer, epoch, loss, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    checkpoint = {
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": (
+            optimizer.state_dict() if optimizer is not None else None
+        ),
+        "loss": loss,
+    }
+    torch.save(checkpoint, path)
+
+
+def load_checkpoint(model, path, optimizer=None, device=None):
+    checkpoint = torch.load(path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+
+    if device is not None:
+        model = model.to(device)
+
+    if optimizer is not None and checkpoint["optimizer_state_dict"] is not None:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+    model.eval()
+    return model, optimizer, checkpoint["epoch"], checkpoint["loss"]
+
+
+class LpLoss:
+    """Lp loss for measuring relative error"""
+
+    def __init__(self, d=2, p=2, size_average=True, reduction=True):
+        self.d = d
+        self.p = p
+        self.reduction = reduction
+        self.size_average = size_average
+
+    def rel(self, x, y):
+        num_examples = x.size()[0]
+        diff_norms = torch.norm(
+            x.reshape(num_examples, -1) -
+            y.reshape(num_examples, -1), self.p, 1
+        )
+        y_norms = torch.norm(y.reshape(num_examples, -1), self.p, 1)
+
+        if self.reduction:
+            if self.size_average:
+                return torch.mean(diff_norms / y_norms)
+            else:
+                return torch.sum(diff_norms / y_norms)
+
+        return diff_norms / y_norms
+
+    def __call__(self, x, y):
+        return self.rel(x, y)
+
+
+def loss_function(model, batch, x_normalizer, y_normalizer, kl_weight=0.01):
+    """
+    Compute loss for IFNO model with clean separation of concerns
+    
+    Args:
+        model: IFNO model
+        batch: Batch of data (x, y)
+        x_normalizer: Normalizer for input data
+        y_normalizer: Normalizer for output data
+        kl_weight: Weight for KL divergence in VAE loss
+    
+    Returns:
+        Total loss
+    """
+    x, y = batch
+    batch_size = x.shape[0]
+    resolution = x.shape[1]  # Assuming square resolution
+    
+    # Forward pass
+    pred_y = model(x)
+    pred_y = pred_y.reshape(batch_size, resolution, resolution, -1)
+    
+    # Denormalize for loss computation
+    pred_y_denorm = y_normalizer.decode(pred_y.clone())
+    y_denorm = y_normalizer.decode(y.clone())
+    
+    # Forward loss
+    myloss = LpLoss(size_average=False)
+    forward_loss = (
+        myloss(pred_y_denorm[:, :, :, 0], y_denorm[:, :, :, 0])
+        + myloss(pred_y_denorm[:, :, :, 1:], y_denorm[:, :, :, 1:]) / (100 * batch_size ** 2)
+    )
+    
+    # Backward pass
+    pred_x = model.inverse(y.reshape(batch_size, resolution, resolution, -1))
+    
+    # VAE loss for backward pass
+    vae_loss, _ = compute_vae_loss(
+        model, pred_x.permute(0, 3, 1, 2), x.permute(0, 3, 1, 2), 
+        x_normalizer, kl_weight
+    )
+    
+    # Grid loss for backward pass
+    x_denorm = x_normalizer.decode(x.reshape(batch_size, resolution, resolution, -1).clone())
+    grid_loss = myloss(pred_x[:, :, :, 1:], x_denorm[:, :, :, 1:]) / (100 * batch_size ** 2)
+    
+    # Reconstruction losses for consistency
+    # Forward reconstruction: check if input can be reconstructed from intermediate representations
+    x_recon = model.inverse(pred_y)
+    x_recon_denorm = x_normalizer.decode(x_recon.clone())
+    forward_recon_loss = compute_reconstruction_loss(x_recon_denorm, x_denorm)
+    
+    # Backward reconstruction: check if output can be reconstructed from intermediate representations  
+    y_recon = model(pred_x)
+    y_recon_denorm = y_normalizer.decode(y_recon.clone())
+    backward_recon_loss = compute_reconstruction_loss(y_recon_denorm, y_denorm)
+    
+    backward_loss = vae_loss + grid_loss + backward_recon_loss
+    total_loss = forward_loss + backward_loss + forward_recon_loss
+    
+    return total_loss
+
+
+def train(
+    model,
+    train_dataloader,
+    test_dataloader,
+    optimizer_forward,
+    optimizer_backward,
+    x_normalizer,
+    y_normalizer,
+    n_epochs,
+    summary_writer,
+    params,
+    model_name,
+    resume_from_checkpoint=False,
+    checkpoint_dir=None,
+    checkpoint_interval=100,
+    device=None,
+    kl_weight=0.01,
+):
+    """
+    Train IFNO model with clean separation of concerns
+
+    Args:
+        model: IFNO model
+        train_dataloader: Training data loader
+        test_dataloader: Test data loader
+        optimizer_forward: Optimizer for forward pass
+        optimizer_backward: Optimizer for backward pass
+        x_normalizer: Input data normalizer
+        y_normalizer: Output data normalizer
+        n_epochs: Number of training epochs
+        summary_writer: TensorBoard writer
+        params: Training parameters
+        model_name: Name for saving
+        resume_from_checkpoint: Whether to resume from checkpoint
+        checkpoint_dir: Directory for checkpoints
+        checkpoint_interval: Interval for saving checkpoints
+        device: Device to train on
+        kl_weight: Weight for KL divergence loss
+    """
+    start_epoch = 0
+
+    # Resume from checkpoint
+    checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_checkpoint.pt")
+    if resume_from_checkpoint:
+        if os.path.exists(checkpoint_path):
+            model, _, start_epoch, loss = load_checkpoint(
+                model=model, path=checkpoint_path, device=device
+            )
+            print(f"Resuming training from epoch {start_epoch}...")
+
+    tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
+    for epoch in range(start_epoch, n_epochs):
+        model.train()
+
+        for batch in train_dataloader:
+            x, y = batch
+            if device is not None:
+                x, y = x.to(device), y.to(device)
+
+            batch_size = x.shape[0]
+            resolution = x.shape[1]
+
+            # Forward pass training
+            optimizer_forward.zero_grad()
+            pred_y = model(x)
+            pred_y = pred_y.reshape(batch_size, resolution, resolution, -1)
+            pred_y_denorm = y_normalizer.decode(pred_y.clone())
+            y_denorm = y_normalizer.decode(y.clone())
+
+            myloss = LpLoss(size_average=False)
+            forward_loss = (
+                myloss(pred_y_denorm[:, :, :, 0], y_denorm[:, :, :, 0])
+                + myloss(pred_y_denorm[:, :, :, 1:], y_denorm[:, :, :, 1:]) / (100 * batch_size ** 2)
+            )
+
+            forward_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+            optimizer_forward.step()
+
+            # Backward pass training
+            optimizer_backward.zero_grad()
+            pred_x = model.inverse(y.reshape(batch_size, resolution, resolution, -1))
+
+            # VAE loss
+            vae_loss, _ = compute_vae_loss(
+                model, pred_x.permute(0, 3, 1, 2), x.permute(0, 3, 1, 2),
+                x_normalizer, kl_weight
+            )
+
+            # Grid loss
+            x_denorm = x_normalizer.decode(x.reshape(batch_size, resolution, resolution, -1).clone())
+            grid_loss = myloss(pred_x[:, :, :, 1:], x_denorm[:, :, :, 1:]) / (100 * batch_size ** 2)
+
+            backward_loss = vae_loss + grid_loss
+            backward_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+            optimizer_backward.step()
+
+        # Test evaluation
+        avg_test_loss = test_model(
+            model=model,
+            test_dataloader=test_dataloader,
+            x_normalizer=x_normalizer,
+            y_normalizer=y_normalizer,
+            kl_weight=kl_weight,
+        )
+
+        # Logging
+        summary_writer.add_scalars("loss/forward", {model_name: forward_loss.item()}, epoch)
+        summary_writer.add_scalars("loss/backward", {model_name: backward_loss.item()}, epoch)
+        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+
+        # Save checkpoint
+        if (epoch + 1) % checkpoint_interval == 0:
+            save_checkpoint(model, optimizer_forward, epoch + 1, avg_test_loss, checkpoint_path)
+
+        tqdm_bar.set_postfix_str(
+            f"forward_loss {forward_loss.item():.4e} backward_loss {backward_loss.item():.4e} test_loss {avg_test_loss:.4e}"
+        )
+        tqdm_bar.update(1)
+
+
+def test_model(model, test_dataloader, x_normalizer, y_normalizer, kl_weight=0.01):
+    """Test the IFNO model with clean separation"""
+    model.eval()
+    total_test_loss = 0.0
+
+    with torch.no_grad():
+        for batch in test_dataloader:
+            x, y = batch
+            batch_size = x.shape[0]
+            resolution = x.shape[1]
+
+            # Forward test
+            pred_y = model(x)
+            pred_y = pred_y.reshape(batch_size, resolution, resolution, -1)
+            pred_y_denorm = y_normalizer.decode(pred_y.clone())
+            y_denorm = y_normalizer.decode(y.clone())
+
+            myloss = LpLoss(size_average=False)
+            forward_loss = myloss(pred_y_denorm[:, :, :, 0], y_denorm[:, :, :, 0])
+
+            # Backward test
+            pred_x = model.inverse(y.reshape(batch_size, resolution, resolution, -1))
+            pred_x_vae, _, _, _ = model.vae_net.forward2(
+                pred_x[:, :, :, 0].reshape(batch_size, 1, resolution, resolution))
+
+            pred_x_final = x_normalizer.decode(
+                torch.cat(
+                    (pred_x_vae.reshape(batch_size, resolution, resolution, 1).clone(), x[:, :, :, 1:]),
+                    axis=-1,
+                )
+            )
+            x_denorm = x_normalizer.decode(x.reshape(batch_size, resolution, resolution, -1).clone())
+
+            backward_loss = myloss(pred_x_final[:, :, :, 0], x_denorm[:, :, :, 0])
+
+            total_test_loss += (forward_loss.item() + backward_loss.item()) / 2
+
+    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+    return avg_test_loss
+
+
+def evaluate(model, point, x_normalizer, y_normalizer):
+    """Evaluate model on a single data point with clean separation"""
+    model.eval()
+    with torch.no_grad():
+        x, y = point
+        batch_size = x.shape[0]
+        resolution = x.shape[1]
+
+        # Forward evaluation
+        pred_y = model(x)
+        pred_y = pred_y.reshape(batch_size, resolution, resolution, -1)
+        pred_y_denorm = y_normalizer.decode(pred_y.clone())
+
+        # Backward evaluation  
+        pred_x = model.inverse(y.reshape(batch_size, resolution, resolution, -1))
+        pred_x_vae, _, _, _ = model.vae_net.forward2(
+            pred_x[:, :, :, 0].reshape(batch_size, 1, resolution, resolution))
+
+        pred_x_final = x_normalizer.decode(
             torch.cat(
-                (
-                    recon_img.permute(0, 2, 3, 1).clone(),
-                    y.permute(0, 2, 3, 1).clone()[:, :, :, 1:],
-                ),
+                (pred_x_vae.reshape(batch_size, resolution, resolution, 1).clone(), x[:, :, :, 1:]),
                 axis=-1,
             )
         )
-        mse_loss = myloss(unnorm_recon_img.reshape(
-            size, -1), unnorm_img.reshape(size, -1))
-        loss = kl_scale * kl_loss + mse_loss
-        if return_mu:
-            return loss, recon_img
-        return loss
 
-    def sp(self, x):
-        sp = torch.nn.Softplus(beta=self.beta)
-        return sp(x)
-
-    def forward(self, x):
-        nchannel = x.shape[-1]
-        x = x.reshape(x.shape[0], s, s, nchannel)
-        input_x = x
-        x = self.p1(x)
-        x = x.permute(0, 3, 1, 2)
-        x_recon = self.q2(x).permute(0, 2, 3, 1)
-        loss_recon = ((x_recon - input_x) ** 2).mean()
-
-        u1 = x[:, :awidth, :, :]
-        u2 = x[:, awidth:, :, :]
-
-        for i in range(args.n_layers):
-            u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
-            x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
-            x2 = self.ws[2 * i](u2_pad)
-            s2 = F.gelu(x1 + x2)
-            s2 = s2[..., : (s2.size(-2) - self.padding),
-                    : (s2.size(-1) - self.padding)]
-
-            v1 = u1 * self.sp(s2)
-            v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
-            x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
-            x2 = self.ws[2 * i + 1](v1_pad)
-            s1 = F.gelu(x1 + x2)
-            s1 = s1[..., : (s1.size(-2) - self.padding),
-                    : (s1.size(-1) - self.padding)]
-            v2 = u2 * self.sp(s1)
-
-            u1 = v1
-            u2 = v2
-
-        x = torch.cat((u1, u2), axis=1)
-        y_pred = self.q1(x)
-        y_pred = y_pred.permute(0, 2, 3, 1)
-
-        return y_pred, loss_recon
-
-    def backward(self, y):
-        nchannels = y.shape[-1]
-        y = y.reshape(y.shape[0], s, s, nchannels)
-        input_y = y
-        v = self.p2(y)
-        v = v.permute(0, 3, 1, 2)
-
-        y_recon = self.q1(v).permute(0, 2, 3, 1)
-        loss_recon = ((y_recon - input_y) ** 2).mean()
-
-        v1 = v[:, :awidth, :, :]
-        v2 = v[:, awidth:, :, :]
-        for i in range(args.n_layers - 1, -1, -1):
-            v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
-            x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
-            x2 = self.ws[2 * i + 1](v1_pad)
-            s1 = F.gelu(x1 + x2)
-            s1 = s1[..., : (s1.size(-2) - self.padding),
-                    : (s1.size(-1) - self.padding)]
-
-            u2 = v2 * self.sp(s1) ** (-1)
-            u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
-            x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
-            x2 = self.ws[2 * i](u2_pad)
-            s2 = F.gelu(x1 + x2)
-            s2 = s2[..., : (s2.size(-2) - self.padding),
-                    : (s2.size(-1) - self.padding)]
-
-            u1 = v1 * self.sp(s2) ** (-1)
-
-            v1 = u1
-            v2 = u2
-
-        x = torch.cat((v1, v2), axis=1)
-        x_preds = self.q2(x)
-
-        x_preds = x_preds.permute(0, 2, 3, 1)
-
-        return x_preds, loss_recon
-
-
-dataset = "[Darcy-Flow-Curve]"
-parser = argparse.ArgumentParser()
-parser.add_argument("--rank", type=int, help="Rank of VAE", default=24)
-parser.add_argument("--padding", type=int,
-                    help="padding num for FNO", default=20)
-parser.add_argument("--nl", type=float, help="noise level", default=0.0)
-parser.add_argument("--lr-VAE", type=float,
-                    help="learning rate for VAE Training", default=0.001)
-parser.add_argument("--lr-IFNO", type=float,
-                    help="learning rate for IFNO Training", default=0.00025)
-parser.add_argument("--lr-forward", type=float,
-                    help="learning rate for joint Training-forward", default=0.000005)
-parser.add_argument("--lr-backward", type=float,
-                    help="learning rate for joint Training-backward", default=0.000005)
-parser.add_argument("--kl", type=float,
-                    help="KL divergence weight in VAE loss", default=0.01)
-parser.add_argument("--modes", type=int,
-                    help="number of modes in IFNO", default=16)
-parser.add_argument("--epochs-VAE", type=int,
-                    help="epochs setting for VAE", default=2)
-parser.add_argument("--epochs-IFNO", type=int,
-                    help="epochs setting for IFNO", default=2)
-parser.add_argument("--epochs", type=int,
-                    help="epochs setting for joint training", default=2)
-parser.add_argument("--n-train", type=int,
-                    help="num of train dataset", default=800)
-parser.add_argument("--n-valid", type=int,
-                    help="num of valid dataset", default=100)
-parser.add_argument("--n-test", type=int,
-                    help="num of test dataset", default=200)
-parser.add_argument("--batchsize", type=int,
-                    help="num of batchsize for training", default=10)
-parser.add_argument("--batchsize2", type=int,
-                    help="num of batchsize for vae training", default=100)
-parser.add_argument("--batchsize3", type=int,
-                    help="num of batchsize for testing", default=20)
-parser.add_argument("--valid", action="store_true",
-                    help="wheter or not do validation process")
-parser.add_argument("--hidden", type=int,
-                    help="dimension of hidden layer in IFNO", default=64)
-parser.add_argument("--n-layers", type=int, default=4,
-                    metavar="N", help="data resolution (default: 4)")
-parser.add_argument("--beta", type=float, help="beta in softplus", default=2.0)
-parser.add_argument("--seed", type=int, default=0,
-                    metavar="S", help="random seed (default: 0)")
-parser.add_argument("--count", type=int, help="number of test", default=100)
-args = parser.parse_args()
-hyperparams = {
-    "rank": args.rank,
-    "noise-level": args.nl,
-    "KL-weight": args.kl,
-    "modes": args.modes,
-    "hidden-dimension": args.hidden,
-    "padding": args.padding,
-    "beta": args.beta,
-    "lr-VAE": args.lr_VAE,
-    "lr-IFNO": args.lr_IFNO,
-    "lr-forward": args.lr_forward,
-    "lr-backward": args.lr_backward,
-    "ntrain": args.n_train,
-    "nvalid": args.n_valid,
-    "ntest": args.n_test,
-    "bz": args.batchsize,
-    "bz2": args.batchsize2,
-    "bz3": args.batchsize3,
-    "seed": args.seed,
-    "valid": args.valid,
-}
-exp_name = f"dataset_{dataset}/nl{args.nl}/s{args.seed}"
-
-log_path = os.path.join("logger_grid_greedy", exp_name)
-
-if not os.path.exists(log_path):
-    os.makedirs(log_path)
-
-torch.manual_seed(args.seed)
-np.random.seed(args.seed)
-random.seed(args.seed)
-
-logger = None
-logger = get_logger(os.path.join(log_path, "exp-" + str(args.count) + ".log"))
-logger.info("======Settings======")
-logger.info(f"  dataset:  {dataset}\n")
-for key, value in hyperparams.items():
-    logger.info(f"  {key}:  {value}\n")
-
-epochs_VAE = args.epochs_VAE
-epochs_IFNO = args.epochs_IFNO
-ntrain = args.n_train
-ntest = args.n_test
-s = 64
-modes = args.modes
-width = args.hidden
-awidth = int(width / 2)
-batch_size = args.batchsize
-batch_size2 = args.batchsize2
-batch_size3 = args.batchsize3
-epochs = args.epochs
-beta = args.beta
-
-
-y_no_noise = np.load("./data/DF_curve_u.npy")
-x_no_noise = np.load("./data/DF_curve_k.npy")
-logger.info("    data shape, f mean, u mean")
-logger.info("   " + str(x_no_noise.shape) + " " +
-            str(x_no_noise.mean()) + " " + str(y_no_noise.mean()))
-
-if args.nl == 0.0:
-    y = np.load("./data/DF_curve_u.npy")
-    x = np.load("./data/DF_curve_k.npy")
-    extra_f = np.load("./data/DF_curve_k.npy")[:ntrain, :, :]
-elif args.nl == 0.1:
-    y = np.load("./data/DF_curve_u_01.npy")
-    x = np.load("./data/DF_curve_k_01.npy")
-    extra_f = np.load("./data/DF_curve_k_01.npy")[:ntrain, :, :]
-elif args.nl == 0.2:
-    y = np.load("./data/DF_curve_u_02.npy")
-    x = np.load("./data/DF_curve_k_02.npy")
-    extra_f = np.load("./data/DF_curve_k_02.npy")[:ntrain, :, :]
-
-
-xtr = x[:ntrain, :, :]
-ytr = y[:ntrain, :, :]
-
-if args.valid:
-    xte = xtr[-args.n_valid:, :, :]
-    yte = ytr[-args.n_valid:, :, :]
-    xtr = xtr[: ntrain - args.n_valid, :, :]
-    ytr = ytr[: ntrain - args.n_valid, :, :]
-    xte_no_noise = x_no_noise[ntrain - args.n_valid: ntrain, :, :]
-    yte_no_noise = y_no_noise[ntrain - args.n_valid: ntrain, :, :]
-    ntrain -= args.n_valid
-    ntest = args.n_valid
-else:
-    xte = x[-ntest:, :, :]
-    yte = y[-ntest:, :, :]
-    xte_no_noise = x_no_noise[-ntest:, :, :]
-    yte_no_noise = y_no_noise[-ntest:, :, :]
-
-
-xtr2 = np.concatenate(
-    (
-        extra_f,
-        extra_f.transpose(0, 2, 1),
-        np.flip(extra_f, (0, 2)),
-        np.flip(extra_f.transpose(0, 2, 1), (0, 2)),
-    ),
-    axis=0,
-)
-
-xtr = torch.tensor(xtr, dtype=torch.float32)
-ytr = torch.tensor(ytr, dtype=torch.float32)
-xtr2 = torch.tensor(xtr2, dtype=torch.float32)
-xte = torch.tensor(xte, dtype=torch.float32)
-yte = torch.tensor(yte, dtype=torch.float32)
-xte_no_noise = torch.tensor(xte_no_noise, dtype=torch.float32)
-yte_no_noise = torch.tensor(yte_no_noise, dtype=torch.float32)
-
-
-xtr = xtr.to("cuda")
-ytr = ytr.to("cuda")
-xtr2 = xtr2.to("cuda")
-xte = xte.to("cuda")
-yte = yte.to("cuda")
-xte_no_noise = xte_no_noise.to("cuda")
-yte_no_noise = yte_no_noise.to("cuda")
-
-x = np.linspace(0, 1, 64)
-y = np.linspace(0, 1, 64)
-
-X, Y = np.meshgrid(x, y)
-X = X.T
-Y = Y.T
-grid = torch.tensor(
-    np.concatenate((X[:, :, None], Y[:, :, None]), axis=-1),
-    dtype=torch.float32,
-    device="cuda",
-)
-
-xtr = torch.cat((xtr[:, :, :, None], grid[None, :, :,
-                :].repeat(xtr.shape[0], 1, 1, 1)), axis=-1)
-xtr2 = torch.cat((xtr2[:, :, :, None], grid[None, :, :,
-                 :].repeat(xtr2.shape[0], 1, 1, 1)), axis=-1)
-xte = torch.cat((xte[:, :, :, None], grid[None, :, :,
-                :].repeat(xte.shape[0], 1, 1, 1)), axis=-1)
-xte_no_noise = torch.cat(
-    (
-        xte_no_noise[:, :, :, None],
-        grid[None, :, :, :].repeat(xte_no_noise.shape[0], 1, 1, 1),
-    ),
-    axis=-1,
-)
-ytr = torch.cat((ytr[:, :, :, None], grid[None, :, :,
-                :].repeat(ytr.shape[0], 1, 1, 1)), axis=-1)
-yte = torch.cat((yte[:, :, :, None], grid[None, :, :,
-                :].repeat(yte.shape[0], 1, 1, 1)), axis=-1)
-yte_no_noise = torch.cat(
-    (
-        yte_no_noise[:, :, :, None],
-        grid[None, :, :, :].repeat(yte_no_noise.shape[0], 1, 1, 1),
-    ),
-    axis=-1,
-)
-
-
-x_normalizer = UnitGaussianNormalizer(xtr)
-xtr = x_normalizer.encode(xtr)
-xtr2 = x_normalizer.encode(xtr2)
-xte = x_normalizer.encode(xte)
-xte_no_noise = x_normalizer.encode(xte_no_noise)
-y_normalizer = UnitGaussianNormalizer(ytr)
-ytr = y_normalizer.encode(ytr)
-yte = y_normalizer.encode(yte)
-yte_no_noise = y_normalizer.encode(yte_no_noise)
-train_loader2 = torch.utils.data.DataLoader(
-    torch.utils.data.TensorDataset(xtr2), batch_size=batch_size3, shuffle=True)
-train_loader = torch.utils.data.DataLoader(
-    torch.utils.data.TensorDataset(xtr, ytr), batch_size=batch_size, shuffle=True
-)
-test_loader = torch.utils.data.DataLoader(
-    torch.utils.data.TensorDataset(xte, yte, xte_no_noise, yte_no_noise),
-    batch_size=batch_size2,
-    shuffle=False,
-)
-myloss = LpLoss(size_average=False)
-x_normalizer.cuda()
-y_normalizer.cuda()
-
-
-start_time = time.time()
-
-
-def train():
-    model = IFNO(modes, modes, width, beta).cuda()
-    logger.info(f"  number of parameters:  {count_model_params(model)}\n")
-
-    def pretrain_VAE():
-        logger.info(f"  start pretraining")
-        logger.info(f"  start VAE pretraining")
-        min_err = 1.0
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr_VAE)
-        sc = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, factor=0.9, patience=10, verbose=True)
-        for ep in tqdm(range(epochs_VAE)):
-            model.train()
-            train_l2 = 0
-            for (x,) in train_loader2:
-                x = x.cuda()
-                optimizer.zero_grad()
-                loss = model.VAE_train(
-                    x.permute(0, 3, 1, 2), x.permute(0, 3, 1, 2))
-                loss.backward(retain_graph=False)
-                clip_grad_norm_(model.parameters(), max_norm=2.0)
-                optimizer.step()
-                train_l2 += loss.item()
-            sc.step(train_l2)
-
-            if ep % 100 == 0:
-                model.eval()
-                test_l2 = 0.0
-                with torch.no_grad():
-                    for x, y, x_no_noise, y_no_noise in test_loader:
-                        x, y, x_no_noise, y_no_noise = (
-                            x.cuda(),
-                            y.cuda(),
-                            x_no_noise.cuda(),
-                            y_no_noise.cuda(),
-                        )
-                        batchS = x.shape[0]
-                        recon_img, _, _, _ = model.vae_net.forward2(
-                            x_no_noise.permute(0, 3, 1, 2)[:, :1, :, :])
-                        unnorm_img = x_normalizer.decode(x_no_noise)
-                        unnorm_recon_img = x_normalizer.decode(
-                            torch.cat(
-                                (
-                                    recon_img.permute(0, 2, 3, 1).clone(),
-                                    x_no_noise[:, :, :, 1:],
-                                ),
-                                axis=-1,
-                            )
-                        )
-
-                        diff = unnorm_recon_img[:, :, :, 0].reshape(batch_size2, -1) - unnorm_img[:, :, :, 0].reshape(
-                            batch_size2, -1
-                        )
-                        test_l2 += (
-                            ((diff**2).sum(1) /
-                             ((unnorm_img[:, :, :, 0].reshape(batchS, -1) ** 2).sum(1))) ** 0.5
-                        ).sum()
-
-                test_l2 /= ntest
-                train_l2 /= ntrain
-                if test_l2 < min_err:
-                    min_err = test_l2
-                logger.info(
-                    f"  Epoch [{ep + 1}/{epochs_VAE}], Training Loss: {train_l2:.4f}, Test Loss: {test_l2:.4f}, Min. Test Error: {min_err:.4f}"
-                )
-
-    def pretrain_IFNO():
-        logger.info(f"  start IFNO pretraining")
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr_IFNO)
-        min_err_forward = 1.0
-        min_err_backward = 1.0
-        test_grid = 0.0
-        pretrain_preds = None
-        pretrain_gt = None
-        for ep in tqdm(range(epochs_IFNO)):
-            model.train()
-            train_l2_forward = 0
-            train_l2_backward = 0
-            for x, y in train_loader:
-                x, y = x.cuda(), y.cuda()
-                batchS = x.shape[0]
-                pred_y, loss_recon = model(x)
-                pred_y = pred_y.reshape(batchS, s, s, 3)
-                pred_y = y_normalizer.decode(pred_y.clone())
-                y_true = y_normalizer.decode(y.clone())
-                loss_forward = (
-                    myloss(pred_y[:, :, :, 0], y_true[:, :, :, 0])
-                    + myloss(pred_y[:, :, :, 1:], y_true[:, :,
-                             :, 1:]) / (100 * x.shape[0] ** 2)
-                    + loss_recon
-                )
-
-                optimizer.zero_grad()
-                loss_forward.backward(retain_graph=False)
-                clip_grad_norm_(model.parameters(), max_norm=2.0)
-                optimizer.step()
-
-                pred_x, loss_recon = model.backward(y)
-                pred_x = x_normalizer.decode(
-                    pred_x.reshape(batchS, s, s, 3).clone())
-                x_true = x_normalizer.decode(
-                    x.reshape(batchS, s, s, 3).clone())
-                loss_backward = (
-                    myloss(pred_x[:, :, :, 0], x_true[:, :, :, 0])
-                    + myloss(pred_x[:, :, :, 1:], x_true[:, :,
-                             :, 1:]) / (100 * x.shape[0] ** 2)
-                    + loss_recon
-                )
-                optimizer.zero_grad()
-                loss_backward.backward(retain_graph=False)
-                clip_grad_norm_(model.parameters(), max_norm=2.0)
-                optimizer.step()
-                train_l2_forward += loss_forward.item()
-                train_l2_backward += loss_backward.item()
-            if ep % 100 == 0:
-                model.eval()
-                test_l2_forward = 0.0
-                test_l2_backward = 0.0
-
-                with torch.no_grad():
-                    for x, y, x_no_noise, y_no_noise in test_loader:
-                        x, y, x_no_noise, y_no_noise = (
-                            x.cuda(),
-                            y.cuda(),
-                            x_no_noise.cuda(),
-                            y_no_noise.cuda(),
-                        )
-                        batchS = x.shape[0]
-                        pred_y, _ = model(x)
-                        pred_y = pred_y.reshape(batchS, s, s, 3)
-                        pred_y = y_normalizer.decode(pred_y.clone())
-                        y_true = y_normalizer.decode(
-                            y_no_noise.reshape(batchS, s, s, 3).clone())
-                        pred_x, _ = model.backward(y.reshape(batchS, s, s, 3))
-                        pred_x = x_normalizer.decode(
-                            pred_x.reshape(batchS, s, s, 3).clone())
-                        x_true = x_normalizer.decode(
-                            x_no_noise.reshape(batchS, s, s, 3).clone())
-                        diff_forward = pred_y[:, :, :, 0].reshape(batchS, -1) - y_true[:, :, :, 0].reshape(
-                            batch_size2, s, s
-                        ).reshape(batchS, -1)
-                        diff_backward = pred_x[:, :, :, 0].reshape(
-                            batchS, -1) - x_true[:, :, :, 0].reshape(batchS, -1)
-
-                        diff_forward_grid = pred_y[:, :, :, 1:].reshape(batchS, -1) - y_true[:, :, :, 1:].reshape(
-                            batchS, -1
-                        )
-                        diff_backward_grid = pred_x[:, :, :, 1:].reshape(batchS, -1) - x_true[:, :, :, 1:].reshape(
-                            batchS, -1
-                        )
-
-                        test_l2_forward += (
-                            ((diff_forward**2).sum(1) /
-                             ((y_true[:, :, :, 0].reshape(batchS, -1) ** 2).sum(1))) ** 0.5
-                        ).sum()
-                        test_l2_backward += (
-                            ((diff_backward**2).sum(1) /
-                             ((x_true[:, :, :, 0].reshape(batchS, -1) ** 2).sum(1))) ** 0.5
-                        ).sum()
-
-                        test_grid += (
-                            ((diff_forward_grid**2).sum(1) /
-                             ((y_true[:, :, :, 1:].reshape(batchS, -1) ** 2).sum(1)))
-                            ** 0.5
-                        ).sum()
-                        test_grid += (
-                            ((diff_backward_grid**2).sum(1) /
-                             ((x_true[:, :, :, 1:].reshape(batchS, -1) ** 2).sum(1)))
-                            ** 0.5
-                        ).sum()
-
-                        pretrain_preds = pred_x[:, :, :, 0]
-                        pretrain_gt = x_true[:, :, :, 0]
-
-                train_l2_forward /= ntrain
-                train_l2_backward /= ntrain
-                test_l2_forward /= ntest
-                test_l2_backward /= ntest
-                test_grid /= 2 * ntest
-
-                if test_l2_forward < min_err_forward:
-                    min_err_forward = test_l2_forward
-                if test_l2_backward < min_err_backward:
-                    min_err_backward = test_l2_backward
-                logger.info(
-                    f"  Epoch [{ep + 1}/{epochs_IFNO}], Training Loss Forward: {train_l2_forward:.4f}, Training Loss Backward: {train_l2_backward:.4f},Test Loss Forward: {test_l2_forward:.4f}, Test Loss Backward: {test_l2_backward:.4f},Test Grid: {test_grid:.4f}, Min. Test Forward Error: {min_err_forward:.4f}, Min. Test Backward Error: {min_err_backward:.4f}"
-                )
-
-        return pretrain_preds.detach().cpu().numpy(), pretrain_gt.detach().cpu().numpy()
-
-    def joint_train():
-        optimizer1 = torch.optim.AdamW(model.parameters(), lr=args.lr_forward)
-        optimizer2 = torch.optim.AdamW(model.parameters(), lr=args.lr_backward)
-        min_err_forward = 1.0
-        min_err_backward = 1.0
-        for ep in tqdm(range(epochs)):
-            model.train()
-            model.vae_net.train()
-            train_l2_forward = 0
-            train_l2_backward = 0
-            for x, y in train_loader:
-                x, y = x.cuda(), y.cuda()
-                batchS = x.shape[0]
-                pred_y, _ = model(x)
-                pred_y = pred_y.reshape(batchS, s, s, 3)
-                pred_y = y_normalizer.decode(pred_y.clone())
-                y_true = y_normalizer.decode(y.clone())
-                loss_forward = myloss(pred_y.view(
-                    batchS, -1), y_true.view(batchS, -1))
-                optimizer1.zero_grad()
-
-                loss_forward.backward(retain_graph=False)
-                clip_grad_norm_(model.parameters(), max_norm=2.0)
-                optimizer1.step()
-
-                x_true = x_normalizer.decode(
-                    x.reshape(batchS, s, s, 3).clone())
-                pred_x, _ = model.backward(y)
-                loss_backward, _ = model.VAE_train(pred_x.permute(
-                    0, 3, 1, 2), x.permute(0, 3, 1, 2), return_mu=True)
-                loss_grid = myloss(
-                    pred_x[:, :, :, 1:], x_true[:, :, :, 1:]) / (100 * x.shape[0] ** 2)
-                loss_backward += loss_grid
-                optimizer2.zero_grad()
-                loss_backward.backward(retain_graph=False)
-                clip_grad_norm_(model.parameters(), max_norm=2.0)
-
-                optimizer2.step()
-
-                train_l2_forward += loss_forward.item()
-                train_l2_backward += loss_backward.item()
-
-            if ep % 1 == 0:
-                cur_time = time.time()
-                model.eval()
-                model.vae_net.eval()
-                test_l2_forward = 0.0
-                test_l2_backward = 0.0
-
-                with torch.no_grad():
-                    for x, y, x_no_noise, y_no_noise in test_loader:
-                        x, y, x_no_noise, y_no_noise = (
-                            x.cuda(),
-                            y.cuda(),
-                            x_no_noise.cuda(),
-                            y_no_noise.cuda(),
-                        )
-                        batchS = x.shape[0]
-                        pred_y, _ = model(x)
-                        pred_y = pred_y.reshape(batchS, s, s, 3)
-                        pred_y = y_normalizer.decode(pred_y.clone())
-                        y_true = y_normalizer.decode(
-                            y_no_noise.reshape(batchS, s, s, 3).clone())
-                        pred_x, _ = model.backward(y.reshape(batchS, s, s, 3))
-                        pred_x, _, _, _ = model.vae_net.forward2(
-                            pred_x[:, :, :, 0].reshape(batchS, 1, 64, 64))
-                        pred_x = x_normalizer.decode(
-                            torch.cat(
-                                (
-                                    pred_x.reshape(batchS, s, s, 1).clone(),
-                                    x[:, :, :, 1:],
-                                ),
-                                axis=-1,
-                            )
-                        )
-                        x_true = x_normalizer.decode(
-                            x_no_noise.reshape(batchS, s, s, 3).clone())
-                        diff_forward = pred_y[:, :, :, 0].reshape(batchS, -1) - y_true[:, :, :, 0].reshape(
-                            batchS, s, s
-                        ).reshape(batchS, -1)
-                        diff_backward = pred_x[:, :, :, 0].reshape(
-                            batchS, -1) - x_true[:, :, :, 0].reshape(batchS, -1)
-                        test_l2_forward += (
-                            ((diff_forward**2).sum(1) /
-                             ((y_true[:, :, :, 0].reshape(batchS, -1) ** 2).sum(1))) ** 0.5
-                        ).sum()
-                        test_l2_backward += (
-                            ((diff_backward**2).sum(1) /
-                             ((x_true[:, :, :, 0].reshape(batchS, -1) ** 2).sum(1))) ** 0.5
-                        ).sum()
-
-                train_l2_forward /= ntrain
-                train_l2_backward /= ntrain
-                test_l2_forward /= ntest
-                test_l2_backward /= ntest
-
-                if test_l2_forward < min_err_forward:
-                    min_err_forward = test_l2_forward
-                if test_l2_backward < min_err_backward:
-                    min_err_backward = test_l2_backward
-                logger.info(
-                    f"  Time [{cur_time-start_time}], Epoch [{ep + 1}/{epochs}], Training Loss Forward: {train_l2_forward:.4f}, Training Loss Backward: {train_l2_backward:.4f}, Test Loss Forward: {test_l2_forward:.4f}, Test Loss Backward: {test_l2_backward:.4f}, Min. Test Forward Error: {min_err_forward:.4f}, Min. Test Backward Error: {min_err_backward:.4f}"
-                )
-
-    preds, gt = pretrain_IFNO()
-    pretrain_VAE()
-    joint_train()
-
-
-for i in range(1):
-    train()
+        return pred_y_denorm, pred_x_final
