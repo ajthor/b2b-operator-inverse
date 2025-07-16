@@ -188,7 +188,7 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     alpha = input_function_encoder.compute_coefficients(X, u)
     if isinstance(alpha, tuple):
         alpha = alpha[0]
-    
+
     beta = output_function_encoder.compute_coefficients(Y, s)
     if isinstance(beta, tuple):
         beta = beta[0]
@@ -198,20 +198,23 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
 
     u_pred = input_function_encoder(X, alpha_pred)
 
-    # pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
-    pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+    # Reconstruction loss: negative log probability assuming unit variance Gaussian
+    reconstruction_loss = 0.5 * torch.sum((alpha_pred - alpha) ** 2, dim=-1).mean()
+
+    # Forward consistency loss: encode alpha_pred with beta and compare z values
+    z_reconstructed, *_ = model(alpha_pred, beta)
+    consistency_loss = torch.nn.functional.mse_loss(
+        z_reconstructed, z, reduction="mean"
+    )
+
+    # Function space loss
+    # pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+
+    # KL divergence loss
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     kl_loss = kl_loss.mean()
 
-    # # consistency loss
-    # consistency_loss = torch.nn.functional.mse_loss(
-    #     beta,
-    #     torch.einsum(
-    #         "kl,bk->bl", operator, alpha_pred
-    #     ),  # torch.matmul(alpha_pred, operator.T)
-    # )
-
-    return pred_loss + kl_loss  # + consistency_loss
+    return reconstruction_loss + consistency_loss + kl_loss
 
 
 def train(
@@ -306,7 +309,7 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         beta = output_function_encoder.compute_coefficients(Y, s)
         if isinstance(beta, tuple):
             beta = beta[0]
-            
+
         z = model.sample_prior(1, device=X.device)
         alpha_pred = model.inverse(beta, z)
         pred = input_function_encoder(X, alpha_pred)
