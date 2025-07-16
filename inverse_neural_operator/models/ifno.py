@@ -5,7 +5,31 @@ import numpy as np
 from torch.utils.data import DataLoader
 import tqdm
 import os
+import warnings
 from neuralop.layers.fno_block import FNOBlocks
+
+
+# Utility classes for faithful iFNO implementation
+def relative_l2_loss(x, y):
+    """Simple relative L2 loss helper function"""
+    num_examples = x.size()[0]
+    diff_norms = torch.norm(
+        x.reshape(num_examples, -1) - y.reshape(num_examples, -1), p=2, dim=1
+    )
+    y_norms = torch.norm(y.reshape(num_examples, -1), p=2, dim=1)
+    return torch.mean(diff_norms / y_norms)
+
+
+def count_model_params(model):
+    """Returns the total number of parameters of a PyTorch model
+
+    Notes
+    -----
+    One complex number is counted as two parameters (we count real and imaginary parts)'
+    """
+    return sum(
+        [p.numel() * 2 if p.is_complex() else p.numel() for p in model.parameters()]
+    )
 
 
 class MLP(nn.Module):
@@ -78,8 +102,7 @@ class VanillaVAE(nn.Module):
                 output_padding=1,
             ),
             nn.GELU(),
-            nn.Conv2d(hidden_dims[-1], out_channels=1,
-                      kernel_size=3, padding=1),
+            nn.Conv2d(hidden_dims[-1], out_channels=1, kernel_size=3, padding=1),
         )
 
     def encode(self, input):
@@ -122,7 +145,7 @@ class IFNO(nn.Module):
         padding: int = 20,
         vae_latent_dim: int = 24,
         resolution: int = 64,
-        mm: int = 64,  # Additional dimension parameter
+        mm: int = 58,  # Set to original value from provided code
         input_channels: int = 3,  # Input channels for projection layers
         output_channels: int = 3,  # Output channels
         intermediate_dim: int = 64,  # Intermediate dimension for p1, p2
@@ -162,18 +185,14 @@ class IFNO(nn.Module):
 
         for _ in range(2 * self.n_layers):
             self.convs.append(
-                FNOBlocks(self.half_width, self.half_width,
-                          (self.modes1, self.modes2))
+                FNOBlocks(self.half_width, self.half_width, (self.modes1, self.modes2))
             )
-            self.mlps.append(
-                MLP(self.half_width, self.half_width, self.half_width))
+            self.mlps.append(MLP(self.half_width, self.half_width, self.half_width))
             self.ws.append(nn.Conv2d(self.half_width, self.half_width, 1))
 
         # VAE for reconstruction (configurable)
         self.vae_net = VanillaVAE(
-            in_channels=1, 
-            latent_dim=vae_latent_dim,
-            hidden_dims=vae_hidden_dims
+            in_channels=1, latent_dim=vae_latent_dim, hidden_dims=vae_hidden_dims
         )
 
     def _softplus(self, x):
@@ -185,14 +204,27 @@ class IFNO(nn.Module):
         s = self.resolution
         mm = self.mm
         awidth = self.half_width
+
+        # Input processing - handle variable input shapes
+        batch_size = x.shape[0]
         
-        # Input processing
+        # If x is not already the right shape, reshape it
+        if len(x.shape) == 2:
+            # Assume x is (batch_size, input_channels) and reshape to spatial format
+            x = x.view(batch_size, -1, 1)  # Flatten to (batch, features, 1)
+        
         x = self.p0(x)
-        x = x.reshape(x.shape[0], s, s, 1).repeat(1, 1, 1, mm)
+        
+        # Ensure we have the right spatial dimensions
+        if x.shape[1] != s * s:
+            # Pad or crop to match expected resolution
+            x = F.adaptive_avg_pool1d(x.transpose(1, 2), s * s).transpose(1, 2)
+        
+        x = x.reshape(batch_size, s, s, 1).repeat(1, 1, 1, mm)
         x = x.permute(0, 3, 2, 1)
         x = self.p1(x)
         x = x.permute(0, 3, 1, 2)
-        
+
         # Split for coupling layers
         u1 = x[:, :awidth, :, :]
         u2 = x[:, awidth:, :, :]
@@ -203,17 +235,15 @@ class IFNO(nn.Module):
             x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
             x2 = self.ws[2 * i](u2_pad)
             s2 = F.gelu(x1 + x2)
-            s2 = s2[..., : (s2.size(-2) - self.padding),
-                    : (s2.size(-1) - self.padding)]
+            s2 = s2[..., : (s2.size(-2) - self.padding), : (s2.size(-1) - self.padding)]
 
             v1 = u1 * self._softplus(s2)
-            
+
             v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
             x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
             x2 = self.ws[2 * i + 1](v1_pad)
             s1 = F.gelu(x1 + x2)
-            s1 = s1[..., : (s1.size(-2) - self.padding),
-                    : (s1.size(-1) - self.padding)]
+            s1 = s1[..., : (s1.size(-2) - self.padding), : (s1.size(-1) - self.padding)]
             v2 = u2 * self._softplus(s1)
 
             u1 = v1
@@ -231,13 +261,26 @@ class IFNO(nn.Module):
         s = self.resolution
         mm = self.mm
         awidth = self.half_width
+
+        # Input processing for inverse - handle variable input shapes
+        batch_size = y.shape[0]
         
-        # Input processing for inverse
+        # If y is not already the right shape, reshape it
+        if len(y.shape) == 2:
+            # Assume y is (batch_size, output_channels) and reshape to spatial format
+            y = y.view(batch_size, -1, 1)  # Flatten to (batch, features, 1)
+        
         y = self.p4(y)
-        y = y.reshape(y.shape[0], mm, s, 1).repeat(1, 1, 1, self.intermediate_dim)
+        
+        # Ensure we have the right spatial dimensions
+        if y.shape[1] != mm * s:
+            # Pad or crop to match expected resolution
+            y = F.adaptive_avg_pool1d(y.transpose(1, 2), mm * s).transpose(1, 2)
+        
+        y = y.reshape(batch_size, mm, s, 1).repeat(1, 1, 1, self.intermediate_dim)
         v = self.p2(y)
         v = v.permute(0, 3, 1, 2)
-        
+
         # Split for inverse coupling layers
         v1 = v[:, :awidth, :, :]
         v2 = v[:, awidth:, :, :]
@@ -248,18 +291,16 @@ class IFNO(nn.Module):
             x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
             x2 = self.ws[2 * i + 1](v1_pad)
             s1 = F.gelu(x1 + x2)
-            s1 = s1[..., : (s1.size(-2) - self.padding),
-                    : (s1.size(-1) - self.padding)]
+            s1 = s1[..., : (s1.size(-2) - self.padding), : (s1.size(-1) - self.padding)]
             u2 = v2 * self._softplus(s1) ** (-1)
-            
+
             u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
             x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
             x2 = self.ws[2 * i](u2_pad)
             s2 = F.gelu(x1 + x2)
-            s2 = s2[..., : (s2.size(-2) - self.padding),
-                    : (s2.size(-1) - self.padding)]
+            s2 = s2[..., : (s2.size(-2) - self.padding), : (s2.size(-1) - self.padding)]
             u1 = v1 * self._softplus(s2) ** (-1)
-            
+
             v1 = u1
             v2 = u2
 
@@ -274,6 +315,9 @@ class IFNO(nn.Module):
 
 
 def create_model(
+    input_size,
+    hidden_sizes=[128, 128],
+    n_coupling_layers=2,
     modes1=16,
     modes2=16,
     width=64,
@@ -282,7 +326,7 @@ def create_model(
     padding=20,
     vae_latent_dim=24,
     resolution=64,
-    mm=64,
+    mm=58,
     input_channels=3,
     output_channels=3,
     intermediate_dim=64,
@@ -291,7 +335,13 @@ def create_model(
     """
     Create an IFNO model with configurable parameters.
 
+    Compatible with existing training framework - input_size parameter is for compatibility
+    but the actual input/output sizes are determined by the function encoders.
+
     Args:
+        input_size: Input size for compatibility (not used directly)
+        hidden_sizes: Hidden sizes for compatibility (not used directly)
+        n_coupling_layers: Number of coupling layers for compatibility (not used directly)
         modes1: Number of modes in first dimension
         modes2: Number of modes in second dimension
         width: Hidden dimension width
@@ -326,38 +376,65 @@ def create_model(
     )
 
 
-def compute_vae_loss(model, pred_x, x_true, x_normalizer, kl_weight=0.01):
-    """Compute VAE training loss separate from model"""
-    batch_size = pred_x.shape[0]
-    recon_img, _, mu, log_var = model.vae_net.forward(pred_x[:, :1, :, :])
-
-    # KL divergence loss
-    kl_loss = torch.mean(-0.5 * torch.sum(1 + log_var -
-                         mu**2 - log_var.exp(), dim=1), dim=0)
-
+# Loss functions for different training phases - work directly with batch
+def ifno_vae_loss(model, batch):
+    """VAE pretraining loss using the VAE component"""
+    X, u, Y, s = batch
+    # Use VAE for reconstruction loss
+    # Input u should be reshaped to match VAE input format (batch, channels, height, width)
+    batch_size = u.shape[0]
+    u_reshaped = u.reshape(batch_size, 1, 64, 64)  # Assuming 64x64 resolution
+    
+    # VAE forward pass
+    vae_out, vae_input, mu, log_var = model.vae_net(u_reshaped)
+    
     # Reconstruction loss
-    myloss = LpLoss(size_average=False)
-    unnorm_img = x_normalizer.decode(x_true.permute(0, 2, 3, 1).clone())
-    unnorm_recon_img = x_normalizer.decode(
-        torch.cat(
-            (
-                recon_img.permute(0, 2, 3, 1).clone(),
-                x_true.permute(0, 2, 3, 1).clone()[:, :, :, 1:],
-            ),
-            axis=-1,
-        )
-    )
-
-    mse_loss = myloss(unnorm_recon_img.reshape(
-        batch_size, -1), unnorm_img.reshape(batch_size, -1))
-    loss = kl_weight * kl_loss + mse_loss
-
-    return loss, recon_img
+    reconstruction_loss = relative_l2_loss(vae_out, vae_input)
+    
+    # KL divergence loss
+    kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+    kl_loss = kl_loss.mean()
+    
+    return reconstruction_loss + 0.01 * kl_loss
 
 
-def compute_reconstruction_loss(pred, target):
-    """Compute reconstruction loss for consistency"""
-    return ((pred - target) ** 2).mean()
+def ifno_forward_loss(model, batch):
+    """Forward pass loss for IFNO pretraining"""
+    X, u, Y, s = batch
+    # Forward pass: input u -> model -> pred_s, compare with s
+    # Reshape u to match model input format
+    u_input = torch.cat([X, u], dim=-1)  # Combine spatial coordinates with function values
+    
+    pred_s = model(u_input)
+    return relative_l2_loss(pred_s, s)
+
+
+def ifno_backward_loss(model, batch):
+    """Backward pass loss for IFNO pretraining"""
+    X, u, Y, s = batch
+    # Backward pass: input s -> model.inverse -> pred_u, compare with u
+    # Reshape s to match model input format
+    s_input = torch.cat([Y, s], dim=-1)  # Combine spatial coordinates with function values
+    
+    pred_u = model.inverse(s_input)
+    return relative_l2_loss(pred_u, u)
+
+
+def ifno_joint_loss(model, batch):
+    """Joint training loss - both forward and backward"""
+    X, u, Y, s = batch
+
+    # Forward loss: input u -> model -> pred_s, compare with s
+    u_input = torch.cat([X, u], dim=-1)
+    pred_s = model(u_input)
+    forward_loss = relative_l2_loss(pred_s, s)
+
+    # Backward loss: input s -> model.inverse -> pred_u, compare with u
+    s_input = torch.cat([Y, s], dim=-1)
+    pred_u = model.inverse(s_input)
+    backward_loss = relative_l2_loss(pred_u, u)
+
+    return forward_loss, backward_loss
 
 
 def save(model, path):
@@ -370,7 +447,7 @@ def load(model, path, device=None):
     return model
 
 
-def save_checkpoint(model, optimizer, epoch, loss, path):
+def save_checkpoint(model, optimizer, epoch, loss, path, training_stage="joint"):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     checkpoint = {
         "epoch": epoch,
@@ -379,6 +456,7 @@ def save_checkpoint(model, optimizer, epoch, loss, path):
             optimizer.state_dict() if optimizer is not None else None
         ),
         "loss": loss,
+        "training_stage": training_stage,
     }
     torch.save(checkpoint, path)
 
@@ -394,109 +472,22 @@ def load_checkpoint(model, path, optimizer=None, device=None):
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
     model.eval()
-    return model, optimizer, checkpoint["epoch"], checkpoint["loss"]
-
-
-class LpLoss:
-    """Lp loss for measuring relative error"""
-
-    def __init__(self, d=2, p=2, size_average=True, reduction=True):
-        self.d = d
-        self.p = p
-        self.reduction = reduction
-        self.size_average = size_average
-
-    def rel(self, x, y):
-        num_examples = x.size()[0]
-        diff_norms = torch.norm(
-            x.reshape(num_examples, -1) -
-            y.reshape(num_examples, -1), self.p, 1
-        )
-        y_norms = torch.norm(y.reshape(num_examples, -1), self.p, 1)
-
-        if self.reduction:
-            if self.size_average:
-                return torch.mean(diff_norms / y_norms)
-            else:
-                return torch.sum(diff_norms / y_norms)
-
-        return diff_norms / y_norms
-
-    def __call__(self, x, y):
-        return self.rel(x, y)
-
-
-def loss_function(model, batch, x_normalizer, y_normalizer, kl_weight=0.01):
-    """
-    Compute loss for IFNO model with clean separation of concerns
-    
-    Args:
-        model: IFNO model
-        batch: Batch of data (x, y)
-        x_normalizer: Normalizer for input data
-        y_normalizer: Normalizer for output data
-        kl_weight: Weight for KL divergence in VAE loss
-    
-    Returns:
-        Total loss
-    """
-    x, y = batch
-    batch_size = x.shape[0]
-    resolution = x.shape[1]  # Assuming square resolution
-    
-    # Forward pass
-    pred_y = model(x)
-    pred_y = pred_y.reshape(batch_size, resolution, resolution, -1)
-    
-    # Denormalize for loss computation
-    pred_y_denorm = y_normalizer.decode(pred_y.clone())
-    y_denorm = y_normalizer.decode(y.clone())
-    
-    # Forward loss
-    myloss = LpLoss(size_average=False)
-    forward_loss = (
-        myloss(pred_y_denorm[:, :, :, 0], y_denorm[:, :, :, 0])
-        + myloss(pred_y_denorm[:, :, :, 1:], y_denorm[:, :, :, 1:]) / (100 * batch_size ** 2)
+    return (
+        model,
+        optimizer,
+        checkpoint["epoch"],
+        checkpoint["loss"],
+        checkpoint["training_stage"],
     )
-    
-    # Backward pass
-    pred_x = model.inverse(y.reshape(batch_size, resolution, resolution, -1))
-    
-    # VAE loss for backward pass
-    vae_loss, _ = compute_vae_loss(
-        model, pred_x.permute(0, 3, 1, 2), x.permute(0, 3, 1, 2), 
-        x_normalizer, kl_weight
-    )
-    
-    # Grid loss for backward pass
-    x_denorm = x_normalizer.decode(x.reshape(batch_size, resolution, resolution, -1).clone())
-    grid_loss = myloss(pred_x[:, :, :, 1:], x_denorm[:, :, :, 1:]) / (100 * batch_size ** 2)
-    
-    # Reconstruction losses for consistency
-    # Forward reconstruction: check if input can be reconstructed from intermediate representations
-    x_recon = model.inverse(pred_y)
-    x_recon_denorm = x_normalizer.decode(x_recon.clone())
-    forward_recon_loss = compute_reconstruction_loss(x_recon_denorm, x_denorm)
-    
-    # Backward reconstruction: check if output can be reconstructed from intermediate representations  
-    y_recon = model(pred_x)
-    y_recon_denorm = y_normalizer.decode(y_recon.clone())
-    backward_recon_loss = compute_reconstruction_loss(y_recon_denorm, y_denorm)
-    
-    backward_loss = vae_loss + grid_loss + backward_recon_loss
-    total_loss = forward_loss + backward_loss + forward_recon_loss
-    
-    return total_loss
 
 
 def train(
     model,
     train_dataloader,
     test_dataloader,
-    optimizer_forward,
-    optimizer_backward,
-    x_normalizer,
-    y_normalizer,
+    optimizer,
+    input_function_encoder,
+    output_function_encoder,
     n_epochs,
     summary_writer,
     params,
@@ -505,28 +496,21 @@ def train(
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
-    kl_weight=0.01,
+    epochs_vae=2,
+    epochs_ifno=2,
+    lr_vae=0.0001,
+    lr_ifno=0.005,
+    lr_forward=0.0001,
 ):
     """
-    Train IFNO model with clean separation of concerns
+    Train IFNO model with three-phase training following original implementation
 
-    Args:
-        model: IFNO model
-        train_dataloader: Training data loader
-        test_dataloader: Test data loader
-        optimizer_forward: Optimizer for forward pass
-        optimizer_backward: Optimizer for backward pass
-        x_normalizer: Input data normalizer
-        y_normalizer: Output data normalizer
-        n_epochs: Number of training epochs
-        summary_writer: TensorBoard writer
-        params: Training parameters
-        model_name: Name for saving
-        resume_from_checkpoint: Whether to resume from checkpoint
-        checkpoint_dir: Directory for checkpoints
-        checkpoint_interval: Interval for saving checkpoints
-        device: Device to train on
-        kl_weight: Weight for KL divergence loss
+    Phases:
+    1. VAE pretraining
+    2. IFNO pretraining (forward + backward)
+    3. Joint training
+
+    Maintains compatibility with existing training framework
     """
     start_epoch = 0
 
@@ -534,147 +518,148 @@ def train(
     checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_checkpoint.pt")
     if resume_from_checkpoint:
         if os.path.exists(checkpoint_path):
-            model, _, start_epoch, loss = load_checkpoint(
-                model=model, path=checkpoint_path, device=device
+            model, optimizer, start_epoch, _, training_stage = load_checkpoint(
+                model=model, path=checkpoint_path, optimizer=optimizer, device=device
             )
-            print(f"Resuming training from epoch {start_epoch}...")
+            print(
+                f"Resuming training from epoch {start_epoch}, stage: {training_stage}..."
+            )
+    else:
+        # Phase 1: VAE Pretraining
+        print("Phase 1: VAE Pretraining")
+        vae_optimizer = torch.optim.AdamW(model.parameters(), lr=lr_vae)
+        vae_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            vae_optimizer, factor=0.9, patience=10, verbose=False
+        )
+
+        for epoch in range(epochs_vae):
+            model.train()
+            train_loss = 0.0
+
+            for batch in train_dataloader:
+                vae_optimizer.zero_grad()
+                loss = ifno_vae_loss(model, batch)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+                vae_optimizer.step()
+                train_loss += loss.item()
+
+            avg_loss = train_loss / len(train_dataloader)
+            vae_scheduler.step(avg_loss)
+            print(f"VAE Epoch {epoch+1}/{epochs_vae}, Loss: {avg_loss:.6f}")
+
+        # Phase 2: IFNO Pretraining
+        print("Phase 2: IFNO Pretraining")
+        ifno_optimizer = torch.optim.AdamW(model.parameters(), lr=lr_ifno)
+        ifno_scheduler = torch.optim.lr_scheduler.StepLR(
+            ifno_optimizer, step_size=100, gamma=0.5
+        )
+
+        for epoch in range(epochs_ifno):
+            model.train()
+            train_forward_loss = 0.0
+            train_backward_loss = 0.0
+
+            for batch in train_dataloader:
+                # Forward pass training
+                ifno_optimizer.zero_grad()
+                forward_loss = ifno_forward_loss(model, batch)
+                forward_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                ifno_optimizer.step()
+                train_forward_loss += forward_loss.item()
+
+                # Backward pass training
+                ifno_optimizer.zero_grad()
+                backward_loss = ifno_backward_loss(model, batch)
+                backward_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                ifno_optimizer.step()
+                train_backward_loss += backward_loss.item()
+
+            ifno_scheduler.step()
+            avg_forward_loss = train_forward_loss / len(train_dataloader)
+            avg_backward_loss = train_backward_loss / len(train_dataloader)
+            print(
+                f"IFNO Epoch {epoch+1}/{epochs_ifno}, Forward: {avg_forward_loss:.6f}, Backward: {avg_backward_loss:.6f}"
+            )
+
+    # Phase 3: Joint Training
+    print("Phase 3: Joint Training")
+    joint_optimizer = torch.optim.AdamW(model.parameters(), lr=lr_forward)
 
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()
+        epoch_loss = 0.0
 
         for batch in train_dataloader:
-            x, y = batch
-            if device is not None:
-                x, y = x.to(device), y.to(device)
-
-            batch_size = x.shape[0]
-            resolution = x.shape[1]
-
-            # Forward pass training
-            optimizer_forward.zero_grad()
-            pred_y = model(x)
-            pred_y = pred_y.reshape(batch_size, resolution, resolution, -1)
-            pred_y_denorm = y_normalizer.decode(pred_y.clone())
-            y_denorm = y_normalizer.decode(y.clone())
-
-            myloss = LpLoss(size_average=False)
-            forward_loss = (
-                myloss(pred_y_denorm[:, :, :, 0], y_denorm[:, :, :, 0])
-                + myloss(pred_y_denorm[:, :, :, 1:], y_denorm[:, :, :, 1:]) / (100 * batch_size ** 2)
-            )
-
-            forward_loss.backward()
+            joint_optimizer.zero_grad()
+            forward_loss, backward_loss = ifno_joint_loss(model, batch)
+            total_loss = forward_loss + backward_loss
+            total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
-            optimizer_forward.step()
+            joint_optimizer.step()
+            epoch_loss += total_loss.item()
 
-            # Backward pass training
-            optimizer_backward.zero_grad()
-            pred_x = model.inverse(y.reshape(batch_size, resolution, resolution, -1))
-
-            # VAE loss
-            vae_loss, _ = compute_vae_loss(
-                model, pred_x.permute(0, 3, 1, 2), x.permute(0, 3, 1, 2),
-                x_normalizer, kl_weight
-            )
-
-            # Grid loss
-            x_denorm = x_normalizer.decode(x.reshape(batch_size, resolution, resolution, -1).clone())
-            grid_loss = myloss(pred_x[:, :, :, 1:], x_denorm[:, :, :, 1:]) / (100 * batch_size ** 2)
-
-            backward_loss = vae_loss + grid_loss
-            backward_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
-            optimizer_backward.step()
+        avg_epoch_loss = epoch_loss / len(train_dataloader)
 
         # Test evaluation
         avg_test_loss = test_model(
             model=model,
             test_dataloader=test_dataloader,
-            x_normalizer=x_normalizer,
-            y_normalizer=y_normalizer,
-            kl_weight=kl_weight,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
         )
 
         # Logging
-        summary_writer.add_scalars("loss/forward", {model_name: forward_loss.item()}, epoch)
-        summary_writer.add_scalars("loss/backward", {model_name: backward_loss.item()}, epoch)
+        summary_writer.add_scalars("loss/train", {model_name: avg_epoch_loss}, epoch)
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         # Save checkpoint
         if (epoch + 1) % checkpoint_interval == 0:
-            save_checkpoint(model, optimizer_forward, epoch + 1, avg_test_loss, checkpoint_path)
+            save_checkpoint(
+                model,
+                joint_optimizer,
+                epoch + 1,
+                avg_test_loss,
+                checkpoint_path,
+                "joint",
+            )
 
         tqdm_bar.set_postfix_str(
-            f"forward_loss {forward_loss.item():.4e} backward_loss {backward_loss.item():.4e} test_loss {avg_test_loss:.4e}"
+            f"train_loss {avg_epoch_loss:.4e} test_loss {avg_test_loss:.4e}"
         )
         tqdm_bar.update(1)
 
 
-def test_model(model, test_dataloader, x_normalizer, y_normalizer, kl_weight=0.01):
-    """Test the IFNO model with clean separation"""
+def test_model(model, test_dataloader, input_function_encoder, output_function_encoder):
+    """Test the IFNO model with compatibility for main training framework"""
     model.eval()
     total_test_loss = 0.0
 
     with torch.no_grad():
         for batch in test_dataloader:
-            x, y = batch
-            batch_size = x.shape[0]
-            resolution = x.shape[1]
-
-            # Forward test
-            pred_y = model(x)
-            pred_y = pred_y.reshape(batch_size, resolution, resolution, -1)
-            pred_y_denorm = y_normalizer.decode(pred_y.clone())
-            y_denorm = y_normalizer.decode(y.clone())
-
-            myloss = LpLoss(size_average=False)
-            forward_loss = myloss(pred_y_denorm[:, :, :, 0], y_denorm[:, :, :, 0])
-
-            # Backward test
-            pred_x = model.inverse(y.reshape(batch_size, resolution, resolution, -1))
-            pred_x_vae, _, _, _ = model.vae_net.forward2(
-                pred_x[:, :, :, 0].reshape(batch_size, 1, resolution, resolution))
-
-            pred_x_final = x_normalizer.decode(
-                torch.cat(
-                    (pred_x_vae.reshape(batch_size, resolution, resolution, 1).clone(), x[:, :, :, 1:]),
-                    axis=-1,
-                )
-            )
-            x_denorm = x_normalizer.decode(x.reshape(batch_size, resolution, resolution, -1).clone())
-
-            backward_loss = myloss(pred_x_final[:, :, :, 0], x_denorm[:, :, :, 0])
-
-            total_test_loss += (forward_loss.item() + backward_loss.item()) / 2
+            forward_loss, backward_loss = ifno_joint_loss(model, batch)
+            total_loss = forward_loss + backward_loss
+            total_test_loss += total_loss.item()
 
     avg_test_loss = total_test_loss / len(test_dataloader.dataset)
     return avg_test_loss
 
 
-def evaluate(model, point, x_normalizer, y_normalizer):
-    """Evaluate model on a single data point with clean separation"""
+def evaluate(model, point, input_function_encoder, output_function_encoder):
+    """Evaluate model on a single data point
+
+    Note: input_function_encoder and output_function_encoder are unused placeholders
+    for compatibility - iFNO works directly with raw data X, u, Y, s
+    """
     model.eval()
     with torch.no_grad():
-        x, y = point
-        batch_size = x.shape[0]
-        resolution = x.shape[1]
+        X, u, Y, s = point
 
-        # Forward evaluation
-        pred_y = model(x)
-        pred_y = pred_y.reshape(batch_size, resolution, resolution, -1)
-        pred_y_denorm = y_normalizer.decode(pred_y.clone())
-
-        # Backward evaluation  
-        pred_x = model.inverse(y.reshape(batch_size, resolution, resolution, -1))
-        pred_x_vae, _, _, _ = model.vae_net.forward2(
-            pred_x[:, :, :, 0].reshape(batch_size, 1, resolution, resolution))
-
-        pred_x_final = x_normalizer.decode(
-            torch.cat(
-                (pred_x_vae.reshape(batch_size, resolution, resolution, 1).clone(), x[:, :, :, 1:]),
-                axis=-1,
-            )
-        )
-
-        return pred_y_denorm, pred_x_final
+        # Forward pass: predict s from u
+        u_input = torch.cat([X, u], dim=-1)
+        pred_s = model(u_input)
+        
+        return pred_s
