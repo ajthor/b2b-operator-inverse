@@ -256,9 +256,7 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
     with torch.no_grad():
         X, u, Y, s = point
 
-        beta = output_function_encoder.compute_coefficients(Y, s)
-        if isinstance(beta, tuple):
-            beta = beta[0]
+        beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)

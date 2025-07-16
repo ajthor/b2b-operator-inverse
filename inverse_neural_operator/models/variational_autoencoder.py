@@ -302,9 +302,7 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
     with torch.no_grad():
         X, u, Y, s = point
 
-        beta = output_function_encoder.compute_coefficients(Y, s)
-        if isinstance(beta, tuple):
-            beta = beta[0]
+        beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
         z = model.sample_prior(1, device=X.device)
         alpha_pred = model.inverse(beta, z)
