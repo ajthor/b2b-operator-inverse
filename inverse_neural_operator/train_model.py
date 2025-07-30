@@ -19,15 +19,18 @@ torch.set_float32_matmul_precision("high")
 parser = argparse.ArgumentParser()
 
 # Dataset args
-parser.add_argument("--dataset", type=str, default="wave_scattering")
+parser.add_argument("--dataset", type=str, default="burgers_1d")
 
 # Model args
-parser.add_argument("--model", type=str, default="b2b_nonlinear")
-parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
+parser.add_argument("--model", type=str, default="ifno")
+parser.add_argument("--hidden_sizes", type=int,
+                    nargs="+", default=[256, 256, 256])
 
 # DeepONet specific args
-parser.add_argument("--branch_hidden_sizes", type=int, nargs="+", default=[256, 256])
-parser.add_argument("--trunk_hidden_sizes", type=int, nargs="+", default=[256, 256])
+parser.add_argument("--branch_hidden_sizes", type=int,
+                    nargs="+", default=[256, 256])
+parser.add_argument("--trunk_hidden_sizes", type=int,
+                    nargs="+", default=[256, 256])
 parser.add_argument("--trunk_input_size", type=int, default=1)
 parser.add_argument("--output_channels", type=int, default=1)
 
@@ -38,7 +41,8 @@ parser.add_argument("--epochs", type=int, default=5000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 
 # SummaryWriter args
-parser.add_argument("--log_dir", type=str, default=None)
+parser.add_argument("--log_dir", type=str,
+                    default="/store/at46867/b2b_operator_inverse/burgers_1d/ifno/seed_1/")
 parser.add_argument("--comment", type=str, default="")
 
 # Device args
@@ -203,7 +207,8 @@ match params.model:
             hidden_sizes=params.hidden_sizes,
         ).to(device)
         # model = torch.compile(model)
-        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=params.learning_rate)
 
     case "deeponet":
         from models.deeponet import (
@@ -219,7 +224,8 @@ match params.model:
             hidden_sizes=params.hidden_sizes,
         ).to(device)
         # model = torch.compile(model)
-        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=params.learning_rate)
 
     case "variational_autoencoder":
         from models.variational_autoencoder import (
@@ -235,7 +241,8 @@ match params.model:
             latent_size=output_function_encoder_params.n_basis,
         ).to(device)
         # model = torch.compile(model)
-        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=params.learning_rate)
 
     case "invertible_network":
         from models.invertible_network import (
@@ -250,7 +257,39 @@ match params.model:
             n_coupling_layers=2,
         ).to(device)
         # model = torch.compile(model)
-        optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=params.learning_rate)
+
+    case "ifno":
+        from models.ifno import (
+            create_model,
+            train as train_model,
+            save as save_model,
+        )
+
+        # Configure iFNO using dataset info
+        model = create_model(
+            input_size=input_function_encoder_params.n_basis,
+            hidden_sizes=params.hidden_sizes,
+            n_coupling_layers=2,
+            modes1=16,
+            modes2=16,
+            width=64,
+            beta=2.0,
+            n_layers=4,
+            padding=20,
+            vae_latent_dim=24,
+            intermediate_dim=64,
+            # iFNO-specific parameters from dataset info (auto-computed in process_data.py)
+            input_spatial_dims=dataset_info["input_spatial_dims"],
+            output_spatial_dims=dataset_info["output_spatial_dims"],
+            input_function_channels=dataset_info["input_function_channels"],
+            output_function_channels=dataset_info["output_function_channels"],
+            coordinate_dim=dataset_info["coordinate_dim"],
+        ).to(device)
+        # model = torch.compile(model)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=params.learning_rate)
 
     case _:
         raise ValueError(f"Unknown model: {params.model}")

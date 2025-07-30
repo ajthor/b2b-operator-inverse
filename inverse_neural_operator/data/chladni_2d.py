@@ -68,6 +68,7 @@ class ChladniDataset(Dataset):
     def get_info(self):
         """Extract info from model dataset."""
         return {
+            # Basic info (existing)
             "X_size": self.X.shape[-1],
             "u_size": self.u.shape[-1], 
             "Y_size": self.Y.shape[-1],
@@ -76,6 +77,13 @@ class ChladniDataset(Dataset):
             "u_len": self.u.shape[0],
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
+            
+            # iFNO spatial info (hardcoded for Chladni 2D)
+            "input_spatial_dims": (25, 25),      # 25x25 grid
+            "output_spatial_dims": (25, 25),     # Same for symmetric problem
+            "input_function_channels": 1,        # Scalar force field
+            "output_function_channels": 1,       # Scalar displacement field
+            "coordinate_dim": 2,                 # 2D spatial coordinates
         }
 
 

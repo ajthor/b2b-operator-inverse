@@ -72,6 +72,7 @@ class WaveScatteringDataset(Dataset):
     def get_info(self):
         """Extract info from model dataset."""
         return {
+            # Basic info (existing)
             "X_size": self.X.shape[-1],
             "u_size": self.u.shape[-1],
             "Y_size": self.Y.shape[-1],
@@ -80,6 +81,13 @@ class WaveScatteringDataset(Dataset):
             "u_len": self.u.shape[0],
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
+            
+            # iFNO spatial info (hardcoded for Wave Scattering - asymmetric)
+            "input_spatial_dims": (200,),        # 1D angular domain  
+            "output_spatial_dims": (200, 200),   # 2D spatial domain
+            "input_function_channels": 1,        # Scalar wave parameters
+            "output_function_channels": 1,       # Scalar scattered field
+            "coordinate_dim": 2,                 # Output coordinates are 2D
         }
 
 

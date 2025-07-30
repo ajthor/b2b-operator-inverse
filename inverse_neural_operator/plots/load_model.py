@@ -147,6 +147,40 @@ def load_models(
                 model=model, path=os.path.join(log_dir, "model.pth"), device=device
             )
 
+        case "ifno":
+            from models.ifno import (
+                create_model,
+                load,
+                evaluate,
+            )
+
+            # Load dataset info for iFNO configuration
+            from data import get_data_loaders
+            dataset_info = get_data_loaders(params.dataset, 1, 1)[2]  # Get dataset info
+
+            model = create_model(
+                input_size=input_function_encoder_params.n_basis,
+                hidden_sizes=params.hidden_sizes,
+                n_coupling_layers=2,  
+                modes1=16,
+                modes2=16,
+                width=64,
+                beta=2.0,
+                n_layers=4,
+                padding=20,
+                vae_latent_dim=24,
+                intermediate_dim=64,
+                # iFNO-specific parameters from dataset info (auto-computed in process_data.py)
+                input_spatial_dims=dataset_info["input_spatial_dims"],
+                output_spatial_dims=dataset_info["output_spatial_dims"],
+                input_function_channels=dataset_info["input_function_channels"],
+                output_function_channels=dataset_info["output_function_channels"],
+                coordinate_dim=dataset_info["coordinate_dim"],
+            ).to(device)
+            model = load(
+                model=model, path=os.path.join(log_dir, "model.pth"), device=device
+            )
+
         case _:
             raise ValueError(f"Unknown model: {params.model}")
 

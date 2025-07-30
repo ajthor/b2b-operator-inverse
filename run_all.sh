@@ -4,7 +4,7 @@ set -euo pipefail
 #── CONFIGURATION ────────────────────────────────────────
 
 # List of GPUs to use
-GPUS=(0 1)
+GPUS=(4 5)
 ALL_GPUS=("${GPUS[@]}")
 if [ ${#ALL_GPUS[@]} -eq 0 ]; then
   echo "Error: No GPUs specified" >&2
@@ -18,12 +18,13 @@ LOCK_FILE=/tmp/gpu_lock_file
 STATUS_DIR=/tmp/gpu_status
 
 # Base directory for experiment logs
-LOG_BASE_DIR="/workspaces/b2b-operator-inverse/logs"
+# LOG_BASE_DIR="/workspaces/b2b-operator-inverse/logs"
+LOG_BASE_DIR="/store/at46867/b2b_operator_inverse/"
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi_flat fwi_curve chladni_2d)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
-DATASETS=(chladni_2d)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
+DATASETS=(burgers_1d)
+MODELS=(ifno)
 SEEDS=(1)   # add more seeds if you like
 
 #── INITIALIZE GPU STATUS ─────────────────────────────────

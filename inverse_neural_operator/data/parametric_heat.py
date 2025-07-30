@@ -63,6 +63,7 @@ class ParametricHeatDataset(Dataset):
     def get_info(self):
         """Extract info from model dataset."""
         return {
+            # Basic info (existing)
             "X_size": self.X.shape[-1],
             "u_size": self.u.shape[-1],
             "Y_size": self.Y.shape[-1],
@@ -71,6 +72,13 @@ class ParametricHeatDataset(Dataset):
             "u_len": self.u.shape[0],
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
+            
+            # iFNO spatial info (hardcoded for Parametric Heat)
+            "input_spatial_dims": (51, 51),      # 51x51 grid
+            "output_spatial_dims": (51, 51),     # Same for symmetric problem
+            "input_function_channels": 1,        # Scalar parameter field
+            "output_function_channels": 1,       # Scalar temperature field
+            "coordinate_dim": 2,                 # 2D spatial coordinates
         }
 
 

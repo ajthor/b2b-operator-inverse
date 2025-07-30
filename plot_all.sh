@@ -7,7 +7,7 @@ set -euo pipefail
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi_flat fwi_curve)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
 DATASETS=(burgers_1d darcy_1d)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
+MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network ifno)
 
 # Base directory for experiment logs - same as in run_all.sh
 LOG_BASE_DIR="/store/at46867"

@@ -166,6 +166,7 @@ class FWIData(Dataset):
     def get_info(self):
         """Extract info from model dataset."""
         return {
+            # Basic info (existing)
             "X_size": self.X_template.shape[-1],
             "u_size": 1,  # After reshaping
             "Y_size": self.Y_template.shape[-1],
@@ -174,6 +175,13 @@ class FWIData(Dataset):
             "u_len": 5 * 1000 * 70,  # Total flattened input size
             "Y_len": self.Y_template.shape[0],
             "s_len": 70 * 70,  # Total flattened output size
+            
+            # iFNO spatial info (hardcoded for FWI - highly asymmetric)
+            "input_spatial_dims": (5, 1000, 70),  # 3D input space (source, time, depth)
+            "output_spatial_dims": (70, 70),      # 2D output space (spatial)
+            "input_function_channels": 1,         # Scalar seismic data
+            "output_function_channels": 1,        # Scalar velocity model
+            "coordinate_dim": 3,                  # 3D input coordinates
         }
 
 

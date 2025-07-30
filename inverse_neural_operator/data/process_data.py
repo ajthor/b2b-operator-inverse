@@ -1,5 +1,6 @@
 import torch
 from torch.utils.data import DataLoader, TensorDataset, Dataset
+import math
 
 
 class ModelDataset(Dataset):
@@ -44,8 +45,9 @@ class ModelDataset(Dataset):
         return (self.X[idx], self.u[idx], self.Y[idx], self.s[idx])
 
     def get_info(self):
-        """Extract info from model dataset."""
-        return {
+        """Extract info from model dataset including spatial dimensions for iFNO."""
+        # Basic info (existing)
+        info = {
             "X_size": self.X.shape[-1],
             "u_size": self.u.shape[-1],
             "Y_size": self.Y.shape[-1],
@@ -55,6 +57,12 @@ class ModelDataset(Dataset):
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
         }
+        
+        # Note: For iFNO support, datasets should implement custom Dataset classes
+        # with hardcoded spatial dimensions in their get_info() methods
+        # This generic ModelDataset is kept for backward compatibility
+        
+        return info
 
 
 class InputFunctionEncoderDataset(Dataset):
