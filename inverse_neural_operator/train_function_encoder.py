@@ -37,8 +37,8 @@ parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
 parser.add_argument("--regularization", type=float, default=1e-3) # 1e-4 for chladni_2d
 
 # Training args
-parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=5000)
+parser.add_argument("--batch_size", type=int, default=30)
+parser.add_argument("--epochs", type=int, default=8000)
 parser.add_argument("--learning_rate", type=float, default=1e-4) # 1e-3 for chladni_2d
 
 # SummaryWriter args

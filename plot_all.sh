@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Set PYTHONPATH to project root for module imports
+export PYTHONPATH="/workspaces/b2b-operator-inverse"
+
 #── CONFIGURATION ────────────────────────────────────────
 # Same datasets and models as in run_all.sh
 

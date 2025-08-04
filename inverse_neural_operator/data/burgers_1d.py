@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 from datasets import load_dataset
 
-from data.process_data import ModelDataset
+from inverse_neural_operator.data.process_data import ModelDataset
 
 
 def load_data(params, device, split="train"):

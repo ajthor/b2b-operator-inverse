@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Set PYTHONPATH to project root for module imports
+export PYTHONPATH="/workspaces/b2b-operator-inverse"
+
 #── CONFIGURATION ────────────────────────────────────────
 
 # List of GPUs to use
@@ -22,7 +25,7 @@ LOG_BASE_DIR="/workspaces/b2b-operator-inverse/logs"
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi_flat fwi_curve chladni_2d)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
-DATASETS=(chladni_2d)
+DATASETS=(parametric_heat)
 MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
 SEEDS=(1)   # add more seeds if you like
 

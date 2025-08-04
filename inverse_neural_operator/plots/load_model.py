@@ -2,7 +2,7 @@ import os
 
 import torch
 
-from models.function_encoder import (
+from inverse_neural_operator.models.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
@@ -67,7 +67,7 @@ def load_models(
 
     match params.model:
         case "b2b_linear":
-            from models.b2b_operator_linear import (
+            from inverse_neural_operator.models.b2b_operator_linear import (
                 create_model,
                 load,
                 evaluate,
@@ -82,7 +82,7 @@ def load_models(
             )
 
         case "b2b_nonlinear":
-            from models.b2b_operator_nonlinear import (
+            from inverse_neural_operator.models.b2b_operator_nonlinear import (
                 create_model,
                 load,
                 evaluate,
@@ -98,7 +98,7 @@ def load_models(
             )
 
         case "deeponet":
-            from models.deeponet import (
+            from inverse_neural_operator.models.deeponet import (
                 create_model,
                 load,
                 evaluate,
@@ -115,7 +115,7 @@ def load_models(
             )
 
         case "variational_autoencoder":
-            from models.variational_autoencoder import (
+            from inverse_neural_operator.models.variational_autoencoder import (
                 create_model,
                 load,
                 evaluate,
@@ -132,7 +132,7 @@ def load_models(
             )
 
         case "invertible_network":
-            from models.invertible_network import (
+            from inverse_neural_operator.models.invertible_network import (
                 create_model,
                 load,
                 evaluate,

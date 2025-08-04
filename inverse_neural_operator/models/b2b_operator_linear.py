@@ -154,7 +154,7 @@ def train(
     SXY = torch.zeros((n, m), device=device)
 
     with torch.no_grad():
-        tqdm_bar = tqdm.tqdm(len(train_dataloader))
+        tqdm_bar = tqdm.tqdm(range(len(train_dataloader)))
         for batch in train_dataloader:
 
             # Compute the alpha and beta coefficients
@@ -173,8 +173,10 @@ def train(
 
             tqdm_bar.update(1)
 
-        # Add small regularization term to SXX
-        SXX += 1e-6 * torch.eye(n, device=device)
+        # Add regularization term to SXX to handle ill-conditioned problems
+        # For chladni_2d, we need stronger regularization due to low correlation between α and β
+        regularization = 1e-2  # Increased from 1e-6 for better numerical stability
+        SXX += regularization * torch.eye(n, device=device)
 
         # Compute the linear operator
         W = torch.linalg.solve(SXX, SXY)

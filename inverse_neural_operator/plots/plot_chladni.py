@@ -43,6 +43,8 @@ parser.add_argument("--all-models", action="store_true",
                    help="Plot results for all available trained models")
 parser.add_argument("--n-samples", type=int, default=4,
                    help="Number of test samples to plot per model (default: 4)")
+parser.add_argument("--eval-encoders", action="store_true", 
+                   help="Evaluate and plot function encoder reconstruction performance")
 
 args = parser.parse_args()
 
@@ -64,7 +66,174 @@ def get_evaluate_function(model_name):
             raise ValueError(f"Unknown model: {model_name}")
     return evaluate
 
-def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=4):
+def plot_function_encoder_results(model_name, log_dir, results_dir, test_dataset, dataset_info, test_indices):
+    """Evaluate and plot function encoder reconstruction performance."""
+    print(f"\n🔍 Evaluating Function Encoders for: {model_name}")
+    
+    model_log_dir = os.path.join(log_dir, args.dataset, model_name, "seed_1")
+    
+    # Check if model exists
+    if not os.path.exists(os.path.join(model_log_dir, "params.pth")):
+        print(f"  ⚠️  Model {model_name} not found or incomplete training")
+        return None
+    
+    # Load model parameters and models
+    params = torch.load(f"{model_log_dir}/params.pth", weights_only=False)
+    input_function_encoder, output_function_encoder, model = load_models(
+        log_dir=model_log_dir,
+        dataset_info=dataset_info,
+        params=params,
+        device=device,
+    )
+    
+    # Ensure all models are in evaluation mode
+    input_function_encoder.eval()
+    output_function_encoder.eval()
+    
+    # Create encoder-specific results directory
+    encoder_results_dir = os.path.join(results_dir, f"{model_name}_function_encoders")
+    os.makedirs(encoder_results_dir, exist_ok=True)
+    
+    # Use the provided test indices (same for all models)
+    # Calculate reconstruction errors
+    input_encoder_errors = []
+    output_encoder_errors = []
+    
+    for i, idx in enumerate(test_indices):
+        # Set random seed for consistent results
+        torch.manual_seed(42 + i)
+        
+        # Get the test sample
+        sample = test_dataset[idx]
+        X, u_true, Y, s_true = sample
+        
+        # Ensure all tensors are on the correct device
+        X = X.to(device)
+        u_true = u_true.to(device)
+        Y = Y.to(device)
+        s_true = s_true.to(device)
+        
+        # Validate data
+        if torch.isnan(u_true).any() or torch.isnan(s_true).any():
+            print(f"  ⚠️  Warning: NaN values detected in sample {i+1}")
+            continue
+        
+        # Evaluate input function encoder (forces reconstruction)
+        with torch.no_grad():
+            # Encode to coefficients and decode back
+            alpha = input_function_encoder.compute_coefficients(X.unsqueeze(0), u_true.unsqueeze(0))
+            if isinstance(alpha, tuple):
+                alpha = alpha[0]
+            u_reconstructed = input_function_encoder(X.unsqueeze(0), alpha).squeeze(0)
+            
+            # Calculate reconstruction MSE
+            input_mse = torch.mean((u_true - u_reconstructed)**2).item()
+            if not (math.isnan(input_mse) or math.isinf(input_mse)):
+                input_encoder_errors.append(input_mse)
+        
+        # Evaluate output function encoder (displacements reconstruction)
+        with torch.no_grad():
+            # Encode to coefficients and decode back
+            beta = output_function_encoder.compute_coefficients(Y.unsqueeze(0), s_true.unsqueeze(0))
+            if isinstance(beta, tuple):
+                beta = beta[0]
+            s_reconstructed = output_function_encoder(Y.unsqueeze(0), beta).squeeze(0)
+            
+            # Calculate reconstruction MSE
+            output_mse = torch.mean((s_true - s_reconstructed)**2).item()
+            if not (math.isnan(output_mse) or math.isinf(output_mse)):
+                output_encoder_errors.append(output_mse)
+        
+        # Convert to numpy for plotting
+        u_true_np = u_true.squeeze(-1).cpu().numpy()
+        u_reconstructed_np = u_reconstructed.squeeze(-1).cpu().numpy()
+        s_true_np = s_true.squeeze(-1).cpu().numpy()
+        s_reconstructed_np = s_reconstructed.squeeze(-1).cpu().numpy()
+        X_np = X.squeeze(-1).cpu().numpy()
+        
+        # Infer grid size and reshape
+        grid_size = int(np.sqrt(len(X_np)))
+        u_true_2d = u_true_np.reshape(grid_size, grid_size)
+        u_reconstructed_2d = u_reconstructed_np.reshape(grid_size, grid_size)
+        s_true_2d = s_true_np.reshape(grid_size, grid_size)
+        s_reconstructed_2d = s_reconstructed_np.reshape(grid_size, grid_size)
+        x_coords = X_np[:, 0].reshape(grid_size, grid_size)
+        y_coords = X_np[:, 1].reshape(grid_size, grid_size)
+        
+        # Create figure with 4 subplots: Original vs Reconstructed for both input and output
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12), facecolor='white')
+        fig.suptitle(f'Function Encoder Evaluation: {model_name} - Sample {idx} (#{i+1})', fontsize=16, fontweight='bold')
+        
+        # Input Forces: Original vs Reconstructed
+        ax1 = axes[0, 0]
+        ax1.set_facecolor('white')
+        contour1 = ax1.contourf(x_coords, y_coords, u_true_2d, levels=50, cmap='viridis')
+        ax1.set_xlabel('X axis', fontsize=12)
+        ax1.set_ylabel('Y axis', fontsize=12)
+        ax1.set_title('Original Forces\n(True Input)', fontsize=14, fontweight='bold')
+        ax1.grid(True, alpha=0.3)
+        cbar1 = plt.colorbar(contour1, ax=ax1)
+        cbar1.set_label('Force Amplitude', rotation=270, labelpad=20, fontsize=12)
+        
+        ax2 = axes[0, 1]
+        ax2.set_facecolor('white')
+        contour2 = ax2.contourf(x_coords, y_coords, u_reconstructed_2d, levels=50, cmap='viridis')
+        ax2.set_xlabel('X axis', fontsize=12)
+        ax2.set_ylabel('Y axis', fontsize=12)
+        ax2.set_title('Reconstructed Forces\n(Input Encoder)', fontsize=14, fontweight='bold')
+        ax2.grid(True, alpha=0.3)
+        cbar2 = plt.colorbar(contour2, ax=ax2)
+        cbar2.set_label('Force Amplitude', rotation=270, labelpad=20, fontsize=12)
+        ax2.text(0.02, 0.98, f'MSE: {input_mse:.6f}', transform=ax2.transAxes, fontsize=12,
+                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        # Output Displacements: Original vs Reconstructed
+        ax3 = axes[1, 0]
+        ax3.set_facecolor('white')
+        contour3 = ax3.contourf(x_coords, y_coords, s_true_2d, levels=50, cmap='plasma')
+        ax3.set_xlabel('X axis', fontsize=12)
+        ax3.set_ylabel('Y axis', fontsize=12)
+        ax3.set_title('Original Displacements\n(True Output)', fontsize=14, fontweight='bold')
+        ax3.grid(True, alpha=0.3)
+        cbar3 = plt.colorbar(contour3, ax=ax3)
+        cbar3.set_label('Displacement Amplitude', rotation=270, labelpad=20, fontsize=12)
+        
+        ax4 = axes[1, 1]
+        ax4.set_facecolor('white')
+        contour4 = ax4.contourf(x_coords, y_coords, s_reconstructed_2d, levels=50, cmap='plasma')
+        ax4.set_xlabel('X axis', fontsize=12)
+        ax4.set_ylabel('Y axis', fontsize=12)
+        ax4.set_title('Reconstructed Displacements\n(Output Encoder)', fontsize=14, fontweight='bold')
+        ax4.grid(True, alpha=0.3)
+        cbar4 = plt.colorbar(contour4, ax=ax4)
+        cbar4.set_label('Displacement Amplitude', rotation=270, labelpad=20, fontsize=12)
+        ax4.text(0.02, 0.98, f'MSE: {output_mse:.6f}', transform=ax4.transAxes, fontsize=12,
+                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        plt.tight_layout()
+        
+        # Save the plot
+        output_file = os.path.join(encoder_results_dir, f"function_encoders_sample_{idx}_{model_name}.png")
+        plt.savefig(output_file, facecolor='white', dpi=150, bbox_inches='tight')
+        print(f"  📊 Saved encoder evaluation plot: {output_file}")
+        
+        plt.close(fig)
+    
+    # Calculate average reconstruction errors
+    avg_input_mse = np.mean(input_encoder_errors) if input_encoder_errors else float('inf')
+    avg_output_mse = np.mean(output_encoder_errors) if output_encoder_errors else float('inf')
+    
+    print(f"  ✅ Function Encoder Evaluation Complete:")
+    print(f"    📊 Input Encoder (Forces) - Average MSE: {avg_input_mse:.6f}")
+    print(f"    📊 Output Encoder (Displacements) - Average MSE: {avg_output_mse:.6f}")
+    
+    return {
+        'input_mse': avg_input_mse,
+        'output_mse': avg_output_mse,
+        'results_dir': encoder_results_dir
+    }
+
+def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_info, test_indices):
     """Plot results for a single model."""
     print(f"\n📈 Plotting results for: {model_name}")
     
@@ -93,10 +262,7 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
     model_results_dir = os.path.join(results_dir, model_name)
     os.makedirs(model_results_dir, exist_ok=True)
     
-    # Get test samples for plotting
-    n_samples = min(n_samples, len(test_dataset))
-    test_indices = np.random.choice(len(test_dataset), n_samples, replace=False)
-    
+    # Use the provided test indices (same for all models)
     # Get the appropriate evaluate function
     evaluate = get_evaluate_function(model_name)
     
@@ -163,7 +329,7 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
         
         # Create figure with 2 subplots: Ground Truth Forces vs Predicted Forces
         fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor='white')
-        fig.suptitle(f'Chladni 2D: {model_name} - Sample {i+1}', fontsize=16, fontweight='bold')
+        fig.suptitle(f'Chladni 2D: {model_name} - Sample {idx} (#{i+1})', fontsize=16, fontweight='bold')
         
         # Plot 1: Ground Truth Forces (what we want to predict)
         ax1 = axes[0]
@@ -194,7 +360,7 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
         plt.tight_layout()
         
         # Save the plot
-        output_file = os.path.join(model_results_dir, f"chladni_2d_sample_{i+1}_{model_name}.png")
+        output_file = os.path.join(model_results_dir, f"chladni_2d_sample_{idx}_{model_name}.png")
         plt.savefig(output_file, facecolor='white', dpi=150, bbox_inches='tight')
         print(f"  📊 Saved plot: {output_file}")
         
@@ -278,18 +444,36 @@ def main():
     
     test_dataset, dataset_info = load_dataset(temp_params, device)
     
+    # Select test samples once - all models will use the same samples for fair comparison
+    n_samples = min(args.n_samples, len(test_dataset))
+    np.random.seed(42)  # Fixed seed for reproducible sample selection
+    test_indices = np.random.choice(len(test_dataset), n_samples, replace=False)
+    print(f"📊 Selected test samples: {test_indices.tolist()}")
+    
     # Plot results for each model
     comparison_results = {}
+    encoder_results = {}
     
     for model_name in models_to_plot:
         try:
+            # Plot regular model results
             result = plot_model_results(
                 model_name, args.log_dir, args.results_dir, 
-                test_dataset, dataset_info, args.n_samples
+                test_dataset, dataset_info, test_indices
             )
             if result is not None:
                 avg_mse, model_results_dir = result
                 comparison_results[model_name] = avg_mse
+            
+            # Plot function encoder results if requested
+            if args.eval_encoders:
+                encoder_result = plot_function_encoder_results(
+                    model_name, args.log_dir, args.results_dir,
+                    test_dataset, dataset_info, test_indices
+                )
+                if encoder_result is not None:
+                    encoder_results[model_name] = encoder_result
+                    
         except Exception as e:
             print(f"  ❌ Failed to plot {model_name}: {e}")
     
@@ -307,6 +491,17 @@ def main():
         sorted_results = sorted(comparison_results.items(), key=lambda x: x[1])
         for i, (model, mse) in enumerate(sorted_results, 1):
             print(f"  {i}. {model}: {mse:.6f}")
+    
+    if encoder_results:
+        print(f"\n🔍 Function Encoder Performance Summary:")
+        # Since all models use the same function encoders and same test samples,
+        # the reconstruction performance should be identical
+        if len(encoder_results) > 1:
+            print("  (Note: All models use the same function encoders, so performance should be identical)")
+        for model_name, results in encoder_results.items():
+            print(f"  {model_name}:")
+            print(f"    Input Encoder (Forces): {results['input_mse']:.6f}")
+            print(f"    Output Encoder (Displacements): {results['output_mse']:.6f}")
 
 if __name__ == "__main__":
-    main()
+    main() 

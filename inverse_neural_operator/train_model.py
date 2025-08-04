@@ -54,14 +54,21 @@ parser.add_argument("--resume", type=bool, default=False)
 
 params = parser.parse_args()
 
-# If the dataset is wave_scattering, limit the batch size to 5.
-if params.dataset == "wave_scattering":
+# Limit batch sizes for memory-intensive datasets
+if params.dataset in ["wave_scattering", "fwi_flat", "fwi_curve"]:
     if params.batch_size > 5:
         print(
-            f"Batch size {params.batch_size} is too large for the wave_scattering dataset. "
+            f"Batch size {params.batch_size} is too large for the dataset. "
             "Setting batch size to 5."
         )
         params.batch_size = 5
+elif params.dataset == "parametric_heat":
+    if params.batch_size > 1:
+        print(
+            f"Batch size {params.batch_size} is too large for the parametric_heat dataset. "
+            "Setting batch size to 1."
+        )
+        params.batch_size = 1
 
 if params.device is None:
     if torch.cuda.is_available():
@@ -134,6 +141,7 @@ input_function_encoder = create_function_encoder(
     hidden_sizes=input_function_encoder_params.hidden_sizes,
     output_size=dataset_info["u_size"],
     n_basis=input_function_encoder_params.n_basis,
+    regularization=input_function_encoder_params.regularization,
     inner_product=(
         memory_efficient_inner_product
         if params.dataset in ["fwi_flat", "fwi_curve"]
@@ -158,6 +166,7 @@ output_function_encoder = create_function_encoder(
     hidden_sizes=output_function_encoder_params.hidden_sizes,
     output_size=dataset_info["s_size"],
     n_basis=output_function_encoder_params.n_basis,
+    regularization=output_function_encoder_params.regularization,
     inner_product=(
         memory_efficient_inner_product
         if params.dataset in ["fwi_flat", "fwi_curve"]

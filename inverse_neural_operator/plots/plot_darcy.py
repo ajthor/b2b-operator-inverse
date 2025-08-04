@@ -90,18 +90,18 @@ def plot_darcy_sample(model, evaluate_fn, input_function_encoder, output_functio
         
         # Plot 1: Observed output function (what we can measure)
         axes[0].plot(x_coords, s_np, 'g-', label='Observed Output Function')
-        axes[0].set_title('Observed Output Function s(x)')
+        axes[0].set_title('Observed Output Function u(x)')
         axes[0].set_xlabel('x')
-        axes[0].set_ylabel('s(x)')
+        axes[0].set_ylabel('u(x)')
         axes[0].legend()
         axes[0].grid(True)
         
         # Plot 2: Input function comparison (what we want to predict)
         axes[1].plot(x_coords, u_true_np, 'b-', label='True Input', alpha=0.7)
         axes[1].plot(x_coords, u_pred_np, 'r--', label='Predicted Input', alpha=0.7)
-        axes[1].set_title('Input Function: True vs Predicted u(x)')
+        axes[1].set_title('Input Function: True vs Predicted f(x)')
         axes[1].set_xlabel('x')
-        axes[1].set_ylabel('u(x)')
+        axes[1].set_ylabel('f(x)')
         axes[1].legend()
         axes[1].grid(True)
         
@@ -123,14 +123,14 @@ def plot_darcy_sample(model, evaluate_fn, input_function_encoder, output_functio
         
         # Plot 1: Observed output function
         im1 = axes[0].imshow(s_2d, cmap='viridis', extent=extent, origin='lower')
-        axes[0].set_title('Observed Output Function s(x,y)', fontsize=12)
+        axes[0].set_title('Observed Output Function u(x,y)', fontsize=12)
         axes[0].set_xlabel('x')
         axes[0].set_ylabel('y')
         plt.colorbar(im1, ax=axes[0], fraction=0.046)
         
         # Plot 2: Absolute error for input function prediction
         im2 = axes[1].imshow(error_2d, cmap='Reds', extent=extent, origin='lower')
-        axes[1].set_title('Input Prediction Error |u_pred - u_true|', fontsize=12)
+        axes[1].set_title('Input Prediction Error |f_pred - f_true|', fontsize=12)
         axes[1].set_xlabel('x')
         axes[1].set_ylabel('y')
         plt.colorbar(im2, ax=axes[1], fraction=0.046)

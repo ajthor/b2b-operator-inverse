@@ -3,32 +3,37 @@ def load_dataset(params, device):
 
     match params.dataset:
         case "burgers_1d":
-            from data.burgers_1d import (
+            from inverse_neural_operator.data.burgers_1d import (
                 load_data,
             )
 
         case "darcy_1d":
-            from data.darcy_1d import (
+            from inverse_neural_operator.data.darcy_1d import (
                 load_data,
             )
 
         case "parametric_heat":
-            from data.parametric_heat import (
+            from inverse_neural_operator.data.parametric_heat import (
                 load_data,
             )
 
         case "wave_scattering":
-            from data.wave_scattering import (
+            from inverse_neural_operator.data.wave_scattering import (
+                load_data,
+            )
+
+        case "chladni_2d":
+            from inverse_neural_operator.data.chladni_2d import (
                 load_data,
             )
 
         case "fwi_flat":
-            from data.fwi_data import (
+            from inverse_neural_operator.data.fwi_data import (
                 load_data,
             )
 
         case "fwi_curve":
-            from data.fwi_data import (
+            from inverse_neural_operator.data.fwi_data import (
                 load_data,
             )
 
