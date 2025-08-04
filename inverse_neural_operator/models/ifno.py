@@ -9,6 +9,38 @@ import warnings
 from neuralop.layers.fno_block import FNOBlocks
 
 
+# Simple 1D Fourier Layer for IFNO compatibility
+class SimpleFourierLayer1D(nn.Module):
+    def __init__(self, in_channels, out_channels, modes):
+        super(SimpleFourierLayer1D, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.modes = modes
+        
+        # Complex weights for Fourier modes
+        self.scale = (1 / (in_channels * out_channels))
+        self.weights = nn.Parameter(self.scale * torch.rand(in_channels, out_channels, self.modes, dtype=torch.cfloat))
+        
+    def forward(self, x):
+        # x: (batch, channels, length)
+        batch_size = x.shape[0]
+        
+        # Fourier transform
+        x_ft = torch.fft.rfft(x, dim=-1)
+        
+        # Extract relevant modes
+        out_ft = torch.zeros(batch_size, self.out_channels, x_ft.size(-1), 
+                           dtype=torch.cfloat, device=x.device)
+        
+        # Multiply relevant modes  
+        out_ft[:, :, :self.modes] = torch.einsum("bix,iox->box", x_ft[:, :, :self.modes], self.weights)
+        
+        # Inverse Fourier transform
+        x = torch.fft.irfft(out_ft, n=x.shape[-1], dim=-1)
+        
+        return x
+
+
 # Utility classes for faithful iFNO implementation
 def relative_l2_loss(x, y):
     """Simple relative L2 loss helper function"""
@@ -153,6 +185,17 @@ class VAE1D(nn.Module):
         result = result.view(-1, 512, self.reduced_length)
         result = self.decoder(result)
         result = self.final_layer(result)
+        
+        # Adjust output size to match input length
+        if result.shape[-1] != self.input_length:
+            if result.shape[-1] > self.input_length:
+                # Crop if output is too long
+                result = result[:, :, :self.input_length]
+            else:
+                # Pad if output is too short  
+                pad_size = self.input_length - result.shape[-1]
+                result = F.pad(result, (0, pad_size))
+        
         return result
 
     def reparameterize(self, mu, logvar):
@@ -252,6 +295,24 @@ class VAE2D(nn.Module):
         result = result.view(-1, 512, self.decoder_h, self.decoder_w)
         result = self.decoder(result)
         result = self.final_layer(result)
+        
+        # Adjust output size to match input dimensions
+        target_h, target_w = self.input_size
+        current_h, current_w = result.shape[-2:]
+        
+        if current_h != target_h or current_w != target_w:
+            if current_h > target_h:
+                result = result[:, :, :target_h, :]
+            elif current_h < target_h:
+                pad_h = target_h - current_h
+                result = F.pad(result, (0, 0, 0, pad_h))
+                
+            if current_w > target_w:
+                result = result[:, :, :, :target_w]
+            elif current_w < target_w:
+                pad_w = target_w - current_w
+                result = F.pad(result, (0, pad_w, 0, 0))
+        
         return result
 
     def reparameterize(self, mu, logvar):
@@ -352,6 +413,30 @@ class VAE3D(nn.Module):
         result = result.view(-1, 512, self.decoder_d, self.decoder_h, self.decoder_w)
         result = self.decoder(result)
         result = self.final_layer(result)
+        
+        # Adjust output size to match input dimensions
+        target_d, target_h, target_w = self.input_size
+        current_d, current_h, current_w = result.shape[-3:]
+        
+        if current_d != target_d or current_h != target_h or current_w != target_w:
+            if current_d > target_d:
+                result = result[:, :, :target_d, :, :]
+            elif current_d < target_d:
+                pad_d = target_d - current_d
+                result = F.pad(result, (0, 0, 0, 0, 0, pad_d))
+                
+            if current_h > target_h:
+                result = result[:, :, :, :target_h, :]
+            elif current_h < target_h:
+                pad_h = target_h - current_h
+                result = F.pad(result, (0, 0, 0, pad_h, 0, 0))
+                
+            if current_w > target_w:
+                result = result[:, :, :, :, :target_w]
+            elif current_w < target_w:
+                pad_w = target_w - current_w
+                result = F.pad(result, (0, pad_w, 0, 0, 0, 0))
+        
         return result
 
     def reparameterize(self, mu, logvar):
@@ -465,10 +550,24 @@ class IFNO(nn.Module):
         self.ws = nn.ModuleList()
 
         for _ in range(2 * self.n_layers):
-            self.convs.append(
-                FNOBlocks(self.half_width, self.half_width,
-                          (self.modes1, self.modes2))
-            )
+            # Use dimension-adaptive FNO blocks
+            if coordinate_dim == 1:
+                self.convs.append(
+                    SimpleFourierLayer1D(self.half_width, self.half_width, self.modes1)
+                )
+            elif coordinate_dim == 2:
+                self.convs.append(
+                    FNOBlocks(self.half_width, self.half_width,
+                              (self.modes1, self.modes2))
+                )
+            elif coordinate_dim == 3:
+                # For 3D, we might need a different approach, but let's use 2D for now
+                self.convs.append(
+                    FNOBlocks(self.half_width, self.half_width,
+                              (self.modes1, self.modes2))
+                )
+            else:
+                raise ValueError(f"Unsupported coordinate dimension: {coordinate_dim}")
             self.mlps.append(
                 self.MLP(self.half_width, self.half_width, self.half_width))
             # Use appropriate conv layer for dimension
@@ -620,27 +719,67 @@ class IFNO(nn.Module):
             
             reconstruction_loss = 0.0
 
-        # Split for coupling layers
-        u1 = x[:, :awidth, :, :]
-        u2 = x[:, awidth:, :, :]
+        # Split for coupling layers (dimension-adaptive)
+        if self.coordinate_dim == 1:
+            u1 = x[:, :awidth, :]
+            u2 = x[:, awidth:, :]
+        elif self.coordinate_dim == 2:
+            u1 = x[:, :awidth, :, :]
+            u2 = x[:, awidth:, :, :]
+        elif self.coordinate_dim == 3:
+            u1 = x[:, :awidth, :, :, :]
+            u2 = x[:, awidth:, :, :, :]
 
-        # Coupling layers
+        # Coupling layers (dimension-adaptive)
         for i in range(self.n_layers):
-            u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
+            # Dimension-adaptive padding
+            if self.coordinate_dim == 1:
+                u2_pad = F.pad(u2, [0, self.padding])
+            elif self.coordinate_dim == 2:
+                u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
+            elif self.coordinate_dim == 3:
+                u2_pad = F.pad(u2, [0, self.padding, 0, self.padding, 0, self.padding])
+                
             x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
             x2 = self.ws[2 * i](u2_pad)
             s2 = F.gelu(x1 + x2)
-            s2 = s2[..., : (s2.size(-2) - self.padding),
-                    : (s2.size(-1) - self.padding)]
+            
+            # Dimension-adaptive cropping
+            if self.coordinate_dim == 1:
+                s2 = s2[..., : (s2.size(-1) - self.padding)]
+            elif self.coordinate_dim == 2:
+                s2 = s2[..., : (s2.size(-2) - self.padding),
+                        : (s2.size(-1) - self.padding)]
+            elif self.coordinate_dim == 3:
+                s2 = s2[..., : (s2.size(-3) - self.padding),
+                        : (s2.size(-2) - self.padding),
+                        : (s2.size(-1) - self.padding)]
 
             v1 = u1 * self._softplus(s2)
 
-            v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
+            # Dimension-adaptive padding for v1
+            if self.coordinate_dim == 1:
+                v1_pad = F.pad(v1, [0, self.padding])
+            elif self.coordinate_dim == 2:
+                v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
+            elif self.coordinate_dim == 3:
+                v1_pad = F.pad(v1, [0, self.padding, 0, self.padding, 0, self.padding])
+                
             x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
             x2 = self.ws[2 * i + 1](v1_pad)
             s1 = F.gelu(x1 + x2)
-            s1 = s1[..., : (s1.size(-2) - self.padding),
-                    : (s1.size(-1) - self.padding)]
+            
+            # Dimension-adaptive cropping for s1
+            if self.coordinate_dim == 1:
+                s1 = s1[..., : (s1.size(-1) - self.padding)]
+            elif self.coordinate_dim == 2:
+                s1 = s1[..., : (s1.size(-2) - self.padding),
+                        : (s1.size(-1) - self.padding)]
+            elif self.coordinate_dim == 3:
+                s1 = s1[..., : (s1.size(-3) - self.padding),
+                        : (s1.size(-2) - self.padding),
+                        : (s1.size(-1) - self.padding)]
+                        
             v2 = u2 * self._softplus(s1)
 
             u1 = v1
@@ -721,26 +860,67 @@ class IFNO(nn.Module):
                 
             reconstruction_loss = 0.0
 
-        # Split for inverse coupling layers
-        v1 = v[:, :awidth, :, :]
-        v2 = v[:, awidth:, :, :]
+        # Split for inverse coupling layers (dimension-adaptive)
+        if self.coordinate_dim == 1:
+            v1 = v[:, :awidth, :]
+            v2 = v[:, awidth:, :]
+        elif self.coordinate_dim == 2:
+            v1 = v[:, :awidth, :, :]
+            v2 = v[:, awidth:, :, :]
+        elif self.coordinate_dim == 3:
+            v1 = v[:, :awidth, :, :, :]
+            v2 = v[:, awidth:, :, :, :]
 
-        # Inverse coupling layers (reverse order)
+        # Inverse coupling layers (reverse order, dimension-adaptive)
         for i in range(self.n_layers - 1, -1, -1):
-            v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
+            # Dimension-adaptive padding for v1
+            if self.coordinate_dim == 1:
+                v1_pad = F.pad(v1, [0, self.padding])
+            elif self.coordinate_dim == 2:
+                v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
+            elif self.coordinate_dim == 3:
+                v1_pad = F.pad(v1, [0, self.padding, 0, self.padding, 0, self.padding])
+                
             x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
             x2 = self.ws[2 * i + 1](v1_pad)
             s1 = F.gelu(x1 + x2)
-            s1 = s1[..., : (s1.size(-2) - self.padding),
-                    : (s1.size(-1) - self.padding)]
+            
+            # Dimension-adaptive cropping for s1
+            if self.coordinate_dim == 1:
+                s1 = s1[..., : (s1.size(-1) - self.padding)]
+            elif self.coordinate_dim == 2:
+                s1 = s1[..., : (s1.size(-2) - self.padding),
+                        : (s1.size(-1) - self.padding)]
+            elif self.coordinate_dim == 3:
+                s1 = s1[..., : (s1.size(-3) - self.padding),
+                        : (s1.size(-2) - self.padding),
+                        : (s1.size(-1) - self.padding)]
+                        
             u2 = v2 * self._softplus(s1) ** (-1)
 
-            u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
+            # Dimension-adaptive padding for u2
+            if self.coordinate_dim == 1:
+                u2_pad = F.pad(u2, [0, self.padding])
+            elif self.coordinate_dim == 2:
+                u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
+            elif self.coordinate_dim == 3:
+                u2_pad = F.pad(u2, [0, self.padding, 0, self.padding, 0, self.padding])
+                
             x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
             x2 = self.ws[2 * i](u2_pad)
             s2 = F.gelu(x1 + x2)
-            s2 = s2[..., : (s2.size(-2) - self.padding),
-                    : (s2.size(-1) - self.padding)]
+            
+            # Dimension-adaptive cropping for s2
+            if self.coordinate_dim == 1:
+                s2 = s2[..., : (s2.size(-1) - self.padding)]
+            elif self.coordinate_dim == 2:
+                s2 = s2[..., : (s2.size(-2) - self.padding),
+                        : (s2.size(-1) - self.padding)]
+            elif self.coordinate_dim == 3:
+                s2 = s2[..., : (s2.size(-3) - self.padding),
+                        : (s2.size(-2) - self.padding),
+                        : (s2.size(-1) - self.padding)]
+                        
             u1 = v1 * self._softplus(s2) ** (-1)
 
             v1 = u1
@@ -887,8 +1067,21 @@ def ifno_forward_loss(model, batch):
     # Combine spatial coordinates with function values
     u_input = torch.cat([X, u], dim=-1)
 
-    pred_s = model(u_input)
-    return relative_l2_loss(pred_s, s)
+    result = model(u_input)
+    # Handle both symmetric (returns tuple) and asymmetric (returns tensor) cases
+    if isinstance(result, tuple):
+        pred_s, reconstruction_loss = result
+    else:
+        pred_s = result
+        reconstruction_loss = 0.0
+    
+    # Extract function values only (last channel) to match target s
+    if pred_s.shape[-1] > s.shape[-1]:
+        pred_s_func = pred_s[..., -s.shape[-1]:]  # Take last channels (function values)
+    else:
+        pred_s_func = pred_s
+        
+    return relative_l2_loss(pred_s_func, s) + reconstruction_loss
 
 
 def ifno_backward_loss(model, batch):
@@ -899,8 +1092,21 @@ def ifno_backward_loss(model, batch):
     # Combine spatial coordinates with function values
     s_input = torch.cat([Y, s], dim=-1)
 
-    pred_u = model.inverse(s_input)
-    return relative_l2_loss(pred_u, u)
+    result = model.inverse(s_input)
+    # Handle both symmetric (returns tuple) and asymmetric (returns tensor) cases
+    if isinstance(result, tuple):
+        pred_u, reconstruction_loss = result
+    else:
+        pred_u = result
+        reconstruction_loss = 0.0
+    
+    # Extract function values only (last channel) to match target u
+    if pred_u.shape[-1] > u.shape[-1]:
+        pred_u_func = pred_u[..., -u.shape[-1]:]  # Take last channels (function values)
+    else:
+        pred_u_func = pred_u
+        
+    return relative_l2_loss(pred_u_func, u) + reconstruction_loss
 
 
 def ifno_joint_loss(model, batch, grid_loss_weight=0.01):
@@ -1128,8 +1334,25 @@ def train(
             # Forward pass training
             forward_optimizer.zero_grad()
             u_input = torch.cat([X, u], dim=-1)
-            pred_s = model(u_input)
-            forward_loss = relative_l2_loss(pred_s, s)
+            result = model(u_input)
+            
+            # Handle tuple return for symmetric models
+            if isinstance(result, tuple):
+                pred_s, reconstruction_loss = result
+                # Extract function values only to match target s
+                if pred_s.shape[-1] > s.shape[-1]:
+                    pred_s_func = pred_s[..., -s.shape[-1]:]
+                else:
+                    pred_s_func = pred_s
+                forward_loss = relative_l2_loss(pred_s_func, s) + reconstruction_loss
+            else:
+                pred_s = result
+                # Extract function values only to match target s
+                if pred_s.shape[-1] > s.shape[-1]:
+                    pred_s_func = pred_s[..., -s.shape[-1]:]
+                else:
+                    pred_s_func = pred_s
+                forward_loss = relative_l2_loss(pred_s_func, s)
             forward_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
             forward_optimizer.step()
@@ -1138,19 +1361,24 @@ def train(
             # Backward pass training with VAE integration (like provided implementation)
             backward_optimizer.zero_grad()
             s_input = torch.cat([Y, s], dim=-1)
-            pred_u = model.inverse(s_input)
+            result = model.inverse(s_input)
+            
+            # Handle tuple return for symmetric models
+            if isinstance(result, tuple):
+                pred_u, _ = result
+            else:
+                pred_u = result
 
             # VAE training loss computation (dimension-adaptive)
             # Extract function values and reshape for VAE
-            if len(pred_u.shape) == 4 and pred_u.shape[-1] > 1:
-                pred_u_values = pred_u[:, :, :, 0:1]  # Function values only
+            if pred_u.shape[-1] > u.shape[-1]:
+                # pred_u contains both coordinates and function values, extract only function values
+                pred_u_values = pred_u[..., -u.shape[-1]:]  # Take last channels (function values)
             else:
                 pred_u_values = pred_u
                 
-            if len(u.shape) == 4 and u.shape[-1] > 1:
-                u_values = u[:, :, :, 0:1]  # Function values only
-            else:
-                u_values = u
+            # u should already contain only function values
+            u_values = u
                 
             # Use dimension-adaptive VAE input reshaping
             pred_u_for_vae = model._get_vae_input_shape(pred_u_values)
@@ -1169,10 +1397,17 @@ def train(
                 u_for_vae.reshape(batch_size, -1)
             )
 
-            # Grid coordinate loss (like provided implementation)
-            if pred_u.shape[-1] > 1:
-                grid_loss = relative_l2_loss(
-                    pred_u[:, :, :, 1:], u[:, :, :, 1:]) / (100 * batch_size**2)
+            # Grid coordinate loss (dimension-adaptive)
+            if pred_u.shape[-1] > u.shape[-1]:
+                # Only compute grid loss if pred_u has more channels (i.e., includes coordinates)
+                if len(pred_u.shape) == 3:  # 1D case
+                    grid_loss = relative_l2_loss(
+                        pred_u[:, :, :-u.shape[-1]], X) / (100 * batch_size**2)
+                elif len(pred_u.shape) == 4:  # 2D case  
+                    grid_loss = relative_l2_loss(
+                        pred_u[:, :, :, :-u.shape[-1]], torch.cat([X, Y], dim=-1)) / (100 * batch_size**2)
+                else:
+                    grid_loss = 0.0
             else:
                 grid_loss = 0.0
 
@@ -1199,23 +1434,41 @@ def train(
 
                 # Test forward pass
                 u_input = torch.cat([X, u], dim=-1)
-                pred_s = model(u_input)
-                test_forward_loss += relative_l2_loss(pred_s, s).item()
+                result = model(u_input)
+                
+                # Handle tuple return for symmetric models  
+                if isinstance(result, tuple):
+                    pred_s, _ = result
+                else:
+                    pred_s = result
+                
+                # Extract function values only to match target s
+                if pred_s.shape[-1] > s.shape[-1]:
+                    pred_s_func = pred_s[..., -s.shape[-1]:]
+                else:
+                    pred_s_func = pred_s
+                    
+                test_forward_loss += relative_l2_loss(pred_s_func, s).item()
 
                 # Test backward pass with VAE
                 s_input = torch.cat([Y, s], dim=-1)
-                pred_u = model.inverse(s_input)
+                result = model.inverse(s_input)
+                
+                # Handle tuple return for symmetric models  
+                if isinstance(result, tuple):
+                    pred_u, _ = result
+                else:
+                    pred_u = result
 
                 # VAE reconstruction on predicted input (dimension-adaptive)
-                if len(pred_u.shape) == 4 and pred_u.shape[-1] > 1:
-                    pred_u_values = pred_u[:, :, :, 0:1]
+                if pred_u.shape[-1] > u.shape[-1]:
+                    # pred_u contains both coordinates and function values, extract only function values
+                    pred_u_values = pred_u[..., -u.shape[-1]:]  # Take last channels (function values)
                 else:
                     pred_u_values = pred_u
                     
-                if len(u.shape) == 4 and u.shape[-1] > 1:
-                    u_values = u[:, :, :, 0:1]
-                else:
-                    u_values = u
+                # u should already contain only function values
+                u_values = u
                     
                 pred_u_for_vae = model._get_vae_input_shape(pred_u_values)
                 u_for_vae = model._get_vae_input_shape(u_values)

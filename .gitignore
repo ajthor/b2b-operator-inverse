@@ -254,3 +254,12 @@ results/
 *.png 
 *.pth 
 *.pt
+*.npz
+*.txt
+*.json
+*.0
+*.1
+*.2
+*.3
+*.4
+*.arrow
