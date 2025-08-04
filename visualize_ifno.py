@@ -71,40 +71,59 @@ def visualize_ifno_results(model_path, n_samples=3, save_dir="./ifno_visualizati
     print(f"Visualization completed! Plots saved to: {save_dir}")
 
 def plot_sample(model, sample, sample_idx, save_dir):
-    """Plot a single Darcy 1D sample with IFNO results."""
+    """Plot a single Darcy 1D sample with IFNO results for both forward and inverse problems."""
     
     X, u_true, Y, s = sample
     
-    # Get IFNO prediction (inverse: s -> u)
     with torch.no_grad():
-        # For inverse problem: given observed output s, predict input u
+        # === FORWARD PREDICTION: s -> u ===
+        # For forward problem: given input s, predict output u
         Y_batch = Y.unsqueeze(0)  # Add batch dimension
         s_batch = s.unsqueeze(0)  # Add batch dimension
         s_input = torch.cat([Y_batch, s_batch], dim=-1)
         
-        # Use IFNO inverse function directly
-        result = model.inverse(s_input)
+        # Use IFNO inverse function (which actually takes s and produces u)
+        forward_result = model.inverse(s_input)
         
         # Handle tuple return (IFNO returns tuple for symmetric models)
-        if isinstance(result, tuple):
-            u_pred, _ = result  # Extract prediction, ignore reconstruction loss
+        if isinstance(forward_result, tuple):
+            u_pred, _ = forward_result  # Extract prediction, ignore reconstruction loss
         else:
-            u_pred = result
+            u_pred = forward_result
             
         # Extract function values only (remove coordinates if present)
         if u_pred.shape[-1] > u_true.unsqueeze(0).shape[-1]:
             u_pred = u_pred[..., -u_true.unsqueeze(0).shape[-1]:]  # Take last channels (function values)
             
         u_pred = u_pred.squeeze(0)
+        
+        # === INVERSE PREDICTION: u -> s ===
+        # For inverse problem: given output u, predict input s
+        X_batch = X.unsqueeze(0)  # Add batch dimension
+        u_batch = u_true.unsqueeze(0)  # Add batch dimension
+        u_input = torch.cat([X_batch, u_batch], dim=-1)
+        
+        # Use IFNO forward function (which actually takes u and produces s)
+        inverse_result = model(u_input)
+        
+        # Handle tuple return
+        if isinstance(inverse_result, tuple):
+            s_pred, _ = inverse_result  # Extract prediction, ignore reconstruction loss
+        else:
+            s_pred = inverse_result
+            
+        # Extract function values only (remove coordinates if present)
+        if s_pred.shape[-1] > s.unsqueeze(0).shape[-1]:
+            s_pred = s_pred[..., -s.unsqueeze(0).shape[-1]:]  # Take last channels (function values)
+            
+        s_pred = s_pred.squeeze(0)
     
     # Convert to numpy for plotting
     u_true_np = u_true.squeeze(-1).cpu().numpy()
     u_pred_np = u_pred.squeeze(-1).cpu().numpy()  
-    s_np = s.squeeze(-1).cpu().numpy()
+    s_true_np = s.squeeze(-1).cpu().numpy()
+    s_pred_np = s_pred.squeeze(-1).cpu().numpy()
     X_np = X.squeeze(-1).cpu().numpy()
-    
-    # Create 1D plot with 2 subplots (matching plot_darcy.py design)
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     
     # Extract x coordinates for 1D plotting
     if X_np.ndim == 1:
@@ -112,30 +131,60 @@ def plot_sample(model, sample, sample_idx, save_dir):
     else:
         x_coords = X_np[:, 0]  # Use the first coordinate (x)
     
-    # Plot 1: Observed output function (what we can measure)
-    axes[0].plot(x_coords, s_np, 'g-', label='Observed Output Function')
-    axes[0].set_title('Observed Output Function s(x)')
-    axes[0].set_xlabel('x')
-    axes[0].set_ylabel('s(x)')
-    axes[0].legend()
-    axes[0].grid(True)
+    # === INVERSE PLOT (s -> u) ===
+    fig_inv, axes_inv = plt.subplots(1, 2, figsize=(12, 5))
     
-    # Plot 2: Input function comparison (what we want to predict)
-    axes[1].plot(x_coords, u_true_np, 'b-', label='True Input', alpha=0.7)
-    axes[1].plot(x_coords, u_pred_np, 'r--', label='Predicted Input', alpha=0.7)
-    axes[1].set_title('Input Function: True vs Predicted u(x)')
-    axes[1].set_xlabel('x')
-    axes[1].set_ylabel('u(x)')
-    axes[1].legend()
-    axes[1].grid(True)
+    # Plot 1: Observed output function u(x)
+    axes_inv[0].plot(x_coords, s_true_np, 'g-', label='Observed Output Function')
+    axes_inv[0].set_title('Observed Output Function u(x)')
+    axes_inv[0].set_xlabel('x')
+    axes_inv[0].set_ylabel('u(x)')
+    axes_inv[0].legend()
+    axes_inv[0].grid(True)
+    
+    # Plot 2: Input function comparison (what we want to find)
+    axes_inv[1].plot(x_coords, u_true_np, 'b-', label='True Input', alpha=0.7)
+    axes_inv[1].plot(x_coords, u_pred_np, 'r--', label='Predicted Input', alpha=0.7)
+    axes_inv[1].set_title('Input Function: True vs Predicted s(x)')
+    axes_inv[1].set_xlabel('x')
+    axes_inv[1].set_ylabel('s(x)')
+    axes_inv[1].legend()
+    axes_inv[1].grid(True)
     
     plt.tight_layout()
     
-    # Save plot
-    save_path = os.path.join(save_dir, f'ifno_sample_{sample_idx}.png')
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Saved plot: {save_path}")
+    # Save inverse plot
+    save_path_inv = os.path.join(save_dir, f'ifno_inverse_sample_{sample_idx}.png')
+    plt.savefig(save_path_inv, dpi=300, bbox_inches='tight')
+    print(f"Saved inverse plot: {save_path_inv}")
+    plt.close()
     
+    # === FORWARD PLOT (u -> s) ===
+    fig_fwd, axes_fwd = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Plot 1: Input function s(x)
+    axes_fwd[0].plot(x_coords, u_true_np, 'b-', label='Input Function s(x)')
+    axes_fwd[0].set_title('Input Function s(x)')
+    axes_fwd[0].set_xlabel('x')
+    axes_fwd[0].set_ylabel('s(x)')
+    axes_fwd[0].legend()
+    axes_fwd[0].grid(True)
+    
+    # Plot 2: Output function comparison (what we predict)
+    axes_fwd[1].plot(x_coords, s_true_np, 'g-', label='True Output', alpha=0.7)
+    axes_fwd[1].plot(x_coords, s_pred_np, 'orange', linestyle='--', label='Predicted Output', alpha=0.7)
+    axes_fwd[1].set_title('Output Function: True vs Predicted u(x)')
+    axes_fwd[1].set_xlabel('x')
+    axes_fwd[1].set_ylabel('u(x)')
+    axes_fwd[1].legend()
+    axes_fwd[1].grid(True)
+    
+    plt.tight_layout()
+    
+    # Save forward plot
+    save_path_fwd = os.path.join(save_dir, f'ifno_forward_sample_{sample_idx}.png')
+    plt.savefig(save_path_fwd, dpi=300, bbox_inches='tight')
+    print(f"Saved forward plot: {save_path_fwd}")
     plt.close()
 
 if __name__ == "__main__":
