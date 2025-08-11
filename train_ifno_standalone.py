@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Standalone IFNO training script for Darcy 1D dataset.
+Standalone IFNO training script for selected datasets (Darcy 1D, Burgers 1D, Parametric Heat 2D).
 No function encoders required - IFNO works directly with raw data.
 """
 
@@ -10,15 +10,25 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import os
 
-# Import IFNO model and dataset
-from inverse_neural_operator.models.ifno import create_model, train as train_model, save as save_model
-from inverse_neural_operator.data.darcy_1d import load_data
+# Import IFNO model
+from inverse_neural_operator.models.ifno import (
+    create_model,
+    train as train_model,
+    save as save_model,
+    count_model_params,
+)
 
 def main():
-    parser = argparse.ArgumentParser(description='Train IFNO on Darcy 1D dataset')
+    parser = argparse.ArgumentParser(description='Train IFNO on selected dataset')
     
     # Dataset args
-    parser.add_argument("--dataset", type=str, default="darcy_1d")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="darcy_1d",
+        choices=["darcy_1d", "burgers_1d", "parametric_heat"],
+        help="Which dataset to use",
+    )
     
     # Model args  
     parser.add_argument("--model", type=str, default="ifno")
@@ -30,13 +40,18 @@ def main():
     
     # IFNO-specific training parameters
     parser.add_argument("--epochs_vae", type=int, default=50, help="VAE pretraining epochs")
-    parser.add_argument("--epochs_ifno", type=int, default=50, help="IFNO pretraining epochs") 
+    parser.add_argument("--epochs_ifno", type=int, default=100, help="IFNO pretraining epochs") 
     parser.add_argument("--lr_vae", type=float, default=1e-4, help="VAE learning rate")
-    parser.add_argument("--lr_ifno", type=float, default=5e-3, help="IFNO pretraining learning rate")
+    parser.add_argument("--lr_ifno", type=float, default=1e-3, help="IFNO pretraining learning rate")
     parser.add_argument("--lr_forward", type=float, default=1e-4, help="Joint training learning rate")
     
     # I/O args
-    parser.add_argument("--log_dir", type=str, default="./logs/darcy_1d_ifno_standalone/")
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default=None,
+        help="Log directory (defaults to ./logs/{dataset}_ifno_standalone/)",
+    )
     parser.add_argument("--checkpoint_dir", type=str, default=None)
     parser.add_argument("--checkpoint_interval", type=int, default=100)
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
@@ -61,6 +76,9 @@ def main():
     print(f"Using device: {device}")
     torch.manual_seed(args.seed)
     
+    # Resolve log directory
+    if args.log_dir is None:
+        args.log_dir = f"./logs/{args.dataset}_ifno_standalone/"
     # Create log directory
     os.makedirs(args.log_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=args.log_dir)
@@ -70,10 +88,20 @@ def main():
         args.checkpoint_dir = os.path.join(args.log_dir, "checkpoints")
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     
+    # Select dataset loader
+    if args.dataset == "darcy_1d":
+        from inverse_neural_operator.data.darcy_1d import load_data as load_data_fn
+    elif args.dataset == "burgers_1d":
+        from inverse_neural_operator.data.burgers_1d import load_data as load_data_fn
+    elif args.dataset == "parametric_heat":
+        from inverse_neural_operator.data.parametric_heat import load_data as load_data_fn
+    else:
+        raise ValueError(f"Unsupported dataset: {args.dataset}")
+
     # Load dataset
-    print("Loading Darcy 1D dataset...")
-    train_dataset = load_data(None, device=device, split="train")  
-    test_dataset = load_data(None, device=device, split="test")
+    print(f"Loading dataset: {args.dataset}...")
+    train_dataset = load_data_fn(None, device=device, split="train")
+    test_dataset = load_data_fn(None, device=device, split="test")
     dataset_info = train_dataset.get_info()
     
     print(f"Dataset info: {dataset_info}")
@@ -84,14 +112,14 @@ def main():
         input_size=None,  # Not used by IFNO
         hidden_sizes=[256, 256, 256],  # Not used by IFNO
         n_coupling_layers=2,
-        modes1=16,
-        modes2=16, 
-        width=64,
+        modes1=8,
+        modes2=8, 
+        width=8,
         beta=2.0,
-        n_layers=4,
+        n_layers=2,
         padding=20,
-        vae_latent_dim=24,
-        intermediate_dim=64,
+        vae_latent_dim=8,
+        intermediate_dim=32,
         # IFNO-specific parameters from dataset info
         input_spatial_dims=dataset_info["input_spatial_dims"],
         output_spatial_dims=dataset_info["output_spatial_dims"], 
@@ -100,7 +128,8 @@ def main():
         coordinate_dim=dataset_info["coordinate_dim"],
     ).to(device)
     
-    print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
+    # Use complex-aware parameter counting (complex params counted as 2)
+    print(f"Model created with {count_model_params(model)} parameters")
     
     # Create optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)

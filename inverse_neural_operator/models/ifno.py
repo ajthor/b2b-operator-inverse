@@ -1128,8 +1128,13 @@ def ifno_joint_loss(model, batch, grid_loss_weight=0.01):
     s_input = torch.cat([Y, s], dim=-1)
     if model.is_symmetric:
         pred_u, backward_reconstruction_loss = model.inverse(s_input)
+        # Extract function values only to match target u
+        if pred_u.shape[-1] > u.shape[-1]:
+            pred_u_func = pred_u[..., -u.shape[-1]:]
+        else:
+            pred_u_func = pred_u
         backward_loss = relative_l2_loss(
-            pred_u, u) + backward_reconstruction_loss
+            pred_u_func, u) + backward_reconstruction_loss
     else:
         pred_u = model.inverse(s_input)
 
@@ -1251,9 +1256,9 @@ def train(
                 f"Resuming training from epoch {start_epoch}, stage: {training_stage}..."
             )
     else:
-        # Phase 1: VAE Pretraining
+        # Phase 1: VAE Pretraining (optimize only VAE parameters)
         print("Phase 1: VAE Pretraining")
-        vae_optimizer = torch.optim.AdamW(model.parameters(), lr=lr_vae)
+        vae_optimizer = torch.optim.AdamW(model.vae_net.parameters(), lr=lr_vae)
         vae_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             vae_optimizer, factor=0.9, patience=10
         )
@@ -1275,9 +1280,11 @@ def train(
             vae_scheduler.step(avg_loss)
             print(f"VAE Epoch {epoch+1}/{epochs_vae}, Loss: {avg_loss:.6f}")
 
-        # Phase 2: IFNO Pretraining
+        # Phase 2: IFNO Pretraining (exclude VAE parameters)
         print("Phase 2: IFNO Pretraining")
-        ifno_optimizer = torch.optim.AdamW(model.parameters(), lr=lr_ifno)
+        vae_param_ids = {id(p) for p in model.vae_net.parameters()}
+        ifno_params = [p for p in model.parameters() if id(p) not in vae_param_ids]
+        ifno_optimizer = torch.optim.AdamW(ifno_params, lr=lr_ifno)
         ifno_scheduler = torch.optim.lr_scheduler.StepLR(
             ifno_optimizer, step_size=100, gamma=0.5
         )
@@ -1400,12 +1407,22 @@ def train(
             # Grid coordinate loss (dimension-adaptive)
             if pred_u.shape[-1] > u.shape[-1]:
                 # Only compute grid loss if pred_u has more channels (i.e., includes coordinates)
-                if len(pred_u.shape) == 3:  # 1D case
+                if len(pred_u.shape) == 3:  # 1D case (batch, s, channels)
                     grid_loss = relative_l2_loss(
-                        pred_u[:, :, :-u.shape[-1]], X) / (100 * batch_size**2)
-                elif len(pred_u.shape) == 4:  # 2D case  
+                        pred_u[:, :, :-u.shape[-1]], X
+                    ) / (100 * batch_size**2)
+                elif len(pred_u.shape) == 4:  # 2D case (batch, h, w, channels)
+                    h, w = model.input_spatial_dims
+                    X_reshaped = X.view(batch_size, h, w, -1)
                     grid_loss = relative_l2_loss(
-                        pred_u[:, :, :, :-u.shape[-1]], torch.cat([X, Y], dim=-1)) / (100 * batch_size**2)
+                        pred_u[:, :, :, :-u.shape[-1]], X_reshaped
+                    ) / (100 * batch_size**2)
+                elif len(pred_u.shape) == 5:  # 3D case (batch, d, h, w, channels)
+                    d, h, w = model.input_spatial_dims
+                    X_reshaped = X.view(batch_size, d, h, w, -1)
+                    grid_loss = relative_l2_loss(
+                        pred_u[:, :, :, :, :-u.shape[-1]], X_reshaped
+                    ) / (100 * batch_size**2)
                 else:
                     grid_loss = 0.0
             else:
