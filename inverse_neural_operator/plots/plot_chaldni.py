@@ -5,7 +5,7 @@ import numpy as np
 
 import torch
 
-from models.function_encoder import (
+from inverse_neural_operator.models.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
@@ -14,7 +14,7 @@ from models.function_encoder import (
 from plots.load_dataset import load_dataset
 from plots.load_model import load_models
 
-from models.model_evaluation import evaluate_random, find_best_case, find_worst_case
+from inverse_neural_operator.models.model_evaluation import evaluate_random, find_best_case, find_worst_case
 
 device = "cpu"
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Standalone IFNO training script for selected datasets (Darcy 1D, Burgers 1D, Parametric Heat 2D).
+Standalone IFNO training script for selected datasets (Darcy 1D, Burgers 1D, Parametric Heat 2D, Chladni 2D, Wave Scattering, FWI).
 No function encoders required - IFNO works directly with raw data.
 """
 
@@ -26,7 +26,15 @@ def main():
         "--dataset",
         type=str,
         default="darcy_1d",
-        choices=["darcy_1d", "burgers_1d", "parametric_heat"],
+        choices=[
+            "darcy_1d",
+            "burgers_1d",
+            "parametric_heat",
+            "chladni_2d",
+            "wave_scattering",
+            "fwi_flat",
+            "fwi_curve",
+        ],
         help="Which dataset to use",
     )
     
@@ -95,13 +103,19 @@ def main():
         from inverse_neural_operator.data.burgers_1d import load_data as load_data_fn
     elif args.dataset == "parametric_heat":
         from inverse_neural_operator.data.parametric_heat import load_data as load_data_fn
+    elif args.dataset == "chladni_2d":
+        from inverse_neural_operator.data.chladni_2d import load_data as load_data_fn
+    elif args.dataset == "wave_scattering":
+        from inverse_neural_operator.data.wave_scattering import load_data as load_data_fn
+    elif args.dataset in ("fwi_flat", "fwi_curve"):
+        from inverse_neural_operator.data.fwi_data import load_data as load_data_fn
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 
     # Load dataset
     print(f"Loading dataset: {args.dataset}...")
-    train_dataset = load_data_fn(None, device=device, split="train")
-    test_dataset = load_data_fn(None, device=device, split="test")
+    train_dataset = load_data_fn(args, device=device, split="train")
+    test_dataset = load_data_fn(args, device=device, split="test")
     dataset_info = train_dataset.get_info()
     
     print(f"Dataset info: {dataset_info}")

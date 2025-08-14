@@ -142,6 +142,7 @@ def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_funct
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(save_dir, f'{model_name}_sample_{sample_idx}.png')
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved plot → {save_path}")
     
     plt.close()
 
