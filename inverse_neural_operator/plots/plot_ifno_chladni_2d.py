@@ -4,11 +4,19 @@ Standalone script to visualize IFNO results on Chladni 2D dataset, aligned with 
 Generates forward (u->s) and backward (s->u) plots for a few random samples.
 """
 
+import os
+import sys
+
+# Ensure project root is on sys.path when running as a script
+CURRENT_DIR = os.path.dirname(__file__)
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
 import random
-import os
 
 from inverse_neural_operator.models.ifno import create_model
 from inverse_neural_operator.data.chladni_2d import load_data
@@ -30,12 +38,16 @@ def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     cfg = {}
     if "p1.weight" in sd:
         cfg["width"] = int(sd["p1.weight"].shape[0])
-    conv_keys = [k for k in sd.keys() if k.startswith("convs.") and k.endswith(".weights")]
-    if conv_keys:
-        cfg["n_layers"] = len(conv_keys) // 2
-        sample_conv = sd[conv_keys[0]]
-        cfg["modes1"] = int(sample_conv.shape[-1])
-        cfg["modes2"] = cfg["modes1"]
+    # Infer n_layers by scanning for highest convs.<idx>. keys
+    conv_indices = []
+    for k in sd.keys():
+        if k.startswith("convs."):
+            parts = k.split(".")
+            if len(parts) > 1 and parts[1].isdigit():
+                conv_indices.append(int(parts[1]))
+    if conv_indices:
+        max_idx = max(conv_indices)
+        cfg["n_layers"] = max(1, (max_idx + 1) // 2)
     if "vae_net.fc_mu.weight" in sd:
         cfg["vae_latent_dim"] = int(sd["vae_net.fc_mu.weight"].shape[0])
     return cfg if cfg else None
@@ -54,17 +66,30 @@ def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots
     inferred_cfg = _infer_ifno_config_from_state_dict_path(model_path)
     if inferred_cfg:
         print(f"Inferred model config from checkpoint: {inferred_cfg}")
+
+    # Resolve final hyperparameters with safe defaults matching training script
+    resolved_modes1 = inferred_cfg.get("modes1", 8) if inferred_cfg else 8
+    resolved_modes2 = inferred_cfg.get("modes2", 8) if inferred_cfg else 8
+    resolved_width = inferred_cfg.get("width", 8) if inferred_cfg else 8
+    resolved_n_layers = inferred_cfg.get("n_layers", 2) if inferred_cfg else 2
+    resolved_vae_latent = inferred_cfg.get("vae_latent_dim", 8) if inferred_cfg else 8
+
+    print(
+        f"Using config → modes1={resolved_modes1}, modes2={resolved_modes2}, width={resolved_width}, "
+        f"n_layers={resolved_n_layers}, vae_latent_dim={resolved_vae_latent}"
+    )
+
     model = create_model(
         input_size=None,
         hidden_sizes=[256, 256, 256],
         n_coupling_layers=2,
-        modes1=(inferred_cfg.get("modes1") if inferred_cfg else 8),
-        modes2=(inferred_cfg.get("modes2") if inferred_cfg else 8),
-        width=(inferred_cfg.get("width") if inferred_cfg else 24),
+        modes1=resolved_modes1,
+        modes2=resolved_modes2,
+        width=resolved_width,
         beta=2.0,
-        n_layers=(inferred_cfg.get("n_layers") if inferred_cfg else 3),
+        n_layers=resolved_n_layers,
         padding=20,
-        vae_latent_dim=(inferred_cfg.get("vae_latent_dim") if inferred_cfg else 8),
+        vae_latent_dim=resolved_vae_latent,
         intermediate_dim=32,
         input_spatial_dims=dataset_info["input_spatial_dims"],
         output_spatial_dims=dataset_info["output_spatial_dims"],
@@ -76,6 +101,7 @@ def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots
     print(f"Loading model weights from {model_path}...")
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
+    print(f"Model loaded with {sum(p.numel() for p in model.parameters())} parameters")
 
     os.makedirs(save_dir, exist_ok=True)
 
