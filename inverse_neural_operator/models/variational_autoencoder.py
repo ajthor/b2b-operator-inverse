@@ -197,7 +197,8 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     u_pred = input_function_encoder(X, alpha_pred)
 
     # Reconstruction loss: negative log probability assuming unit variance Gaussian
-    reconstruction_loss = 0.5 * torch.sum((alpha_pred - alpha) ** 2, dim=-1).mean()
+    reconstruction_loss = 0.5 * \
+        torch.sum((alpha_pred - alpha) ** 2, dim=-1).mean()
 
     # Forward consistency loss: encode alpha_pred with beta and compare z values
     z_reconstructed, *_ = model(alpha_pred, beta)
@@ -209,10 +210,10 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     # pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     # KL divergence loss
-    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    kl_loss = kl_loss.mean()
+    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) -
+                               logvar.exp(), dim=-1).mean()
 
-    return reconstruction_loss + consistency_loss + kl_loss
+    return consistency_loss + kl_loss
 
 
 def train(
@@ -234,7 +235,8 @@ def train(
     start_epoch = 0
 
     # Resume from checkpoint
-    checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_checkpoint.pt")
+    checkpoint_path = os.path.join(
+        checkpoint_dir, f"{model_name}_checkpoint.pt")
     if resume_from_checkpoint:
         if os.path.exists(checkpoint_path):
             model, optimizer, start_epoch, loss = load_checkpoint(
@@ -259,7 +261,8 @@ def train(
         loss.backward()
         optimizer.step()
 
-        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
+        summary_writer.add_scalars(
+            "loss/train", {model_name: loss.item()}, epoch)
 
         avg_test_loss = test_model(
             model=model,
@@ -267,11 +270,13 @@ def train(
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
         )
-        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+        summary_writer.add_scalars(
+            "loss/test", {model_name: avg_test_loss}, epoch)
 
         # Save checkpoint
         if (epoch + 1) % checkpoint_interval == 0:
-            save_checkpoint(model, optimizer, epoch + 1, avg_test_loss, checkpoint_path)
+            save_checkpoint(model, optimizer, epoch + 1,
+                            avg_test_loss, checkpoint_path)
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)

@@ -5,15 +5,57 @@ set -euo pipefail
 # Same datasets and models as in run_all.sh
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi_flat fwi_curve)
-# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
+# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network realnvp)
 DATASETS=(burgers_1d darcy_1d)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network ifno)
+MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network realnvp)
 
 # Base directory for experiment logs - same as in run_all.sh
-LOG_BASE_DIR="/store/at46867"
+LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
 RESULTS_BASE_DIR="results"
 
-echo "Starting plots generation for all datasets and models..."
+#── ARGUMENT PARSING ──────────────────────────────────────
+MODEL=""
+DATASET=""
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --model)
+      MODEL="$2"
+      shift 2
+      ;;
+    --dataset)
+      DATASET="$2"
+      shift 2
+      ;;
+    --help|-h)
+      echo "Usage: $0 [--model MODEL_NAME] [--dataset DATASET_NAME]"
+      echo "  --model MODEL_NAME    Specify a single model to plot (optional)"
+      echo "  --dataset DATASET_NAME Specify a single dataset to plot (optional)"
+      echo "  --help                Show this help message"
+      echo ""
+      echo "Available models: ${MODELS[*]}"
+      echo "Available datasets: ${DATASETS[*]}"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Use --help for usage information"
+      exit 1
+      ;;
+  esac
+done
+
+# Set datasets and models based on arguments
+if [[ -n "$DATASET" ]]; then
+  DATASETS=("$DATASET")
+fi
+
+if [[ -n "$MODEL" ]]; then
+  MODELS=("$MODEL")
+fi
+
+echo "Starting plots generation for datasets: ${DATASETS[*]} and models: ${MODELS[*]}..."
 
 #── MAIN LOOP ────────────────────────────────────────────
 for dataset in "${DATASETS[@]}"; do
@@ -77,7 +119,7 @@ for dataset in "${DATASETS[@]}"; do
     esac
 
     
-    echo "✓ Completed plots for $dataset/$model"
+    echo "Completed plots for $dataset/$model"
   done
 done
 

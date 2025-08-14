@@ -260,6 +260,23 @@ match params.model:
         optimizer = torch.optim.Adam(
             model.parameters(), lr=params.learning_rate)
 
+    case "realnvp":
+        from models.realnvp import (
+            create_model,
+            train as train_model,
+            save as save_model,
+        )
+
+        model = create_model(
+            input_size=input_function_encoder_params.n_basis,
+            # output_size=output_function_encoder_params.n_basis,
+            hidden_sizes=params.hidden_sizes,
+            n_coupling_layers=4,
+        ).to(device)
+        # model = torch.compile(model)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=params.learning_rate)
+
     case "ifno":
         from models.ifno import (
             create_model,

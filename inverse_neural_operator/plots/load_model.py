@@ -105,7 +105,8 @@ def load_models(
             )
 
             model = create_model(
-                branch_input_size=dataset_info["Y_size"] * dataset_info["Y_len"],
+                branch_input_size=dataset_info["Y_size"] *
+                dataset_info["Y_len"],
                 trunk_input_size=dataset_info["X_size"],
                 output_size=dataset_info["u_size"],
                 hidden_sizes=params.hidden_sizes,
@@ -126,6 +127,22 @@ def load_models(
                 beta_size=output_function_encoder_params.n_basis,
                 hidden_sizes=params.hidden_sizes,
                 latent_size=output_function_encoder_params.n_basis,
+            ).to(device)
+            model = load(
+                model=model, path=os.path.join(log_dir, "model.pth"), device=device
+            )
+
+        case "realnvp":
+            from models.realnvp import (
+                create_model,
+                load,
+                evaluate,
+            )
+
+            model = create_model(
+                input_size=input_function_encoder_params.n_basis,
+                hidden_sizes=params.hidden_sizes,
+                n_coupling_layers=4,
             ).to(device)
             model = load(
                 model=model, path=os.path.join(log_dir, "model.pth"), device=device
@@ -155,13 +172,19 @@ def load_models(
             )
 
             # Load dataset info for iFNO configuration
+<<<<<<< Updated upstream
             from inverse_neural_operator.data import get_data_loaders
             dataset_info = get_data_loaders(params.dataset, 1, 1)[2]  # Get dataset info
+=======
+            from data import get_data_loaders
+            dataset_info = get_data_loaders(params.dataset, 1, 1)[
+                2]  # Get dataset info
+>>>>>>> Stashed changes
 
             model = create_model(
                 input_size=input_function_encoder_params.n_basis,
                 hidden_sizes=params.hidden_sizes,
-                n_coupling_layers=2,  
+                n_coupling_layers=2,
                 modes1=16,
                 modes2=16,
                 width=64,

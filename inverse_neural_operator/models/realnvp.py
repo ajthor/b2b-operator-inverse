@@ -139,7 +139,7 @@ def create_model(input_size, hidden_sizes=[128, 128], n_coupling_layers=2):
         if i % 2 == 0:
             split_dim = input_size // 2
         else:
-            split_dim = input_size - input_size // 2
+            split_dim = (input_size + 1) // 2
 
         layer = AffineCoupling(
             input_size=input_size, hidden_sizes=hidden_sizes, split_dim=split_dim

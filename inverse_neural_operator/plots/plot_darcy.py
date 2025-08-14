@@ -26,7 +26,7 @@ random.seed(42)
 np.random.seed(42)
 
 # Available models to plot
-MODELS = ['b2b_linear', 'b2b_nonlinear', 'variational_autoencoder', 'invertible_network']
+MODELS = ['b2b_linear', 'b2b_nonlinear', 'variational_autoencoder', 'invertible_network', 'realnvp']
 
 
 def get_evaluate_function(model_name):
@@ -39,6 +39,8 @@ def get_evaluate_function(model_name):
         from inverse_neural_operator.models.variational_autoencoder import evaluate
     elif model_name == "invertible_network":
         from inverse_neural_operator.models.invertible_network import evaluate
+    elif model_name == "realnvp":
+        from inverse_neural_operator.models.realnvp import evaluate
     elif model_name == "deeponet":
         from inverse_neural_operator.models.deeponet import evaluate
     else:
@@ -182,8 +184,8 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
     # Get evaluation function
     evaluate_fn = get_evaluate_function(model_name)
     
-    # Create model-specific results directory
-    model_results_dir = os.path.join(results_dir, model_name)
+    # Use results_dir directly (already includes dataset/model path from plot_all.sh)
+    # model_results_dir = os.path.join(results_dir, model_name)
     
     # Plot results
     plot_multiple_samples(
@@ -194,7 +196,7 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
         test_dataset=test_dataset,
         model_name=model_name,
         n_samples=n_samples,
-        save_dir=model_results_dir
+        save_dir=results_dir
     )
     
     return True
@@ -210,6 +212,8 @@ parser.add_argument("--n_samples", type=int, default=3,
                    help="Number of random samples to plot per model")
 parser.add_argument("--seed", type=int, default=1, 
                    help="Random seed for reproducibility")
+parser.add_argument("--model", type=str, required=True,
+                   help="Model name to plot results for")
 
 args = parser.parse_args()
 
@@ -223,39 +227,38 @@ dataset = "darcy_1d"
 
 # Construct paths
 log_dir = os.path.join(args.log_dir, dataset)
-results_dir = os.path.join(args.results_dir, dataset)
+results_dir = args.results_dir
 
-# Check which models are available
-available_models = []
-for model_name in MODELS:
-    model_path = os.path.join(log_dir, model_name, f"seed_{args.seed}", "params.pth")
-    if os.path.exists(model_path):
-        available_models.append(model_name)
-
-if not available_models:
-    print("❌ No trained models found!")
+# Validate the specified model
+model_name = args.model
+if model_name not in MODELS:
+    print(f"ERROR: Unknown model: {model_name}. Available models: {MODELS}")
     exit(1)
 
-# Load dataset once (we'll reuse it for all models)
-# Use the first available model to get params for dataset loading
-first_model = available_models[0]
-temp_log_dir = os.path.join(log_dir, first_model, f"seed_{args.seed}")
+# Check if the specified model is available
+model_path = os.path.join(log_dir, model_name, f"seed_{args.seed}", "params.pth")
+if not os.path.exists(model_path):
+    print(f"ERROR: Trained model not found: {model_path}")
+    exit(1)
+
+# Load dataset using the specified model's parameters
+temp_log_dir = os.path.join(log_dir, model_name, f"seed_{args.seed}")
 temp_params = torch.load(os.path.join(temp_log_dir, "params.pth"), weights_only=False)
 
 test_dataset, dataset_info = load_dataset(temp_params, device)
 
-# Process each available model
-successful_models = []
-for model_name in available_models:
-    success = plot_model_results(
-        model_name=model_name,
-        log_dir=log_dir,
-        results_dir=results_dir,
-        test_dataset=test_dataset,
-        dataset_info=dataset_info,
-        n_samples=args.n_samples
-    )
-    if success:
-        successful_models.append(model_name)
+# Plot results for the specified model
+success = plot_model_results(
+    model_name=model_name,
+    log_dir=log_dir,
+    results_dir=results_dir,
+    test_dataset=test_dataset,
+    dataset_info=dataset_info,
+    n_samples=args.n_samples
+)
 
-print(f"✅ Plotted {len(successful_models)} models, {len(successful_models) * args.n_samples} total plots")
+if success:
+    print(f"SUCCESS: Plotted {model_name}, {args.n_samples} total plots")
+else:
+    print(f"ERROR: Failed to plot {model_name}")
+    exit(1)
