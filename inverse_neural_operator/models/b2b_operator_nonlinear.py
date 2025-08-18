@@ -29,7 +29,12 @@ class NonlinearB2BOperator(torch.nn.Module):
         self.activation = torch.nn.ReLU()
 
     def forward(self, alpha):
-        return None
+        for layer in self.layers[:-1]:
+            alpha = self.activation(layer(alpha))
+
+        beta = self.layers[-1](alpha)
+
+        return beta
 
     def inverse(self, beta):
         for layer in self.layers[:-1]:

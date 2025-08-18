@@ -47,7 +47,10 @@ def get_evaluate_function(model_name):
 
 
 def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_function_encoder, 
-                        sample, sample_idx, model_name, save_dir=None):
+                        sample, sample_idx, model_name, save_dir=None,
+                        num_inverse_samples: int = 3,
+                        num_forward_samples: int = 2,
+                        params: dict | None = None):
     """
     Plot a single Burgers sample with input, prediction, ground truth, and error.
     """
@@ -61,15 +64,63 @@ def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_funct
     Y = Y.to(device)
     s = s.to(device)
     
-    # Get model prediction
+    # Prepare batched point
+    point = (X.unsqueeze(0), u_true.unsqueeze(0), Y.unsqueeze(0), s.unsqueeze(0))
+
+    # Compute predictions
+    inverse_preds = []
+    forward_preds_s = []
+
     with torch.no_grad():
-        point = (X.unsqueeze(0), u_true.unsqueeze(0), Y.unsqueeze(0), s.unsqueeze(0))
-        u_pred = evaluate_fn(model, point, input_function_encoder, output_function_encoder)
-        u_pred = u_pred.squeeze(0)
+        if model_name == "variational_autoencoder":
+            # For VAE, draw multiple z samples to get multiple inverse preds
+            # Also optionally compute forward predictions via output encoder if available
+            # Compute beta from (Y, s)
+            beta_result = output_function_encoder.compute_coefficients(point[2], point[3])
+            beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+
+            for i in range(max(1, int(num_inverse_samples))):
+                z = model.sample_prior(1, device=X.device)
+                alpha_pred = model.inverse(beta, z)
+                u_pred_i = input_function_encoder(point[0], alpha_pred).squeeze(0)
+                inverse_preds.append(u_pred_i)
+
+                # For the first num_forward_samples, also compute forward s-pred via output encoder
+                if i < max(0, int(num_forward_samples)):
+                    beta_pred = None
+                    # If a learned forward model exists (saved alongside VAE), try to load it lazily
+                    # Otherwise, fall back to using output encoder directly with beta (identity)
+                    try:
+                        # Attempt to load nonlinear forward model if not already loaded
+                        # Infer hidden sizes from params if provided
+                        if params is not None and hasattr(params, "hidden_sizes"):
+                            from inverse_neural_operator.models.b2b_operator_nonlinear import create_model as create_forward
+                            fwd = create_forward(
+                                input_size=alpha_pred.shape[-1],
+                                hidden_sizes=params.hidden_sizes,
+                                output_size=beta.shape[-1],
+                            ).to(X.device)
+                            fwd.load_state_dict(torch.load(os.path.join(params.log_dir, "forward_model.pth"), map_location=X.device))
+                            fwd.eval()
+                            beta_pred = fwd(alpha_pred)
+                        else:
+                            beta_pred = beta  # fallback
+                    except Exception:
+                        beta_pred = beta
+
+                    s_pred_i = output_function_encoder(point[2], beta_pred).squeeze(0)
+                    forward_preds_s.append(s_pred_i)
+        else:
+            # Non-VAE models: single prediction via evaluate_fn
+            u_pred = evaluate_fn(model, point, input_function_encoder, output_function_encoder)
+            u_pred = u_pred.squeeze(0)
+            inverse_preds = [u_pred]
     
     # Convert to numpy for plotting
     u_true_np = u_true.squeeze(-1).cpu().numpy()
-    u_pred_np = u_pred.squeeze(-1).cpu().numpy()
+    # Choose a representative inverse prediction for plots that need a single field (e.g., 2D heatmaps)
+    u_pred_main = inverse_preds[0] if len(inverse_preds) > 0 else u_true
+    u_pred_np = u_pred_main.squeeze(-1).cpu().numpy()
     s_np = s.squeeze(-1).cpu().numpy()
     X_np = X.squeeze(-1).cpu().numpy()
     
@@ -90,6 +141,15 @@ def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_funct
         
         # Plot 1: Observed output function (what we can measure)
         axes[0].plot(x_coords, s_np, 'g-', label='Observed Output Function')
+        # Overlay forward-model predictions of s from inverse outputs
+        if len(forward_preds_s) > 0:
+            for j, s_pred_j in enumerate(forward_preds_s):
+                s_pred_np = s_pred_j.squeeze(-1).cpu().numpy()
+                if j == 0:
+                    # First forward prediction: plot as dots to distinguish from dashed line
+                    axes[0].plot(x_coords, s_pred_np, linestyle='None', marker='o', markersize=2, label='Forward Pred 1')
+                else:
+                    axes[0].plot(x_coords, s_pred_np, linestyle='--', label=f'Forward Pred {j+1}')
         axes[0].set_title('Observed Output Function s(x)')
         axes[0].set_xlabel('x')
         axes[0].set_ylabel('s(x)')
@@ -98,7 +158,11 @@ def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_funct
         
         # Plot 2: Input function comparison (what we want to predict)
         axes[1].plot(x_coords, u_true_np, 'b-', label='True Input', alpha=0.7)
-        axes[1].plot(x_coords, u_pred_np, 'r--', label='Predicted Input', alpha=0.7)
+        # Overlay multiple inverse predictions
+        if len(inverse_preds) > 0:
+            for i, u_pred_i in enumerate(inverse_preds):
+                u_pred_np_i = u_pred_i.squeeze(-1).cpu().numpy()
+                axes[1].plot(x_coords, u_pred_np_i, 'r--', alpha=0.7, label=(f'Inverse Pred {i+1}' if i == 0 else None))
         axes[1].set_title('Input Function: True vs Predicted u(x)')
         axes[1].set_xlabel('x')
         axes[1].set_ylabel('u(x)')
@@ -148,7 +212,8 @@ def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_funct
 
 
 def plot_multiple_samples(model, evaluate_fn, input_function_encoder, output_function_encoder, 
-                          test_dataset, model_name, n_samples=3, save_dir=None):
+                          test_dataset, model_name, n_samples=3, save_dir=None,
+                          params=None):
     """Plot multiple random samples from the test set."""
     
     # Select random samples
@@ -156,8 +221,11 @@ def plot_multiple_samples(model, evaluate_fn, input_function_encoder, output_fun
     
     for i, idx in enumerate(test_indices):
         sample = test_dataset[idx]
-        plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_function_encoder, 
-                           sample, idx, model_name, save_dir)
+        plot_burgers_sample(
+            model, evaluate_fn, input_function_encoder, output_function_encoder,
+            sample, idx, model_name, save_dir,
+            num_inverse_samples=3, num_forward_samples=2, params=params,
+        )
 
 
 def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3):
@@ -195,7 +263,8 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
         test_dataset=test_dataset,
         model_name=model_name,
         n_samples=n_samples,
-        save_dir=model_results_dir
+        save_dir=model_results_dir,
+        params=params,
     )
     
     return True
@@ -205,7 +274,7 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
 parser = argparse.ArgumentParser(description="Plot Burgers 1D results for all models.")
 parser.add_argument("--log_dir", type=str, default="/workspaces/b2b-operator-inverse/logs", 
                    help="Base log directory")
-parser.add_argument("--results_dir", type=str, default="results/burgers_plots", 
+parser.add_argument("--results_dir", type=str, default="results/burgers_plots_VAE", 
                    help="Results directory for saving plots")
 parser.add_argument("--n_samples", type=int, default=3, 
                    help="Number of random samples to plot per model")
