@@ -34,14 +34,12 @@ parser.add_argument("--model", type=str, default="b2b_nonlinear")
 # Function encoder args
 parser.add_argument("--n_basis", type=int, default=100)
 parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
-parser.add_argument("--regularization", type=float,
-                    default=1e-3)  # 1e-4 for chladni_2d
+parser.add_argument("--regularization", type=float, default=1e-3)  # 1e-4 for chladni_2d
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)
 parser.add_argument("--epochs", type=int, default=5000)
-parser.add_argument("--learning_rate", type=float,
-                    default=1e-3)  # 1e-3 for chladni_2d
+parser.add_argument("--learning_rate", type=float, default=1e-3)  # 1e-3 for chladni_2d
 
 # SummaryWriter args
 parser.add_argument("--log_dir", type=str, default=None)
@@ -139,15 +137,11 @@ dataset_info = model_train_dataset.get_info()
 
 match params.encoder_type:
     case "input":
-        train_dataset = InputFunctionEncoderDataset(
-            model_train_dataset, device=device)
-        test_dataset = InputFunctionEncoderDataset(
-            model_test_dataset, device=device)
+        train_dataset = InputFunctionEncoderDataset(model_train_dataset, device=device)
+        test_dataset = InputFunctionEncoderDataset(model_test_dataset, device=device)
     case "output":
-        train_dataset = OutputFunctionEncoderDataset(
-            model_train_dataset, device=device)
-        test_dataset = OutputFunctionEncoderDataset(
-            model_test_dataset, device=device)
+        train_dataset = OutputFunctionEncoderDataset(model_train_dataset, device=device)
+        test_dataset = OutputFunctionEncoderDataset(model_test_dataset, device=device)
     case _:
         raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
@@ -187,8 +181,7 @@ function_encoder = create_function_encoder(
 )
 # function_encoder = torch.compile(function_encoder)
 function_encoder.to(device)
-optimizer = torch.optim.Adam(
-    function_encoder.parameters(), lr=params.learning_rate)
+optimizer = torch.optim.Adam(function_encoder.parameters(), lr=params.learning_rate)
 
 # Train the function encoder
 train_function_encoder(

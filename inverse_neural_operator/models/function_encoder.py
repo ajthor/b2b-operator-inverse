@@ -59,12 +59,14 @@ def create_model(
     )
 
     # Create a custom coefficients method with the desired regularization
-    coefficients_method = functools.partial(least_squares, regularization=regularization)
+    coefficients_method = functools.partial(
+        least_squares, regularization=regularization
+    )
 
     kwargs = {}
     if inner_product is not None:
-        kwargs['inner_product'] = inner_product
-    kwargs['coefficients_method'] = coefficients_method
+        kwargs["inner_product"] = inner_product
+    kwargs["coefficients_method"] = coefficients_method
     return FunctionEncoder(basis_functions=basis_functions, **kwargs)
 
 
@@ -113,11 +115,7 @@ def load_checkpoint(
 def loss_function(model, batch):
     example_xs, example_ys, xs, ys = batch
 
-    result = model.compute_coefficients(example_xs, example_ys)
-    if isinstance(result, tuple):
-        coefficients = result[0]
-    else:
-        coefficients = result
+    coefficients, _ = model.compute_coefficients(example_xs, example_ys)
     y_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(y_pred, ys)
@@ -145,7 +143,7 @@ def train(
 ):
     start_epoch = 0
 
-    # Resume from checkpoint  
+    # Resume from checkpoint
     checkpoint_path = os.path.join(checkpoint_dir or ".", f"{model_name}_checkpoint.pt")
     if resume_from_checkpoint:
         if os.path.exists(checkpoint_path):
@@ -157,6 +155,7 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
+    # train_dataloader_iter = iter(train_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()
