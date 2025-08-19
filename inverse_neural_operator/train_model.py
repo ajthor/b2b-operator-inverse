@@ -39,6 +39,7 @@ parser.add_argument("--output_channels", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=50)
 parser.add_argument("--epochs", type=int, default=5000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
+parser.add_argument("--lambda_u", type=float, default=0.0)
 
 # SummaryWriter args
 parser.add_argument("--log_dir", type=str,

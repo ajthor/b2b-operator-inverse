@@ -182,7 +182,7 @@ def load_checkpoint(
     return model, optimizer, checkpoint["epoch"], checkpoint["loss"]
 
 
-def loss_function(model, batch, input_function_encoder, output_function_encoder):
+def loss_function(model, batch, input_function_encoder, output_function_encoder, lambda_u: float = 0.0):
     X, u, Y, s = batch
 
     alpha_result = input_function_encoder.compute_coefficients(X, u)
@@ -206,14 +206,14 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
         z_reconstructed, z, reduction="mean"
     )
 
-    # Function space loss
-    # pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+    # Function space loss (u-loss)
+    pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     # KL divergence loss
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) -
                                logvar.exp(), dim=-1).mean()
 
-    return consistency_loss + kl_loss
+    return consistency_loss + kl_loss + lambda_u * pred_loss
 
 
 def train(
@@ -257,6 +257,7 @@ def train(
             batch=batch,
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
+            lambda_u=params.lambda_u if hasattr(params, "lambda_u") else 0.0,
         )
         loss.backward()
         optimizer.step()
@@ -269,6 +270,7 @@ def train(
             test_dataloader=test_dataloader,
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
+            lambda_u=params.lambda_u if hasattr(params, "lambda_u") else 0.0,
         )
         summary_writer.add_scalars(
             "loss/test", {model_name: avg_test_loss}, epoch)
@@ -287,6 +289,7 @@ def test_model(
     test_dataloader,
     input_function_encoder,
     output_function_encoder,
+    lambda_u: float = 0.0,
 ):
     model.eval()
     total_test_loss = 0.0
@@ -297,6 +300,7 @@ def test_model(
                 batch=batch,
                 input_function_encoder=input_function_encoder,
                 output_function_encoder=output_function_encoder,
+                lambda_u=lambda_u,
             )
             total_test_loss += loss.item()
 

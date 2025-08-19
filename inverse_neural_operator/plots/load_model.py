@@ -172,14 +172,7 @@ def load_models(
             )
 
             # Load dataset info for iFNO configuration
-<<<<<<< Updated upstream
-            from inverse_neural_operator.data import get_data_loaders
-            dataset_info = get_data_loaders(params.dataset, 1, 1)[2]  # Get dataset info
-=======
-            from data import get_data_loaders
-            dataset_info = get_data_loaders(params.dataset, 1, 1)[
-                2]  # Get dataset info
->>>>>>> Stashed changes
+            # dataset_info is provided as a function argument; 
 
             model = create_model(
                 input_size=input_function_encoder_params.n_basis,
