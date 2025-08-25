@@ -115,9 +115,7 @@ match params.dataset:
     case "chladni_2d":
         from data.chladni_2d import load_data
 
-    case "fwi_flat":
-        from data.fwi_data import load_data
-    case "fwi_curve":
+    case "fwi":
         from data.fwi_data import load_data
 
     case _:
@@ -141,7 +139,7 @@ input_function_encoder = create_function_encoder(
     n_basis=input_function_encoder_params.n_basis,
     inner_product=(
         memory_efficient_inner_product
-        if params.dataset in ["fwi_flat", "fwi_curve"]
+        if params.dataset in ["fwi"]
         else None
     ),
 )
@@ -165,7 +163,7 @@ output_function_encoder = create_function_encoder(
     n_basis=output_function_encoder_params.n_basis,
     inner_product=(
         memory_efficient_inner_product
-        if params.dataset in ["fwi_flat", "fwi_curve"]
+        if params.dataset in ["fwi"]
         else None
     ),
 )

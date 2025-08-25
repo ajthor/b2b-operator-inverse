@@ -2,6 +2,7 @@
 Plot the results of the Burgers 1D dataset for all models.
 To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator.plots.plot_burgers
 """
+
 import os
 import argparse
 import matplotlib.pyplot as plt
@@ -26,31 +27,26 @@ random.seed(42)
 np.random.seed(42)
 
 # Available models to plot
-MODELS = ['b2b_linear', 'b2b_nonlinear', 'variational_autoencoder', 'invertible_network']
+MODELS = [
+    "b2b_linear",
+    "b2b_nonlinear",
+    "variational_autoencoder",
+    "invertible_network",
+    "realnvp",
+    "deeponet",
+]
 
 
-def get_evaluate_function(model_name):
-    """Get the appropriate evaluate function for the model."""
-    if model_name == "b2b_linear":
-        from inverse_neural_operator.models.b2b_operator_linear import evaluate
-    elif model_name == "b2b_nonlinear":
-        from inverse_neural_operator.models.b2b_operator_nonlinear import evaluate
-    elif model_name == "variational_autoencoder":
-        from inverse_neural_operator.models.variational_autoencoder import evaluate
-    elif model_name == "invertible_network":
-        from inverse_neural_operator.models.invertible_network import evaluate
-    elif model_name == "deeponet":
-        from inverse_neural_operator.models.deeponet import evaluate
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
-    return evaluate
-
-
-def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_function_encoder, 
-                        sample, sample_idx, model_name, save_dir=None,
-                        num_inverse_samples: int = 3,
-                        num_forward_samples: int = 2,
-                        params: dict | None = None):
+def plot_burgers_sample(
+    model,
+    evaluate_fn,
+    input_function_encoder,
+    output_function_encoder,
+    sample,
+    sample_idx,
+    model_name,
+    save_dir=None,
+):
     """
     Plot a single Burgers sample with input, prediction, ground truth, and error.
     """
@@ -72,12 +68,11 @@ def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_funct
     forward_preds_s = []
 
     with torch.no_grad():
-        if model_name == "variational_autoencoder":
-            # For VAE, draw multiple z samples to get multiple inverse preds
-            # Also optionally compute forward predictions via output encoder if available
-            # Compute beta from (Y, s)
-            beta_result = output_function_encoder.compute_coefficients(point[2], point[3])
-            beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+        point = (X.unsqueeze(0), u_true.unsqueeze(0), Y.unsqueeze(0), s.unsqueeze(0))
+        u_pred = evaluate_fn(
+            model, point, input_function_encoder, output_function_encoder
+        )
+        u_pred = u_pred.squeeze(0)
 
             for i in range(max(1, int(num_inverse_samples))):
                 z = model.sample_prior(1, device=X.device)
@@ -140,32 +135,19 @@ def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_funct
             x_coords = X_np[:, 0]  # Use the first coordinate (x)
         
         # Plot 1: Observed output function (what we can measure)
-        axes[0].plot(x_coords, s_np, 'g-', label='Observed Output Function')
-        # Overlay forward-model predictions of s from inverse outputs
-        if len(forward_preds_s) > 0:
-            for j, s_pred_j in enumerate(forward_preds_s):
-                s_pred_np = s_pred_j.squeeze(-1).cpu().numpy()
-                if j == 0:
-                    # First forward prediction: plot as dots to distinguish from dashed line
-                    axes[0].plot(x_coords, s_pred_np, linestyle='None', marker='o', markersize=2, label='Forward Pred 1')
-                else:
-                    axes[0].plot(x_coords, s_pred_np, linestyle='--', label=f'Forward Pred {j+1}')
-        axes[0].set_title('Observed Output Function s(x)')
-        axes[0].set_xlabel('x')
-        axes[0].set_ylabel('s(x)')
+        axes[0].plot(x_coords, s_np, "g-", label="Observed Output Function")
+        axes[0].set_title("Observed Output Function s(x)")
+        axes[0].set_xlabel("x")
+        axes[0].set_ylabel("s(x)")
         axes[0].legend()
         axes[0].grid(True)
         
         # Plot 2: Input function comparison (what we want to predict)
-        axes[1].plot(x_coords, u_true_np, 'b-', label='True Input', alpha=0.7)
-        # Overlay multiple inverse predictions
-        if len(inverse_preds) > 0:
-            for i, u_pred_i in enumerate(inverse_preds):
-                u_pred_np_i = u_pred_i.squeeze(-1).cpu().numpy()
-                axes[1].plot(x_coords, u_pred_np_i, 'r--', alpha=0.7, label=(f'Inverse Pred {i+1}' if i == 0 else None))
-        axes[1].set_title('Input Function: True vs Predicted u(x)')
-        axes[1].set_xlabel('x')
-        axes[1].set_ylabel('u(x)')
+        axes[1].plot(x_coords, u_true_np, "b-", label="True Input", alpha=0.7)
+        axes[1].plot(x_coords, u_pred_np, "r--", label="Predicted Input", alpha=0.7)
+        axes[1].set_title("Input Function: True vs Predicted u(x)")
+        axes[1].set_xlabel("x")
+        axes[1].set_ylabel("u(x)")
         axes[1].legend()
         axes[1].grid(True)
         
@@ -186,17 +168,17 @@ def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_funct
         extent = [0, 1, 0, 1]
         
         # Plot 1: Observed output function
-        im1 = axes[0].imshow(s_2d, cmap='viridis', extent=extent, origin='lower')
-        axes[0].set_title('Observed Output Function s(x,y)', fontsize=12)
-        axes[0].set_xlabel('x')
-        axes[0].set_ylabel('y')
+        im1 = axes[0].imshow(s_2d, cmap="viridis", extent=extent, origin="lower")
+        axes[0].set_title("Observed Output Function s(x,y)", fontsize=12)
+        axes[0].set_xlabel("x")
+        axes[0].set_ylabel("y")
         plt.colorbar(im1, ax=axes[0], fraction=0.046)
         
         # Plot 2: Absolute error for input function prediction
-        im2 = axes[1].imshow(error_2d, cmap='Reds', extent=extent, origin='lower')
-        axes[1].set_title('Input Prediction Error |u_pred - u_true|', fontsize=12)
-        axes[1].set_xlabel('x')
-        axes[1].set_ylabel('y')
+        im2 = axes[1].imshow(error_2d, cmap="Reds", extent=extent, origin="lower")
+        axes[1].set_title("Input Prediction Error |u_pred - u_true|", fontsize=12)
+        axes[1].set_xlabel("x")
+        axes[1].set_ylabel("y")
         plt.colorbar(im2, ax=axes[1], fraction=0.046)
     
     plt.tight_layout()
@@ -204,31 +186,47 @@ def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_funct
     # Save plot if directory provided
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f'{model_name}_sample_{sample_idx}.png')
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        save_path = os.path.join(save_dir, f"{model_name}_sample_{sample_idx}.png")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"Saved plot → {save_path}")
-    
+
     plt.close()
 
 
-def plot_multiple_samples(model, evaluate_fn, input_function_encoder, output_function_encoder, 
-                          test_dataset, model_name, n_samples=3, save_dir=None,
-                          params=None):
+def plot_multiple_samples(
+    model,
+    evaluate_fn,
+    input_function_encoder,
+    output_function_encoder,
+    test_dataset,
+    model_name,
+    n_samples=3,
+    save_dir=None,
+):
     """Plot multiple random samples from the test set."""
     
     # Select random samples
-    test_indices = random.sample(range(len(test_dataset)), min(n_samples, len(test_dataset)))
-    
+    test_indices = random.sample(
+        range(len(test_dataset)), min(n_samples, len(test_dataset))
+    )
+
     for i, idx in enumerate(test_indices):
         sample = test_dataset[idx]
         plot_burgers_sample(
-            model, evaluate_fn, input_function_encoder, output_function_encoder,
-            sample, idx, model_name, save_dir,
-            num_inverse_samples=3, num_forward_samples=2, params=params,
+            model,
+            evaluate_fn,
+            input_function_encoder,
+            output_function_encoder,
+            sample,
+            idx,
+            model_name,
+            save_dir,
         )
 
 
-def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3):
+def plot_model_results(
+    model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3
+):
     """Plot results for a single model."""
     
     model_log_dir = os.path.join(log_dir, model_name, "seed_1")
@@ -239,18 +237,13 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
     
     # Load model parameters
     params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
-    
     # Load models
-    input_function_encoder, output_function_encoder, model = load_models(
+    input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
         log_dir=model_log_dir,
         dataset_info=dataset_info,
         params=params,
         device=device,
     )
-    
-    # Get evaluation function
-    evaluate_fn = get_evaluate_function(model_name)
-    
     # Create model-specific results directory
     model_results_dir = os.path.join(results_dir, model_name)
     
@@ -263,8 +256,7 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
         test_dataset=test_dataset,
         model_name=model_name,
         n_samples=n_samples,
-        save_dir=model_results_dir,
-        params=params,
+        save_dir=results_dir,
     )
     
     return True
@@ -272,14 +264,30 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Plot Burgers 1D results for all models.")
-parser.add_argument("--log_dir", type=str, default="/workspaces/b2b-operator-inverse/logs", 
-                   help="Base log directory")
-parser.add_argument("--results_dir", type=str, default="results/burgers_plots_VAE1", 
-                   help="Results directory for saving plots")
-parser.add_argument("--n_samples", type=int, default=3, 
-                   help="Number of random samples to plot per model")
-parser.add_argument("--seed", type=int, default=1, 
-                   help="Random seed for reproducibility")
+parser.add_argument(
+    "--log_dir",
+    type=str,
+    default="/workspaces/b2b-operator-inverse/logs",
+    help="Base log directory",
+)
+parser.add_argument(
+    "--results_dir",
+    type=str,
+    default="results/burgers_plots",
+    help="Results directory for saving plots",
+)
+parser.add_argument(
+    "--n_samples",
+    type=int,
+    default=3,
+    help="Number of random samples to plot per model",
+)
+parser.add_argument(
+    "--seed", type=int, default=1, help="Random seed for reproducibility"
+)
+parser.add_argument(
+    "--model", type=str, required=True, help="Model name to plot results for"
+)
 
 args = parser.parse_args()
 
@@ -306,26 +314,26 @@ if not available_models:
     print("❌ No trained models found!")
     exit(1)
 
-# Load dataset once (we'll reuse it for all models)
-# Use the first available model to get params for dataset loading
-first_model = available_models[0]
-temp_log_dir = os.path.join(log_dir, first_model, f"seed_{args.seed}")
+# Check if the specified model is available
+model_path = os.path.join(log_dir, model_name, f"seed_{args.seed}", "params.pth")
+if not os.path.exists(model_path):
+    print(f"ERROR: Trained model not found: {model_path}")
+    exit(1)
+
+# Load dataset using the specified model's parameters
+temp_log_dir = os.path.join(log_dir, model_name, f"seed_{args.seed}")
 temp_params = torch.load(os.path.join(temp_log_dir, "params.pth"), weights_only=False)
 
 test_dataset, dataset_info = load_dataset(temp_params, device)
 
-# Process each available model
-successful_models = []
-for model_name in available_models:
-    success = plot_model_results(
-        model_name=model_name,
-        log_dir=log_dir,
-        results_dir=results_dir,
-        test_dataset=test_dataset,
-        dataset_info=dataset_info,
-        n_samples=args.n_samples
-    )
-    if success:
-        successful_models.append(model_name)
+# Plot results for the specified model
+success = plot_model_results(
+    model_name=model_name,
+    log_dir=log_dir,
+    results_dir=results_dir,
+    test_dataset=test_dataset,
+    dataset_info=dataset_info,
+    n_samples=args.n_samples,
+)
 
 print(f"✅ Plotted {len(successful_models)} models, {len(successful_models) * args.n_samples} total plots")

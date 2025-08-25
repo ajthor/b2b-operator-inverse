@@ -27,7 +27,7 @@ parser.add_argument(
 )
 
 # Dataset args
-parser.add_argument("--dataset", type=str, default="fwi_flat")
+parser.add_argument("--dataset", type=str, default="fwi")
 
 parser.add_argument("--model", type=str, default="b2b_nonlinear")
 
@@ -62,7 +62,7 @@ if params.encoder_type not in ["input", "output"]:
     raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
 # If the dataset is wave_scattering, limit the batch size to 5.
-if params.dataset in ["wave_scattering", "fwi_flat", "fwi_curve"]:
+if params.dataset in ["wave_scattering", "fwi"]:
     if params.batch_size > 5:
         print(
             f"Batch size {params.batch_size} is too large for the dataset. "
@@ -120,9 +120,7 @@ match params.dataset:
     case "chladni_2d":
         from data.chladni_2d import load_data
 
-    case "fwi_flat":
-        from data.fwi_data import load_data
-    case "fwi_curve":
+    case "fwi":
         from data.fwi_data import load_data
 
     case _:
@@ -174,7 +172,7 @@ function_encoder = create_function_encoder(
     n_basis=params.n_basis,
     inner_product=(
         memory_efficient_inner_product
-        if params.dataset in ["fwi_flat", "fwi_curve"]
+        if params.dataset in ["fwi"]
         else None
     ),
     regularization=params.regularization,

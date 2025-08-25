@@ -14,10 +14,7 @@ def load_dataset(params, device):
         case "wave_scattering":
             from inverse_neural_operator.data.wave_scattering import load_data
 
-        case "fwi_flat":
-            from inverse_neural_operator.data.fwi_data import load_data
-
-        case "fwi_curve":
+        case "fwi":
             from inverse_neural_operator.data.fwi_data import load_data
 
         case _:

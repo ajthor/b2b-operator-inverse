@@ -27,7 +27,7 @@ def load_models(
         n_basis=input_function_encoder_params.n_basis,
         inner_product=(
             memory_efficient_inner_product
-            if params.dataset in ["fwi_flat", "fwi_curve"]
+            if params.dataset in ["fwi"]
             else None
         ),
     )
@@ -51,7 +51,7 @@ def load_models(
         n_basis=output_function_encoder_params.n_basis,
         inner_product=(
             memory_efficient_inner_product
-            if params.dataset in ["fwi_flat", "fwi_curve"]
+            if params.dataset in ["fwi"]
             else None
         ),
     )
