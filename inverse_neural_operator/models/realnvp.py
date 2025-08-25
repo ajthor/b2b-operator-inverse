@@ -49,6 +49,8 @@ class AffineCoupling(torch.nn.Module):
         net_output = self.net(x1)
         s, t = torch.chunk(net_output, 2, dim=-1)
 
+        # s = torch.tanh(s)  # Ensure scale is bounded
+
         # Apply affine transformation
         y1 = x1
         y2 = x2 * torch.exp(s) + t
@@ -68,6 +70,8 @@ class AffineCoupling(torch.nn.Module):
         # Compute scale and translation
         net_output = self.net(y1)
         s, t = torch.chunk(net_output, 2, dim=-1)
+
+        # s = torch.tanh(s)  # Ensure scale is bounded
 
         # Apply inverse affine transformation
         x1 = y1
@@ -110,9 +114,12 @@ class RealNVP(torch.nn.Module):
         """
         if prior_log_prob_fn is None:
             # Default to standard Gaussian prior
-            prior_log_prob_fn = lambda z: -0.5 * torch.sum(
-                z**2, dim=-1
-            ) - 0.5 * z.size(-1) * torch.log(2 * torch.tensor(torch.pi))
+            def prior_log_prob_fn(z):
+                D = z.size(-1)
+                log2pi = torch.log(
+                    torch.tensor(2.0 * np.pi, device=z.device, dtype=z.dtype)
+                )
+                return -0.5 * torch.sum(z**2, dim=-1) - 0.5 * D * log2pi
 
         beta, log_det_J = self.forward(alpha)
         log_prob_prior = prior_log_prob_fn(beta)
@@ -194,11 +201,8 @@ def load_checkpoint(
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
     X, u, Y, s = batch
 
-    alpha_result = input_function_encoder.compute_coefficients(X, u)
-    alpha = alpha_result[0] if isinstance(alpha_result, tuple) else alpha_result
-
-    beta_result = output_function_encoder.compute_coefficients(Y, s)
-    beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+    alpha, _ = input_function_encoder.compute_coefficients(X, u)
+    beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
     # Compute negative log-likelihood
     log_prob = model.log_prob(alpha)
@@ -242,6 +246,7 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
+    # train_dataloader_iter = iter(train_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()

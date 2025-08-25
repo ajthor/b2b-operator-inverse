@@ -4,10 +4,10 @@ set -euo pipefail
 #── CONFIGURATION ────────────────────────────────────────
 # Same datasets and models as in run_all.sh
 
-# DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi_flat fwi_curve)
-# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network realnvp)
+# DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d)
+# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet invertible_network realnvp)
 DATASETS=(burgers_1d darcy_1d)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network realnvp)
+MODELS=(b2b_linear b2b_nonlinear deeponet)
 
 # Base directory for experiment logs - same as in run_all.sh
 LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
@@ -88,14 +88,8 @@ for dataset in "${DATASETS[@]}"; do
       --log_dir "$LOG_BASE_DIR" \
       --results_dir "$RESULTS_DIR"
       ;;
-      fwi_curve)
-      python inverse_neural_operator/plots/plot_fwi_curve.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR"
-      ;;
-      fwi_flat)
-      python inverse_neural_operator/plots/plot_fwi_flat.py \
+      fwi)
+      python inverse_neural_operator/plots/plot_fwi.py \
       --model "$model" \
       --log_dir "$LOG_BASE_DIR" \
       --results_dir "$RESULTS_DIR"

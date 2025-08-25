@@ -27,7 +27,7 @@ def load_models(
         n_basis=input_function_encoder_params.n_basis,
         inner_product=(
             memory_efficient_inner_product
-            if params.dataset in ["fwi_flat", "fwi_curve"]
+            if params.dataset in ["fwi"]
             else None
         ),
     )
@@ -51,7 +51,7 @@ def load_models(
         n_basis=output_function_encoder_params.n_basis,
         inner_product=(
             memory_efficient_inner_product
-            if params.dataset in ["fwi_flat", "fwi_curve"]
+            if params.dataset in ["fwi"]
             else None
         ),
     )
@@ -121,8 +121,7 @@ def load_models(
             )
 
             model = create_model(
-                branch_input_size=dataset_info["Y_size"] *
-                dataset_info["Y_len"],
+                branch_input_size=dataset_info["Y_size"] * dataset_info["Y_len"],
                 trunk_input_size=dataset_info["X_size"],
                 output_size=dataset_info["u_size"],
                 hidden_sizes=params.hidden_sizes,
@@ -158,7 +157,7 @@ def load_models(
             model = create_model(
                 input_size=input_function_encoder_params.n_basis,
                 hidden_sizes=params.hidden_sizes,
-                n_coupling_layers=4,
+                n_coupling_layers=2,
             ).to(device)
             model = load(
                 model=model, path=os.path.join(log_dir, "model.pth"), device=device
@@ -188,7 +187,9 @@ def load_models(
             )
 
             # Load dataset info for iFNO configuration
-            # dataset_info is provided as a function argument; 
+            from inverse_neural_operator.data import get_data_loaders
+
+            dataset_info = get_data_loaders(params.dataset, 1, 1)[2]  # Get dataset info
 
             model = create_model(
                 input_size=input_function_encoder_params.n_basis,
@@ -216,4 +217,4 @@ def load_models(
         case _:
             raise ValueError(f"Unknown model: {params.model}")
 
-    return input_function_encoder, output_function_encoder, model
+    return input_function_encoder, output_function_encoder, model, evaluate

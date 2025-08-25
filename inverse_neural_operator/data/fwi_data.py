@@ -1,133 +1,115 @@
 import os
 import torch
 import numpy as np
+import h5py
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
-from torchvision.transforms import Compose
-from datasets import load_dataset
 
 
-def log_transform(data, k=1, c=0):
-    """Apply log transform to data."""
-    return (np.log1p(np.abs(k * data) + c)) * np.sign(data)
+class FWIDataset(Dataset):
+    """Custom dataset for Full Waveform Inversion (FWI) data with HDF5 loading."""
 
-
-def minmax_normalize(data, datamin, datamax, scale=2):
-    """Min-max normalize data to [-1, 1] if scale=2, else [0, 1]."""
-    data = data - datamin
-    data = data / (datamax - datamin)
-    if scale == 2:
-        return (data - 0.5) * 2
-    else:
-        return data
-
-
-def process_data_batch(inputs, outputs):
-    """Process a batch of data with transforms."""
-    # Apply log transform and minmax normalization to inputs
-    inputs = log_transform(inputs, k=1)
-    inputs = minmax_normalize(inputs, log_transform(-61, k=1), log_transform(120, k=1))
-    # Apply minmax normalization to outputs
-    outputs = minmax_normalize(outputs, 2000, 6000)
-    return inputs, outputs
-
-
-class FWIData(Dataset):
-    """Custom dataset for Full Waveform Inversion (FWI) data with dynamic loading."""
-
-    def __init__(self, dataset: str, device="cpu", split: str = "train"):
+    def __init__(self, data_path, device="cpu", split="train"):
         """
-        Initialize dataset with file paths instead of loading all data.
+        Initialize dataset with HDF5 file loading.
 
-        The data is stored in 60 npy files. Each file has 500 samples.
-        Input data is (5,1000,70)
-        Output data is (1,70,70)
-
-        The first 50 files (25k samples) are used for training, the last 10 for testing.
+        The data is stored in HDF5 files with structure:
+        - models: velocity models (batch_size, 24, 48, 1)  
+        - transforms: seismic transforms (batch_size, 400, 76, 1)
+        
+        Args:
+            data_path: Path to directory containing HDF5 files
+            device: Device to load data on
+            split: 'train' or 'test' split
         """
         self.device = device
         self.split = split
-
-        # Set base path based on dataset
-        if dataset == "fwi_flat":
-            self.basepath = "/store/at46867/fwi_data/flat_vel"
-        elif dataset == "fwi_curve":
-            self.basepath = "/store/at46867/fwi_data/curve_vel"
-        else:
-            raise ValueError(f"Unknown dataset: {dataset}")
-
-        # Define file ranges for splits
+        
+        # Set data path based on split
         if split == "train":
-            self.file_range = range(1, 51)  # Files 1-50
+            self.data_path = os.path.join(data_path, "training_dataset")
         elif split == "test":
-            self.file_range = range(51, 61)  # Files 51-60
+            self.data_path = os.path.join(data_path, "testing_dataset")
         else:
             raise ValueError(f"Unknown split: {split}")
+        
+        # Define batch configuration
+        self.batch_size = 500
+        
+        # For training: assume 128 batches (0-127), for testing: assume 32 batches (0-31)
+        if split == "train":
+            self.batch_range = range(0, 128)
+        else:  # test
+            self.batch_range = range(0, 32)
+        
+        self.n_batches = len(self.batch_range)
+        self.n_samples = self.n_batches * self.batch_size
+        
+        # Cache for currently loaded batch
+        self._current_batch_idx = None
+        self._current_models = None
+        self._current_transforms = None
+        
+        # Setup coordinate grids
+        # Input coordinates (24x48 velocity model grid)
+        x_input = torch.linspace(0, 1, 24)
+        y_input = torch.linspace(0, 1, 48)
+        X_input, Y_input = torch.meshgrid(x_input, y_input, indexing="ij")
+        self.X_template = torch.stack([X_input.flatten(), Y_input.flatten()], dim=1)
+        
+        # Output coordinates (400x76 seismic transform grid)
+        x_output = torch.linspace(0, 1, 400)
+        y_output = torch.linspace(0, 1, 76)
+        X_output, Y_output = torch.meshgrid(x_output, y_output, indexing="ij")
+        self.Y_template = torch.stack([X_output.flatten(), Y_output.flatten()], dim=1)
+        
+        print(f"Initialized FWI dataset: {self.n_samples} {split} samples")
 
-        # Each file contains 500 samples
-        self.samples_per_file = 500
-        self.n_files = len(self.file_range)
-        self.n_samples = self.n_files * self.samples_per_file
-
-        # Cache for currently loaded file
-        self._current_file_idx = None
-        self._current_data = None
-        self._current_targets = None
-
-        # Setup coordinate grids directly in __init__
-        # Create an ndgrid for X coordinates (input space)
-        s = torch.linspace(0, 1, 5)
-        t = torch.linspace(0, 1, 1000)
-        d = torch.linspace(0, 1, 70)
-        _S, _T, _G = torch.meshgrid(s, t, d, indexing="ij")
-
-        self.X_template = torch.stack([_S.flatten(), _T.flatten(), _G.flatten()], dim=1)
-
-        # Create a meshgrid for Y coordinates (output space)
-        x = torch.linspace(0, 1, 70)
-        y = torch.linspace(0, 1, 70)
-        X, Y = torch.meshgrid(x, y, indexing="ij")
-
-        self.Y_template = torch.stack([X.flatten(), Y.flatten()], dim=1)
-
-    def _load_file(self, file_idx):
-        """Load a specific file and cache it."""
-        if self._current_file_idx == file_idx:
+    def _load_batch(self, batch_idx):
+        """Load a specific batch from HDF5 file and cache it."""
+        if self._current_batch_idx == batch_idx:
             return  # Already loaded
-
-        file_num = list(self.file_range)[file_idx]
-
-        # Load input data
-        input_file = os.path.join(self.basepath, f"data{file_num}.npy")
-        if not os.path.exists(input_file):
-            raise FileNotFoundError(f"Input file {input_file} does not exist.")
-
-        # Load output data
-        output_file = os.path.join(self.basepath, f"model{file_num}.npy")
-        if not os.path.exists(output_file):
-            raise FileNotFoundError(f"Output file {output_file} does not exist.")
-
-        # Load and process data
-        inputs = np.load(input_file)  # Shape: (500, 5, 1000, 70)
-        outputs = np.load(output_file)  # Shape: (500, 1, 70, 70)
-
-        # Apply transforms
-        inputs, outputs = process_data_batch(inputs, outputs)
-
-        # Convert to tensors and reshape
-        inputs = torch.tensor(inputs, dtype=torch.float32)
-        outputs = torch.tensor(outputs, dtype=torch.float32)
-
-        # Reshape for the neural operator
-        inputs = inputs.view(inputs.shape[0], -1, 1)  # [batch, values, 1]
-        outputs = outputs.view(outputs.shape[0], -1, 1)  # [batch, values, 1]
-
+        
+        batch_num = list(self.batch_range)[batch_idx]
+        filepath = os.path.join(self.data_path, f"new_sor_{self.batch_size}sim_b{batch_num}.hdf5")
+        
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"HDF5 file {filepath} does not exist.")
+        
+        # Load data from HDF5 file
+        with h5py.File(filepath, "r") as f:
+            models = f["models"][:]  # Shape: (500, 24, 48, 1)
+            transforms = f["transforms"][:]  # Shape: (500, 400, 76)
+            
+            # Reshape transforms to add channel dimension
+            transforms = transforms.reshape(self.batch_size, 400, 76, 1)
+        
+        # Apply basic normalization
+        models = self._normalize_data(models)
+        transforms = self._normalize_data(transforms)
+        
+        # Convert to tensors and flatten spatial dimensions
+        models = torch.tensor(models, dtype=torch.float32)
+        transforms = torch.tensor(transforms, dtype=torch.float32)
+        
+        # Flatten spatial dimensions: (batch, H, W, 1) -> (batch, H*W, 1)
+        models = models.view(models.shape[0], -1, 1)
+        transforms = transforms.view(transforms.shape[0], -1, 1)
+        
         # Cache the data
-        self._current_file_idx = file_idx
-        self._current_data = inputs
-        self._current_targets = outputs
+        self._current_batch_idx = batch_idx
+        self._current_models = models
+        self._current_transforms = transforms
+        
+        print(f"Loaded batch {batch_num} with {models.shape[0]} samples")
 
-        print(f"Loaded file {file_num} with {inputs.shape[0]} samples")
+    def _normalize_data(self, data):
+        """Apply basic min-max normalization to [-1, 1]."""
+        data_min = np.min(data)
+        data_max = np.max(data)
+        if data_max > data_min:
+            data = 2 * (data - data_min) / (data_max - data_min) - 1
+        return data
 
     def __len__(self):
         """Return the total number of samples in the dataset."""
@@ -139,49 +121,49 @@ class FWIData(Dataset):
 
         Returns:
             A tuple of (X, u, Y, s) where:
-            - X is the input coordinates
-            - u is the input function values
-            - Y is the grid coordinates
-            - s is the output function values
+            - X is the input coordinates (24x48 flattened)
+            - u is the input function values (velocity model)
+            - Y is the output coordinates (400x76 flattened)
+            - s is the output function values (seismic transform)
         """
-        # Determine which file and which sample within that file
-        file_idx = idx // self.samples_per_file
-        sample_idx = idx % self.samples_per_file
-
-        # Load the file if not already loaded
-        self._load_file(file_idx)
-
+        # Determine which batch and which sample within that batch
+        batch_idx = idx // self.batch_size
+        sample_idx = idx % self.batch_size
+        
+        # Load the batch if not already loaded
+        self._load_batch(batch_idx)
+        
         # Get the sample
-        u = self._current_data[sample_idx]
-        s = self._current_targets[sample_idx]
-
+        u = self._current_models[sample_idx]  # Velocity model
+        s = self._current_transforms[sample_idx]  # Seismic transform
+        
         # Return with coordinate grids
         return (
-            self.X_template.to(self.device),
-            u.to(self.device),
-            self.Y_template.to(self.device),
-            s.to(self.device),
+            self.X_template.to(self.device),  # Input coordinates
+            u.to(self.device),                # Input function (velocity model)
+            self.Y_template.to(self.device),  # Output coordinates
+            s.to(self.device),                # Output function (seismic transform)
         )
 
     def get_info(self):
         """Extract info from model dataset."""
         return {
-            # Basic info (existing)
-            "X_size": self.X_template.shape[-1],
-            "u_size": 1,  # After reshaping
-            "Y_size": self.Y_template.shape[-1],
-            "s_size": 1,  # After reshaping
-            "X_len": self.X_template.shape[0],
-            "u_len": 5 * 1000 * 70,  # Total flattened input size
-            "Y_len": self.Y_template.shape[0],
-            "s_len": 70 * 70,  # Total flattened output size
+            # Basic info
+            "X_size": self.X_template.shape[-1],    # 2 (x,y coordinates)
+            "u_size": 1,                            # 1 (scalar velocity values)
+            "Y_size": self.Y_template.shape[-1],    # 2 (x,y coordinates)
+            "s_size": 1,                            # 1 (scalar transform values)
+            "X_len": self.X_template.shape[0],      # 24*48 = 1152 points
+            "u_len": 24 * 48,                       # Input spatial points
+            "Y_len": self.Y_template.shape[0],      # 400*76 = 30400 points
+            "s_len": 400 * 76,                      # Output spatial points
             
-            # iFNO spatial info (hardcoded for FWI - highly asymmetric)
-            "input_spatial_dims": (5, 1000, 70),  # 3D input space (source, time, depth)
-            "output_spatial_dims": (70, 70),      # 2D output space (spatial)
-            "input_function_channels": 1,         # Scalar seismic data
-            "output_function_channels": 1,        # Scalar velocity model
-            "coordinate_dim": 3,                  # 3D input coordinates
+            # iFNO spatial info
+            "input_spatial_dims": (24, 48),         # 2D velocity model space
+            "output_spatial_dims": (400, 76),       # 2D seismic transform space
+            "input_function_channels": 1,           # Scalar velocity field
+            "output_function_channels": 1,          # Scalar seismic data
+            "coordinate_dim": 2,                    # 2D coordinates
         }
 
 
@@ -190,12 +172,62 @@ def load_data(params, device, split="train"):
     Load a dataset from a specific split.
 
     Args:
-        params (dict): Parameters containing dataset information.
-        device (str): The device to load the data on, e.g., 'cpu' or 'cuda'.
-        split (str): The split of the dataset to load, either 'train' or 'test'.
+        params (dict): Parameters containing dataset information, must have 'data_path'
+        device (str): The device to load the data on, e.g., 'cpu' or 'cuda'
+        split (str): The split of the dataset to load, either 'train' or 'test'
 
     Returns:
-        FWIData: An instance of the FWIData class containing the dataset.
+        FWIDataset: An instance of the FWIDataset class containing the dataset
     """
+    # Get data path from params, with fallback to default store path
+    data_path = getattr(params, 'data_path', '/store/at46867/fwi_data')
+    
+    return FWIDataset(data_path=data_path, device=device, split=split)
 
-    return FWIData(dataset=params.dataset, device=device, split=split)
+
+def plot_input(ax, _, y):
+    """
+    Plot the input data (velocity model).
+
+    Args:
+        ax: The axis to plot on
+        _: Unused x-coordinates (kept for compatibility)
+        y: The y-coordinates of the data (velocity values)
+    """
+    # Reshape to 2D grid for visualization (24x48)
+    y_2d = y.reshape(24, 48)
+    
+    # Use extent to match notebook visualization: [0,48,24,0]
+    im = ax.imshow(y_2d, extent=[0, 48, 24, 0], aspect="equal", cmap='magma_r')
+    ax.set_title('Velocity Model')
+    
+    # Add colorbar
+    plt.colorbar(im, ax=ax)
+    return im
+
+
+def plot_output(ax, _, y):
+    """
+    Plot the output data (seismic transform).
+
+    Args:
+        ax: The axis to plot on
+        _: Unused x-coordinates (kept for compatibility)
+        y: The y-coordinates of the data (seismic transform values)
+    """
+    # Reshape to 2D grid for visualization (400x76)
+    y_2d = y.reshape(400, 76)
+    
+    # Use contour plot with frequency/time axes like in notebook
+    # Frequency range: 5-81 Hz, Time range: 100-1000 ms
+    freq_range = np.arange(5, 81, 1)  # 76 frequency points
+    time_range = np.arange(100, 1000, 2.25)  # 400 time points
+    
+    im = ax.contourf(freq_range, time_range, y_2d, cmap="jet")
+    ax.set_xlabel('Frequency (Hz)')
+    ax.set_ylabel('Time (ms)')
+    ax.set_title('Seismic Transform')
+    
+    # Add colorbar
+    plt.colorbar(im, ax=ax)
+    return im

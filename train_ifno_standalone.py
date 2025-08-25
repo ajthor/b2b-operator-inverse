@@ -32,8 +32,7 @@ def main():
             "parametric_heat",
             "chladni_2d",
             "wave_scattering",
-            "fwi_flat",
-            "fwi_curve",
+            "fwi",
         ],
         help="Which dataset to use",
     )
@@ -107,7 +106,7 @@ def main():
         from inverse_neural_operator.data.chladni_2d import load_data as load_data_fn
     elif args.dataset == "wave_scattering":
         from inverse_neural_operator.data.wave_scattering import load_data as load_data_fn
-    elif args.dataset in ("fwi_flat", "fwi_curve"):
+    elif args.dataset == "fwi":
         from inverse_neural_operator.data.fwi_data import load_data as load_data_fn
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")

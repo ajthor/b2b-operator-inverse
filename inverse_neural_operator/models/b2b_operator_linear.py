@@ -157,19 +157,9 @@ def train(
 
             # Compute the alpha and beta coefficients
             X, u, Y, s = batch
-            alpha_result = input_function_encoder.compute_coefficients(X, u)
-            alpha = (
-                alpha_result[0]
-                if isinstance(alpha_result, tuple)
-                else alpha_result
-            )
 
-            beta_result = output_function_encoder.compute_coefficients(Y, s)
-            beta = (
-                beta_result[0]
-                if isinstance(beta_result, tuple)
-                else beta_result
-            )
+            alpha, _ = input_function_encoder.compute_coefficients(X, u)
+            beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
             # Compute the normal equations in chunks
             SXX += torch.einsum("ij,ik->jk", alpha, alpha)
@@ -222,9 +212,7 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         X, u, Y, s = point
 
         beta_result = output_function_encoder.compute_coefficients(Y, s)
-        beta = (
-            beta_result[0] if isinstance(beta_result, tuple) else beta_result
-        )
+        beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
 
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)

@@ -27,21 +27,19 @@ parser.add_argument(
 )
 
 # Dataset args
-parser.add_argument("--dataset", type=str, default="fwi_flat")
+parser.add_argument("--dataset", type=str, default="fwi")
 
 parser.add_argument("--model", type=str, default="b2b_nonlinear")
 
 # Function encoder args
 parser.add_argument("--n_basis", type=int, default=100)
 parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
-parser.add_argument("--regularization", type=float,
-                    default=1e-3)  # 1e-4 for chladni_2d
+parser.add_argument("--regularization", type=float, default=1e-3)  # 1e-4 for chladni_2d
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)
 parser.add_argument("--epochs", type=int, default=5000)
-parser.add_argument("--learning_rate", type=float,
-                    default=1e-3)  # 1e-3 for chladni_2d
+parser.add_argument("--learning_rate", type=float, default=1e-3)  # 1e-3 for chladni_2d
 
 # SummaryWriter args
 parser.add_argument("--log_dir", type=str, default=None)
@@ -64,7 +62,7 @@ if params.encoder_type not in ["input", "output"]:
     raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
 # If the dataset is wave_scattering, limit the batch size to 5.
-if params.dataset in ["wave_scattering", "fwi_flat", "fwi_curve"]:
+if params.dataset in ["wave_scattering", "fwi"]:
     if params.batch_size > 5:
         print(
             f"Batch size {params.batch_size} is too large for the dataset. "
@@ -122,9 +120,7 @@ match params.dataset:
     case "chladni_2d":
         from data.chladni_2d import load_data
 
-    case "fwi_flat":
-        from data.fwi_data import load_data
-    case "fwi_curve":
+    case "fwi":
         from data.fwi_data import load_data
 
     case _:
@@ -139,15 +135,11 @@ dataset_info = model_train_dataset.get_info()
 
 match params.encoder_type:
     case "input":
-        train_dataset = InputFunctionEncoderDataset(
-            model_train_dataset, device=device)
-        test_dataset = InputFunctionEncoderDataset(
-            model_test_dataset, device=device)
+        train_dataset = InputFunctionEncoderDataset(model_train_dataset, device=device)
+        test_dataset = InputFunctionEncoderDataset(model_test_dataset, device=device)
     case "output":
-        train_dataset = OutputFunctionEncoderDataset(
-            model_train_dataset, device=device)
-        test_dataset = OutputFunctionEncoderDataset(
-            model_test_dataset, device=device)
+        train_dataset = OutputFunctionEncoderDataset(model_train_dataset, device=device)
+        test_dataset = OutputFunctionEncoderDataset(model_test_dataset, device=device)
     case _:
         raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
@@ -180,15 +172,14 @@ function_encoder = create_function_encoder(
     n_basis=params.n_basis,
     inner_product=(
         memory_efficient_inner_product
-        if params.dataset in ["fwi_flat", "fwi_curve"]
+        if params.dataset in ["fwi"]
         else None
     ),
     regularization=params.regularization,
 )
 # function_encoder = torch.compile(function_encoder)
 function_encoder.to(device)
-optimizer = torch.optim.Adam(
-    function_encoder.parameters(), lr=params.learning_rate)
+optimizer = torch.optim.Adam(function_encoder.parameters(), lr=params.learning_rate)
 
 # Train the function encoder
 train_function_encoder(

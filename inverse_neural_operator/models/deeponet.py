@@ -32,7 +32,7 @@ class DeepONet(torch.nn.Module):
 
     def forward(self, s, X):
         """
-        Not used for the inverse problem.
+        Forward is not used in this inverse-operator variant. Use `.inverse(s, X)` instead.
         """
         return None
 
@@ -41,26 +41,61 @@ class DeepONet(torch.nn.Module):
         Maps from output function values (s) and evaluation points (X) to
         input function values (u).
 
-        Args:
-            s: Output function values
-            X: Spatial coordinates for evaluation
+        Shapes:
+            - s: (B, S)  arbitrary branch input per sample
+            - X: (B, d) for a single evaluation point per sample, or (B, N, d)
+                 for N evaluation points per sample.
 
         Returns:
-            Predicted input function values (u) at points X
+            - u_pred: (B, C) if X is (B, d), or (B, N, C) if X is (B, N, d),
+              where C == self.output_channels.
         """
         # Process through branch network (processes output function s)
-        branch_output = self.branch_net(s)
+        branch_output = self.branch_net(s)  # (B, C*D)
 
         # Process through trunk network (processes evaluation points X)
-        trunk_output = self.trunk_net(X)
+        trunk_output = self.trunk_net(X)  # (B, D) or (B, N, D)
 
-        # Reshape for dot product
-        batch_size = s.shape[0]
-        branch_output = branch_output.view(batch_size, self.output_channels, -1)
-        trunk_output = trunk_output.view(batch_size, -1, 1)
+        # Determine dimensions
+        B = s.shape[0]
+        C = self.output_channels
 
-        # Compute the output with bias
-        output = torch.bmm(branch_output, trunk_output).squeeze(-1) + self.bias
+        # Reshape branch to (B, C, D)
+        try:
+            branch_output = branch_output.view(B, C, -1)
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"Branch output shape {tuple(branch_output.shape)} is not compatible with output_channels={C}. "
+                f"Expected last dim to be a multiple of C."
+            ) from e
+
+        # Ensure trunk has an explicit point dimension N: (B, N, D)
+        if trunk_output.dim() == 2:
+            trunk_output = trunk_output.unsqueeze(1)  # (B, 1, D)
+        elif trunk_output.dim() != 3:
+            raise RuntimeError(
+                f"Trunk output must be rank-2 or rank-3. Got shape {tuple(trunk_output.shape)}"
+            )
+
+        # Validate feature dimension match (D)
+        if branch_output.shape[-1] != trunk_output.shape[-1]:
+            raise RuntimeError(
+                f"Dot-product feature mismatch: branch D={branch_output.shape[-1]} vs trunk D={trunk_output.shape[-1]}"
+            )
+
+        # Compute inner product along D to get (B, C, N)
+        # Using einsum for clarity and to support broadcasting over N
+        output = torch.einsum("bcd,bnd->bcn", branch_output, trunk_output)
+
+        # Add bias (C,) across N evaluation points
+        output = output + self.bias.view(1, C, 1)
+
+        # Return as (B, N, C) for consistency with typical datasets
+        output = output.permute(0, 2, 1).contiguous()
+
+        # If there was only a single point (N==1), optionally squeeze the N dim
+        if output.shape[1] == 1:
+            output = output.squeeze(1)  # (B, C)
 
         return output
 
@@ -208,6 +243,7 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
+    # train_dataloader_iter = iter(train_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()
