@@ -37,12 +37,14 @@ class NonlinearB2BOperatorFwd(torch.nn.Module):
         return beta
 
     def inverse(self, beta):
-        for layer in self.layers[:-1]:
-            beta = self.activation(layer(beta))
-
-        beta = self.layers[-1](beta)
-
-        return beta
+        # Note: This is a placeholder inverse method
+        # In practice, the true inverse would require a separate inverse network
+        # or an iterative optimization procedure
+        # For now, returning the input as this model focuses on the forward direction
+        raise NotImplementedError(
+            "Inverse method not implemented for forward model. "
+            "Use b2b_operator_nonlinear.py for inverse operations."
+        )
 
 
 def create_model(input_size, hidden_sizes, output_size):
@@ -109,12 +111,15 @@ def load_checkpoint(
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
     X, u, Y, s = batch
 
-    alpha, _ = input_function_encoder.compute_coefficients(X, u)
-    beta, _ = output_function_encoder.compute_coefficients(Y, s)
+    alpha_result = input_function_encoder.compute_coefficients(X, u)
+    alpha = alpha_result[0] if isinstance(alpha_result, tuple) else alpha_result
+    
+    beta_result = output_function_encoder.compute_coefficients(Y, s)
+    beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
 
     beta_pred = model.forward(alpha)
 
-    s_pred = input_function_encoder(X, beta_pred)
+    s_pred = output_function_encoder(Y, beta_pred)
 
     # pred_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
     pred_loss = torch.nn.functional.mse_loss(s_pred, s, reduction="mean")
@@ -208,14 +213,21 @@ def test_model(
 
 
 def evaluate(model, point, input_function_encoder, output_function_encoder):
+    """
+    Evaluate forward model: given input u, predict output s
+    """
     model.eval()
     with torch.no_grad():
         X, u, Y, s = point
 
-        beta_result = output_function_encoder.compute_coefficients(Y, s)
-        beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+        # Compute alpha from input u
+        alpha_result = input_function_encoder.compute_coefficients(X, u)
+        alpha = alpha_result[0] if isinstance(alpha_result, tuple) else alpha_result
 
-        alpha_pred = model.inverse(beta)
-        pred = input_function_encoder(X, alpha_pred)
+        # Forward pass: alpha -> beta
+        beta_pred = model.forward(alpha)
+        
+        # Reconstruct output s from predicted beta
+        s_pred = output_function_encoder(Y, beta_pred)
 
-        return pred
+        return s_pred

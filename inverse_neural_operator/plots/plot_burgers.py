@@ -26,7 +26,7 @@ random.seed(42)
 np.random.seed(42)
 
 # Available models to plot
-MODELS = ['b2b_linear', 'b2b_nonlinear', 'variational_autoencoder', 'invertible_network']
+MODELS = ['b2b_linear', 'b2b_nonlinear', 'b2b_nonlinear_fwd', 'variational_autoencoder', 'invertible_network']
 
 
 def get_evaluate_function(model_name):
@@ -35,6 +35,8 @@ def get_evaluate_function(model_name):
         from inverse_neural_operator.models.b2b_operator_linear import evaluate
     elif model_name == "b2b_nonlinear":
         from inverse_neural_operator.models.b2b_operator_nonlinear import evaluate
+    elif model_name == "b2b_nonlinear_fwd":
+        from inverse_neural_operator.models.b2b_operator_nonlinear_fwd import evaluate
     elif model_name == "variational_autoencoder":
         from inverse_neural_operator.models.variational_autoencoder import evaluate
     elif model_name == "invertible_network":
@@ -44,6 +46,85 @@ def get_evaluate_function(model_name):
     else:
         raise ValueError(f"Unknown model: {model_name}")
     return evaluate
+
+
+def plot_forward_model_sample(model, input_function_encoder, output_function_encoder,
+                              sample, sample_idx, model_name, save_dir=None):
+    """
+    Plot a single sample for the forward model (alpha -> beta -> s prediction).
+    """
+    model.eval()
+    
+    X, u_true, Y, s_true = sample
+    
+    # Ensure tensors are on correct device
+    X = X.to(device)
+    u_true = u_true.to(device)
+    Y = Y.to(device)
+    s_true = s_true.to(device)
+    
+    with torch.no_grad():
+        # Add batch dimension for encoders
+        X_batch = X.unsqueeze(0)
+        u_batch = u_true.unsqueeze(0)
+        Y_batch = Y.unsqueeze(0)
+        
+        # Compute alpha from true input
+        alpha_result = input_function_encoder.compute_coefficients(X_batch, u_batch)
+        alpha = alpha_result[0] if isinstance(alpha_result, tuple) else alpha_result
+        
+        # Forward pass through model
+        beta_pred = model.forward(alpha)
+        
+        # Reconstruct predicted output
+        s_pred = output_function_encoder(Y_batch, beta_pred)
+        s_pred = s_pred.squeeze(0)  # Remove batch dimension
+    
+    # Convert to numpy for plotting
+    u_true_np = u_true.squeeze(-1).cpu().numpy()
+    s_true_np = s_true.squeeze(-1).cpu().numpy()
+    s_pred_np = s_pred.squeeze(-1).cpu().numpy()
+    X_np = X.squeeze(-1).cpu().numpy()
+    Y_np = Y.squeeze(-1).cpu().numpy()
+    
+    # Extract x coordinates for 1D plotting
+    if X_np.ndim == 1:
+        x_coords = X_np
+        y_coords = Y_np
+    else:
+        x_coords = X_np[:, 0]
+        y_coords = Y_np[:, 0]
+    
+    # Create plot with 2 subplots
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Plot 1: Input function (what we start with)
+    axes[0].plot(x_coords, u_true_np, 'b-', label='Input u(x)', linewidth=2)
+    axes[0].set_title('Input Function u(x)', fontsize=12)
+    axes[0].set_xlabel('x')
+    axes[0].set_ylabel('u(x)')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    
+    # Plot 2: Output function comparison
+    axes[1].plot(y_coords, s_true_np, 'g-', label='True s(y)', linewidth=2)
+    axes[1].plot(y_coords, s_pred_np, 'r--', label='Predicted s(y)', linewidth=2)
+    axes[1].set_title('Forward Model: Output Prediction', fontsize=12)
+    axes[1].set_xlabel('y')
+    axes[1].set_ylabel('s(y)')
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # Save plot if directory provided
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, f'{model_name}_forward_sample_{sample_idx}.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved forward model plot → {save_path}")
+    
+    plt.close()
 
 
 def plot_burgers_sample(model, evaluate_fn, input_function_encoder, output_function_encoder, 
@@ -248,24 +329,41 @@ def plot_model_results(model_name, log_dir, results_dir, test_dataset, dataset_i
         device=device,
     )
     
-    # Get evaluation function
-    evaluate_fn = get_evaluate_function(model_name)
-    
     # Create model-specific results directory
     model_results_dir = os.path.join(results_dir, model_name)
     
-    # Plot results
-    plot_multiple_samples(
-        model=model,
-        evaluate_fn=evaluate_fn,
-        input_function_encoder=input_function_encoder,
-        output_function_encoder=output_function_encoder,
-        test_dataset=test_dataset,
-        model_name=model_name,
-        n_samples=n_samples,
-        save_dir=model_results_dir,
-        params=params,
-    )
+    # Handle forward model separately
+    if model_name == "b2b_nonlinear_fwd":
+        # Select random samples for forward model plots
+        test_indices = random.sample(range(len(test_dataset)), min(n_samples, len(test_dataset)))
+        
+        for i, idx in enumerate(test_indices):
+            sample = test_dataset[idx]
+            plot_forward_model_sample(
+                model=model,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+                sample=sample,
+                sample_idx=idx,
+                model_name=model_name,
+                save_dir=model_results_dir
+            )
+    else:
+        # Get evaluation function for inverse models
+        evaluate_fn = get_evaluate_function(model_name)
+        
+        # Plot results for inverse models
+        plot_multiple_samples(
+            model=model,
+            evaluate_fn=evaluate_fn,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+            test_dataset=test_dataset,
+            model_name=model_name,
+            n_samples=n_samples,
+            save_dir=model_results_dir,
+            params=params,
+        )
     
     return True
 

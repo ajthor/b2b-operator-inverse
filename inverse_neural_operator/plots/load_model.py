@@ -97,6 +97,22 @@ def load_models(
                 model=model, path=os.path.join(log_dir, "model.pth"), device=device
             )
 
+        case "b2b_nonlinear_fwd":
+            from inverse_neural_operator.models.b2b_operator_nonlinear_fwd import (
+                create_model,
+                load,
+                evaluate,
+            )
+
+            model = create_model(
+                input_size=input_function_encoder_params.n_basis,
+                output_size=output_function_encoder_params.n_basis,
+                hidden_sizes=params.hidden_sizes,
+            ).to(device)
+            model = load(
+                model=model, path=os.path.join(log_dir, "model.pth"), device=device
+            )
+
         case "deeponet":
             from inverse_neural_operator.models.deeponet import (
                 create_model,
