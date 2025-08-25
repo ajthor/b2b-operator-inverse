@@ -176,6 +176,10 @@ train_model() {
     --device "cuda:$gpu" \
     --log_dir "$model_logdir" \
     --lambda_u 0.0 \
+    --learning_rate 5e-4 \
+    --epochs 10000 \
+    --hidden_sizes 256 256 \
+    --batch_size 128 \
     >>"$logfile" 2>&1 \
     || echo "[$count] Training model $model failed with exit code $?"
 

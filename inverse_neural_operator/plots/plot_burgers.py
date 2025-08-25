@@ -21,10 +21,6 @@ from inverse_neural_operator.plots.load_model import load_models
 
 device = "cpu"
 
-torch.manual_seed(42)
-random.seed(42)
-np.random.seed(42)
-
 # Available models to plot - includes forward model
 MODELS = [
     "b2b_linear",
@@ -279,11 +275,11 @@ def plot_multiple_samples(
 
 
 def plot_model_results(
-    model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3
+    model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3, seed=1
 ):
     """Plot results for a single model."""
 
-    model_log_dir = os.path.join(log_dir, model_name, "seed_1")
+    model_log_dir = os.path.join(log_dir, model_name, f"seed_{seed}")
 
     # Check if model exists
     if not os.path.exists(os.path.join(model_log_dir, "params.pth")):
@@ -352,14 +348,15 @@ parser.add_argument(
 parser.add_argument(
     "--n_samples",
     type=int,
-    default=3,
+    default=5,
     help="Number of random samples to plot per model",
 )
 parser.add_argument(
     "--seed", type=int, default=1, help="Random seed for reproducibility"
 )
 parser.add_argument(
-    "--model", type=str, required=True, help="Model name to plot results for"
+    "--model", type=str, required=False, default=None, 
+    help="Model name to plot results for. If not specified, plots all available models."
 )
 
 args = parser.parse_args()
@@ -376,33 +373,72 @@ dataset = "burgers_1d"
 log_dir = os.path.join(args.log_dir, dataset)
 results_dir = os.path.join(args.results_dir)
 
-# Get the model name from args
-model_name = args.model
+# Determine which models to plot
+if args.model is not None:
+    # Single model specified
+    models_to_plot = [args.model]
+else:
+    # Auto-detect available models
+    models_to_plot = []
+    if os.path.exists(log_dir):
+        for model_name in MODELS:
+            model_path = os.path.join(log_dir, model_name, f"seed_{args.seed}", "params.pth")
+            if os.path.exists(model_path):
+                models_to_plot.append(model_name)
+    
+    if not models_to_plot:
+        print(f"ERROR: No trained models found in {log_dir}")
+        exit(1)
+    else:
+        print(f"Found {len(models_to_plot)} models to plot: {', '.join(models_to_plot)}")
 
-# Check if the specified model is available
-model_path = os.path.join(log_dir, model_name, f"seed_{args.seed}", "params.pth")
-if not os.path.exists(model_path):
-    print(f"ERROR: Trained model not found: {model_path}")
-    exit(1)
-
-# Load dataset using the specified model's parameters
-temp_log_dir = os.path.join(log_dir, model_name, f"seed_{args.seed}")
+# Load dataset using the first available model's parameters
+first_model = models_to_plot[0]
+temp_log_dir = os.path.join(log_dir, first_model, f"seed_{args.seed}")
 temp_params = torch.load(os.path.join(temp_log_dir, "params.pth"), weights_only=False)
 
 test_dataset, dataset_info = load_dataset(temp_params, device)
 
-# Plot results for the specified model
-success = plot_model_results(
-    model_name=model_name,
-    log_dir=log_dir,
-    results_dir=results_dir,
-    test_dataset=test_dataset,
-    dataset_info=dataset_info,
-    n_samples=args.n_samples,
-)
+# Plot results for all selected models
+total_success = 0
+total_failed = []
 
-if success:
-    print(f"SUCCESS: Plotted {model_name}, {args.n_samples} total plots")
-else:
-    print(f"ERROR: Failed to plot {model_name}")
+for model_name in models_to_plot:
+    # Check if the model exists
+    model_path = os.path.join(log_dir, model_name, f"seed_{args.seed}", "params.pth")
+    if not os.path.exists(model_path):
+        print(f"WARNING: Skipping {model_name} - model not found at {model_path}")
+        total_failed.append(model_name)
+        continue
+    
+    # Create model-specific subdirectory for results
+    model_results_dir = os.path.join(results_dir, model_name)
+    os.makedirs(model_results_dir, exist_ok=True)
+    
+    # Plot results for this model
+    success = plot_model_results(
+        model_name=model_name,
+        log_dir=log_dir,
+        results_dir=model_results_dir,  # Use model-specific directory
+        test_dataset=test_dataset,
+        dataset_info=dataset_info,
+        n_samples=args.n_samples,
+        seed=args.seed,
+    )
+    
+    if success:
+        print(f"✓ Plotted {model_name} ({args.n_samples} samples) → {model_results_dir}")
+        total_success += 1
+    else:
+        print(f"✗ Failed to plot {model_name}")
+        total_failed.append(model_name)
+
+# Print summary
+print(f"\n{'='*50}")
+if total_success > 0:
+    print(f"SUCCESS: Plotted {total_success} model(s)")
+if total_failed:
+    print(f"FAILED: Could not plot {len(total_failed)} model(s): {', '.join(total_failed)}")
+
+if total_success == 0:
     exit(1)

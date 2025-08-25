@@ -187,8 +187,11 @@ def loss_function(
 ):
     X, u, Y, s = batch
 
-    alpha, _ = input_function_encoder.compute_coefficients(X, u)
-    beta, _ = output_function_encoder.compute_coefficients(Y, s)
+    alpha_result = input_function_encoder.compute_coefficients(X, u)
+    alpha = alpha_result[0] if isinstance(alpha_result, tuple) else alpha_result
+
+    beta_result = output_function_encoder.compute_coefficients(Y, s)
+    beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
 
     z, mu, logvar = model(alpha, beta)
     alpha_pred = model.inverse(beta, z)
