@@ -17,6 +17,9 @@ def load_dataset(params, device):
         case "fwi":
             from inverse_neural_operator.data.fwi_data import load_data
 
+        case "chladni_2d":
+            from inverse_neural_operator.data.chladni_2d import load_data
+
         case _:
             raise ValueError(f"Unknown dataset: {params.dataset}")
 

@@ -19,12 +19,12 @@ STATUS_DIR=/tmp/gpu_status
 
 # Base directory for experiment logs
 # LOG_BASE_DIR="/workspaces/b2b-operator-inverse/logs"
-LOG_BASE_DIR="/workspaces/b2b-operator-inverse/logs_VAE_var"
+LOG_BASE_DIR="/workspaces/b2b-operator-inverse/logs_chladni_2d"
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi_flat fwi_curve chladni_2d)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder invertible_network)
-DATASETS=(burgers_1d)
-MODELS=(variational_autoencoder b2b_nonlinear_fwd)
+DATASETS=(chladni_2d)
+MODELS=(b2b_nonlinear_fwd)
 SEEDS=(1)   # add more seeds if you like
 
 #── INITIALIZE GPU STATUS ─────────────────────────────────
@@ -176,10 +176,10 @@ train_model() {
     --device "cuda:$gpu" \
     --log_dir "$model_logdir" \
     --lambda_u 0.0 \
-    --learning_rate 5e-4 \
-    --epochs 10000 \
+    --learning_rate 1e-3 \
+    --epochs 2000 \
     --hidden_sizes 256 256 \
-    --batch_size 128 \
+    --batch_size 32 \
     >>"$logfile" 2>&1 \
     || echo "[$count] Training model $model failed with exit code $?"
 
