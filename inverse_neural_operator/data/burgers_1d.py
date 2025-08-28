@@ -18,10 +18,10 @@ class BurgersDataset(Dataset):
         self.device = device
         self.n_samples = len(dataset)
 
-        self.X = torch.tensor(dataset["X"], device=device)
-        self.u = torch.tensor(dataset["u"], device=device)
-        self.Y = torch.tensor(dataset["Y"], device=device)
-        self.s = torch.tensor(dataset["s"], device=device)
+        self.X = torch.tensor(dataset["spatial_coordinates"], device=device)
+        self.u = torch.tensor(dataset["u_initial"], device=device)
+        self.Y = torch.tensor(dataset["spatial_coordinates"], device=device)
+        self.s = torch.tensor(dataset["u_trajectory"], device=device)[:, -1]
 
         # Ensure correct dimensions
         if self.X.dim() == 2:
@@ -57,13 +57,12 @@ class BurgersDataset(Dataset):
             "u_len": self.u.shape[0],
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
-
             # iFNO spatial info (hardcoded for Burgers 1D)
-            "input_spatial_dims": (101,),       # 1D spatial domain
-            "output_spatial_dims": (101,),      # Same for symmetric problem
-            "input_function_channels": 1,        # Scalar initial condition
-            "output_function_channels": 1,       # Scalar solution
-            "coordinate_dim": 1,                 # 1D spatial coordinates
+            "input_spatial_dims": (128,),  # 1D spatial domain
+            "output_spatial_dims": (128,),  # Same for symmetric problem
+            "input_function_channels": 1,  # Scalar initial condition
+            "output_function_channels": 1,  # Scalar solution
+            "coordinate_dim": 1,  # 1D spatial coordinates
         }
 
 
@@ -80,7 +79,7 @@ def load_data(params, device, split="train"):
         A tuple containing the datasets and info for the specified split
     """
 
-    ds = load_dataset("ajthor/burgers_1d", split=split)
+    ds = load_dataset("ajthor/burgers-fenics", split=split)
 
     model_dataset = BurgersDataset(ds, device=device)
 
