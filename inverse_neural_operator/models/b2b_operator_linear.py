@@ -109,7 +109,7 @@ def load_checkpoint(
     return model, optimizer, checkpoint["epoch"], checkpoint["loss"]
 
 
-def loss_function(model, batch, input_function_encoder, output_function_encoder):
+def loss_function(model, batch, input_function_encoder, output_function_encoder, forward_model=None, lambda_forward=0.0):
     X, u, Y, s = batch
 
     alpha_result = input_function_encoder.compute_coefficients(X, u)
@@ -124,6 +124,15 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
 
     # pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
     pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+    
+    # Add forward model consistency loss if available
+    if forward_model is not None and lambda_forward > 0.0:
+        with torch.no_grad():
+            forward_model.eval()
+        # Forward consistency: alpha_pred -> beta_pred should match beta
+        beta_pred = forward_model.forward(alpha_pred)
+        forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
+        pred_loss = pred_loss + lambda_forward * forward_loss
 
     return pred_loss
 

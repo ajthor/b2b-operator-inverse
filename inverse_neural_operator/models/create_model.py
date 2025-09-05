@@ -5,15 +5,47 @@ This module provides a unified interface for creating all supported models
 with their appropriate configurations and optimizers.
 """
 import torch
-import os
-from models.function_encoder import (
-    create_model as create_function_encoder,
-    load as load_function_encoder,
-    memory_efficient_inner_product,
-)
 
 
-def create_model(model_name, params, dataset_info, device, log_dir=None):
+def create_forward_model(model_name, params, input_size, output_size, device):
+    """
+    Create a forward model based on the model name and parameters.
+    Forward models learn the mapping from input coefficients (alpha) to output coefficients (beta).
+    
+    Args:
+        model_name (str): Name of the forward model to create
+        params: Parameters object containing model configuration
+        input_size (int): Size of input (alpha coefficients)
+        output_size (int): Size of output (beta coefficients)  
+        device (str): Device to create model on
+        
+    Returns:
+        tuple: (model, optimizer) - Created forward model and optimizer
+        
+    Raises:
+        ValueError: If model_name is not supported for forward models
+    """
+    model = None
+    optimizer = None
+    
+    match model_name:
+        case "b2b_nonlinear_fwd":
+            from models.b2b_operator_nonlinear_fwd import create_model
+            
+            model = create_model(
+                input_size=input_size,
+                output_size=output_size,
+                hidden_sizes=params.hidden_sizes,
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+            
+        case _:
+            raise ValueError(f"Unknown forward model: {model_name}. Supported forward models: b2b_nonlinear_fwd")
+    
+    return model, optimizer
+
+
+def create_model(model_name, params, dataset_info, device, input_size=None, output_size=None):
     """
     Create a model based on the model name and parameters.
     
@@ -22,7 +54,8 @@ def create_model(model_name, params, dataset_info, device, log_dir=None):
         params: Parameters object containing model configuration
         dataset_info (dict): Dataset information from dataset.get_info()
         device (str): Device to create model on
-        log_dir (str, optional): Directory containing function encoder checkpoints
+        input_size (int, optional): Size of input for b2b models (alpha coefficients)
+        output_size (int, optional): Size of output for b2b models (beta coefficients)
         
     Returns:
         tuple: (model, optimizer) - Created model and optimizer (None for linear models)
@@ -33,88 +66,28 @@ def create_model(model_name, params, dataset_info, device, log_dir=None):
     model = None
     optimizer = None
     
-    # Helper function to load function encoders for b2b models
-    def load_function_encoders():
-        if log_dir is None:
-            raise ValueError("log_dir is required for b2b models to load function encoders")
-            
-        # Load input function encoder
-        input_function_encoder_params = torch.load(
-            os.path.join(log_dir, "input_function_encoder_params.pth"), 
-            weights_only=False
-        )
-        input_function_encoder = create_function_encoder(
-            input_size=dataset_info["X_size"],
-            hidden_sizes=input_function_encoder_params.hidden_sizes,
-            output_size=dataset_info["u_size"],
-            n_basis=input_function_encoder_params.n_basis,
-            inner_product=(
-                memory_efficient_inner_product
-                if hasattr(params, 'dataset') and params.dataset in ["fwi"]
-                else None
-            ),
-        )
-        input_function_encoder.to(device)
-        input_function_encoder = load_function_encoder(
-            input_function_encoder,
-            os.path.join(log_dir, "input_function_encoder.pth"),
-            device=device,
-        )
-        
-        # Load output function encoder
-        output_function_encoder_params = torch.load(
-            os.path.join(log_dir, "output_function_encoder_params.pth"), 
-            weights_only=False
-        )
-        output_function_encoder = create_function_encoder(
-            input_size=dataset_info["Y_size"],
-            hidden_sizes=output_function_encoder_params.hidden_sizes,
-            output_size=dataset_info["s_size"],
-            n_basis=output_function_encoder_params.n_basis,
-            inner_product=(
-                memory_efficient_inner_product
-                if hasattr(params, 'dataset') and params.dataset in ["fwi"]
-                else None
-            ),
-        )
-        output_function_encoder.to(device)
-        output_function_encoder = load_function_encoder(
-            output_function_encoder,
-            os.path.join(log_dir, "output_function_encoder.pth"),
-            device=device,
-        )
-        
-        return input_function_encoder_params, output_function_encoder_params
-    
     match model_name:
         case "b2b_linear":
             from models.b2b_operator_linear import create_model
             
-            input_params, output_params = load_function_encoders()
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for b2b models")
+            
             model = create_model(
-                input_size=input_params.n_basis,
-                output_size=output_params.n_basis,
+                input_size=input_size,
+                output_size=output_size,
             ).to(device)
             optimizer = None
             
         case "b2b_nonlinear":
             from models.b2b_operator_nonlinear import create_model
             
-            input_params, output_params = load_function_encoders()
-            model = create_model(
-                input_size=input_params.n_basis,
-                output_size=output_params.n_basis,
-                hidden_sizes=params.hidden_sizes,
-            ).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for b2b models")
             
-        case "b2b_nonlinear_fwd":
-            from models.b2b_operator_nonlinear_fwd import create_model
-            
-            input_params, output_params = load_function_encoders()
             model = create_model(
-                input_size=input_params.n_basis,
-                output_size=output_params.n_basis,
+                input_size=input_size,
+                output_size=output_size,
                 hidden_sizes=params.hidden_sizes,
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
@@ -133,21 +106,25 @@ def create_model(model_name, params, dataset_info, device, log_dir=None):
         case "variational_autoencoder":
             from models.variational_autoencoder import create_model
             
-            input_params, output_params = load_function_encoders()
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for variational_autoencoder")
+            
             model = create_model(
-                alpha_size=input_params.n_basis,
-                beta_size=output_params.n_basis,
+                alpha_size=input_size,
+                beta_size=output_size,
                 hidden_sizes=params.hidden_sizes,
-                latent_size=output_params.n_basis,
+                latent_size=output_size,
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
         case "invertible_network":
             from models.invertible_network import create_model
             
-            input_params, output_params = load_function_encoders()
+            if input_size is None:
+                raise ValueError("input_size is required for invertible_network")
+            
             model = create_model(
-                input_size=input_params.n_basis,
+                input_size=input_size,
                 hidden_sizes=params.hidden_sizes,
                 n_coupling_layers=2,
             ).to(device)
@@ -156,9 +133,11 @@ def create_model(model_name, params, dataset_info, device, log_dir=None):
         case "realnvp":
             from models.realnvp import create_model
             
-            input_params, output_params = load_function_encoders()
+            if input_size is None:
+                raise ValueError("input_size is required for realnvp")
+            
             model = create_model(
-                input_size=input_params.n_basis,
+                input_size=input_size,
                 hidden_sizes=params.hidden_sizes,
                 n_coupling_layers=2,
             ).to(device)
@@ -167,9 +146,11 @@ def create_model(model_name, params, dataset_info, device, log_dir=None):
         case "ifno":
             from models.ifno import create_model
             
-            input_params, output_params = load_function_encoders()
+            if input_size is None:
+                raise ValueError("input_size is required for ifno")
+            
             model = create_model(
-                input_size=input_params.n_basis,
+                input_size=input_size,
                 hidden_sizes=params.hidden_sizes,
                 n_coupling_layers=2,
                 modes1=16,

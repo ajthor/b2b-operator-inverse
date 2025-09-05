@@ -143,54 +143,30 @@ match params.model:
     case _:
         raise ValueError(f"Unknown model: {params.model}")
 
-# Create model and optimizer
-model, optimizer = create_model(params.model, params, dataset_info, device, log_dir)
-
-# Load function encoders for models that need them
+# Load function encoders and parameters for models that need them
 if params.model.startswith("b2b") or params.model in ["variational_autoencoder", "invertible_network", "realnvp", "ifno"]:
-    input_function_encoder_params = torch.load(
-        os.path.join(log_dir, "input_function_encoder_params.pth"), weights_only=False
+    from models.load_model import load_function_encoders, load_function_encoder_params
+    
+    # Load function encoder parameters to get sizes for model creation
+    input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
+    
+    # Create model with correct sizes
+    model, optimizer = create_model(
+        params.model, 
+        params, 
+        dataset_info, 
+        device, 
+        input_encoder_params.n_basis,  # input size (alpha coefficients)
+        output_encoder_params.n_basis   # output size (beta coefficients)
     )
-    input_function_encoder = create_function_encoder(
-        input_size=dataset_info["X_size"],
-        hidden_sizes=input_function_encoder_params.hidden_sizes,
-        output_size=dataset_info["u_size"],
-        n_basis=input_function_encoder_params.n_basis,
-        inner_product=(
-            memory_efficient_inner_product
-            if params.dataset in ["fwi"]
-            else None
-        ),
-    )
-    input_function_encoder.to(device)
-    input_function_encoder = load_function_encoder(
-        input_function_encoder,
-        os.path.join(log_dir, "input_function_encoder.pth"),
-        device=device,
-    )
-
-    output_function_encoder_params = torch.load(
-        os.path.join(log_dir, "output_function_encoder_params.pth"), weights_only=False
-    )
-    output_function_encoder = create_function_encoder(
-        input_size=dataset_info["Y_size"],
-        hidden_sizes=output_function_encoder_params.hidden_sizes,
-        output_size=dataset_info["s_size"],
-        n_basis=output_function_encoder_params.n_basis,
-        inner_product=(
-            memory_efficient_inner_product
-            if params.dataset in ["fwi"]
-            else None
-        ),
-    )
-    output_function_encoder.to(device)
-    output_function_encoder = load_function_encoder(
-        output_function_encoder,
-        os.path.join(log_dir, "output_function_encoder.pth"),
-        device=device,
+    
+    # Load function encoders
+    input_function_encoder, output_function_encoder = load_function_encoders(
+        log_dir, dataset_info, params, device
     )
 else:
     # For models that don't need function encoders (like deeponet)
+    model, optimizer = create_model(params.model, params, dataset_info, device)
     input_function_encoder = None
     output_function_encoder = None
 

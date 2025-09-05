@@ -11,26 +11,46 @@ from models.function_encoder import (
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
-from models.create_model import create_model
+from models.create_model import create_model, create_forward_model
 
 
-def load_models(
-    log_dir: str,
-    dataset_info: dict,
-    params: dict,
-    device: str = "cpu",
-):
+def load_function_encoder_params(log_dir: str):
     """
-    Load pre-trained models and function encoders from disk.
+    Load function encoder parameters from disk.
     
     Args:
-        log_dir (str): Directory containing saved model files
-        dataset_info (dict): Dataset information from dataset.get_info()
-        params: Parameters object containing model configuration
-        device (str): Device to load models on
+        log_dir (str): Directory containing saved function encoder parameter files
         
     Returns:
-        tuple: (input_function_encoder, output_function_encoder, model, evaluate_function)
+        tuple: (input_function_encoder_params, output_function_encoder_params)
+    """
+    # Load input function encoder parameters
+    input_function_encoder_params = torch.load(
+        os.path.join(log_dir, "input_function_encoder_params.pth"), 
+        weights_only=False
+    )
+    
+    # Load output function encoder parameters
+    output_function_encoder_params = torch.load(
+        os.path.join(log_dir, "output_function_encoder_params.pth"), 
+        weights_only=False
+    )
+    
+    return input_function_encoder_params, output_function_encoder_params
+
+
+def load_function_encoders(log_dir: str, dataset_info: dict, params: dict, device: str = "cpu"):
+    """
+    Load pre-trained function encoders from disk.
+    
+    Args:
+        log_dir (str): Directory containing saved function encoder files
+        dataset_info (dict): Dataset information from dataset.get_info()
+        params: Parameters object containing dataset information
+        device (str): Device to load encoders on
+        
+    Returns:
+        tuple: (input_function_encoder, output_function_encoder)
     """
     # Load the input function encoder
     input_function_encoder_params = torch.load(
@@ -76,8 +96,93 @@ def load_models(
         device=device,
     )
 
+    return input_function_encoder, output_function_encoder
+
+
+def load_forward_models(
+    log_dir: str,
+    dataset_info: dict,
+    params: dict,
+    device: str = "cpu",
+):
+    """
+    Load pre-trained forward models and function encoders from disk.
+    
+    Args:
+        log_dir (str): Directory containing saved model files
+        dataset_info (dict): Dataset information from dataset.get_info()
+        params: Parameters object containing model configuration
+        device (str): Device to load models on
+        
+    Returns:
+        tuple: (input_function_encoder, output_function_encoder, model, evaluate_function)
+    """
+    # Load function encoders using shared utility
+    input_function_encoder, output_function_encoder = load_function_encoders(
+        log_dir, dataset_info, params, device
+    )
+
+    # Load function encoder parameters to get sizes for model creation
+    input_params, output_params = load_function_encoder_params(log_dir)
+
+    # Create forward model using the create_forward_model utility
+    model, _ = create_forward_model(
+        params.model, 
+        params, 
+        input_params.n_basis,  # input size (alpha coefficients)
+        output_params.n_basis,  # output size (beta coefficients)
+        device
+    )
+
+    # Load the trained forward model weights and get the appropriate load/evaluate functions
+    forward_model_path = os.path.join(log_dir, f"forward_{params.model}.pth")
+    
+    # Get the appropriate load and evaluate functions for the forward model type
+    match params.model:
+        case "b2b_nonlinear_fwd":
+            from models.b2b_operator_nonlinear_fwd import load, evaluate
+        case _:
+            raise ValueError(f"Unknown forward model: {params.model}")
+
+    # Load the trained weights into the model
+    model = load(model=model, path=forward_model_path, device=device)
+
+    return input_function_encoder, output_function_encoder, model, evaluate
+
+
+def load_models(
+    log_dir: str,
+    dataset_info: dict,
+    params: dict,
+    device: str = "cpu",
+):
+    """
+    Load pre-trained models and function encoders from disk.
+    
+    Args:
+        log_dir (str): Directory containing saved model files
+        dataset_info (dict): Dataset information from dataset.get_info()
+        params: Parameters object containing model configuration
+        device (str): Device to load models on
+        
+    Returns:
+        tuple: (input_function_encoder, output_function_encoder, model, evaluate_function)
+    """
+    # Load function encoders using shared utility
+    input_function_encoder, output_function_encoder = load_function_encoders(
+        log_dir, dataset_info, params, device
+    )
+
+    # For b2b models, we need to get the parameter sizes
+    input_size = None
+    output_size = None
+    if params.model.startswith("b2b") or params.model in ["variational_autoencoder", "invertible_network", "realnvp", "ifno"]:
+        input_params, output_params = load_function_encoder_params(log_dir)
+        input_size = input_params.n_basis
+        output_size = output_params.n_basis
+
     # Create model using the create_model utility (without optimizer since we're loading)
-    model, _ = create_model(params.model, params, dataset_info, device, log_dir)
+    model, _ = create_model(params.model, params, dataset_info, device, input_size, output_size)
 
     # Load the trained model weights and get the appropriate load/evaluate functions
     model_path = os.path.join(log_dir, "model.pth")
@@ -88,8 +193,6 @@ def load_models(
             from models.b2b_operator_linear import load, evaluate
         case "b2b_nonlinear":
             from models.b2b_operator_nonlinear import load, evaluate
-        case "b2b_nonlinear_fwd":
-            from models.b2b_operator_nonlinear_fwd import load, evaluate
         case "deeponet":
             from models.deeponet import load, evaluate
         case "variational_autoencoder":

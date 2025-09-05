@@ -183,7 +183,7 @@ def load_checkpoint(
 
 
 def loss_function(
-    model, batch, input_function_encoder, output_function_encoder, lambda_u: float = 0.0
+    model, batch, input_function_encoder, output_function_encoder, forward_model=None, lambda_forward=0.0, lambda_u: float = 0.0
 ):
     X, u, Y, s = batch
 
@@ -225,7 +225,18 @@ def loss_function(
     )
     kl_loss = kl_per.mean()
 
-    return pred_loss + consistency_loss + kl_loss
+    total_loss = pred_loss + consistency_loss + kl_loss
+    
+    # Add forward model consistency loss if available
+    if forward_model is not None and lambda_forward > 0.0:
+        with torch.no_grad():
+            forward_model.eval()
+        # Forward consistency: alpha_pred -> beta_pred should match beta
+        beta_pred = forward_model.forward(alpha_pred)
+        forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
+        total_loss = total_loss + lambda_forward * forward_loss
+
+    return total_loss
 
 
 def train(
