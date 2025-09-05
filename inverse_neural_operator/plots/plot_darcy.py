@@ -17,8 +17,8 @@ from inverse_neural_operator.models.function_encoder import (
     memory_efficient_inner_product,
 )
 
-from inverse_neural_operator.plots.load_dataset import load_dataset
-from inverse_neural_operator.plots.load_model import load_models
+from data.load_dataset import load_dataset
+from models.load_model import load_models
 
 device = "cpu"
 
@@ -275,7 +275,7 @@ if not os.path.exists(model_path):
 temp_log_dir = os.path.join(log_dir, model_name, f"seed_{args.seed}")
 temp_params = torch.load(os.path.join(temp_log_dir, "params.pth"), weights_only=False)
 
-test_dataset, dataset_info = load_dataset(temp_params, device)
+test_dataset, dataset_info = load_dataset(temp_params.dataset, temp_params, device, split="test", return_info=True)
 
 # Plot results for the specified model
 success = plot_model_results(

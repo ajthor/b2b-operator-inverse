@@ -11,8 +11,8 @@ from inverse_neural_operator.models.function_encoder import (
     memory_efficient_inner_product,
 )
 
-from plots.load_dataset import load_dataset
-from plots.load_model import load_models
+from data.load_dataset import load_dataset
+from models.load_model import load_models
 
 from inverse_neural_operator.models.model_evaluation import evaluate_random, find_best_case, find_worst_case
 
@@ -45,7 +45,7 @@ params = torch.load(f"{log_dir}/params.pth", weights_only=False)
 
 
 # Load dataset
-test_dataset, dataset_info = load_dataset(params, device)
+test_dataset, dataset_info = load_dataset(params.dataset, params, device, split="test", return_info=True)
 
 # Load models
 input_function_encoder, output_function_encoder, model = load_models(

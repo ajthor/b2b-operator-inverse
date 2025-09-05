@@ -16,8 +16,8 @@ from inverse_neural_operator.models.function_encoder import (
     memory_efficient_inner_product,
 )
 
-from inverse_neural_operator.plots.load_dataset import load_dataset
-from inverse_neural_operator.plots.load_model import load_models
+from data.load_dataset import load_dataset
+from models.load_model import load_models
 
 device = "cpu"
 
@@ -32,26 +32,6 @@ MODELS = [
     "deeponet",
 ]
 
-
-def get_evaluate_function(model_name):
-    """Get the appropriate evaluate function for the model."""
-    if model_name == "b2b_linear":
-        from inverse_neural_operator.models.b2b_operator_linear import evaluate
-    elif model_name == "b2b_nonlinear":
-        from inverse_neural_operator.models.b2b_operator_nonlinear import evaluate
-    elif model_name == "b2b_nonlinear_fwd":
-        from inverse_neural_operator.models.b2b_operator_nonlinear_fwd import evaluate
-    elif model_name == "variational_autoencoder":
-        from inverse_neural_operator.models.variational_autoencoder import evaluate
-    elif model_name == "invertible_network":
-        from inverse_neural_operator.models.invertible_network import evaluate
-    elif model_name == "realnvp":
-        from inverse_neural_operator.models.realnvp import evaluate
-    elif model_name == "deeponet":
-        from inverse_neural_operator.models.deeponet import evaluate
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
-    return evaluate
 
 
 def plot_forward_model_sample(model, input_function_encoder, output_function_encoder,
@@ -397,7 +377,7 @@ first_model = models_to_plot[0]
 temp_log_dir = os.path.join(log_dir, first_model, f"seed_{args.seed}")
 temp_params = torch.load(os.path.join(temp_log_dir, "params.pth"), weights_only=False)
 
-test_dataset, dataset_info = load_dataset(temp_params, device)
+test_dataset, dataset_info = load_dataset(temp_params.dataset, temp_params, device, split="test", return_info=True)
 
 # Plot results for all selected models
 total_success = 0

@@ -18,8 +18,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from inverse_neural_operator.plots.load_dataset import load_dataset
-from inverse_neural_operator.plots.load_model import load_models
+from data.load_dataset import load_dataset
+from models.load_model import load_models
 
 
 def plot_forward_sample(
@@ -171,7 +171,7 @@ def main():
     
     # Load test dataset
     print("Loading test dataset...")
-    test_dataset, dataset_info = load_dataset(params=params, device=args.device)
+    test_dataset, dataset_info = load_dataset(params.dataset, params, args.device, split="test", return_info=True)
     print(f"Test dataset size: {len(test_dataset)}")
     
     # Load models

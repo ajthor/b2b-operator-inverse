@@ -54,21 +54,13 @@ parser.add_argument("--seed", type=int, default=42)
 # Checkpoint args
 parser.add_argument("--checkpoint_interval", type=int, default=100)
 parser.add_argument("--checkpoint_dir", type=str, default=None)
-parser.add_argument("--resume", type=bool, default=True)
+parser.add_argument("--resume", type=bool, default=False)
 
 params = parser.parse_args()
 
 if params.encoder_type not in ["input", "output"]:
     raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
-# If the dataset is wave_scattering, limit the batch size to 5.
-if params.dataset in ["wave_scattering", "fwi"]:
-    if params.batch_size > 5:
-        print(
-            f"Batch size {params.batch_size} is too large for the dataset. "
-            "Setting batch size to 5."
-        )
-        params.batch_size = 5
 
 # Set device
 if params.device is None:
@@ -107,29 +99,11 @@ if params.checkpoint_dir is None:
     params.checkpoint_dir = os.path.join(log_dir, "checkpoints")
 os.makedirs(params.checkpoint_dir, exist_ok=True)
 
-# Load dataset based on encoder type
-match params.dataset:
-    case "burgers_1d":
-        from data.burgers_1d import load_data
-    case "darcy_1d":
-        from data.darcy_1d import load_data
-    case "parametric_heat":
-        from data.parametric_heat import load_data
-    case "wave_scattering":
-        from data.wave_scattering import load_data
-    case "chladni_2d":
-        from data.chladni_2d import load_data
+# Load dataset using utility
+from data.load_dataset import load_dataset
 
-    case "fwi":
-        from data.fwi_data import load_data
-
-    case _:
-        raise ValueError(f"Unknown dataset: {params.dataset}")
-
-# Load data
-
-model_train_dataset = load_data(params, device=device, split="train")
-model_test_dataset = load_data(params, device=device, split="test")
+model_train_dataset = load_dataset(params.dataset, params, device, split="train")
+model_test_dataset = load_dataset(params.dataset, params, device, split="test")
 
 dataset_info = model_train_dataset.get_info()
 
@@ -171,9 +145,7 @@ function_encoder = create_function_encoder(
     output_size=output_size,
     n_basis=params.n_basis,
     inner_product=(
-        memory_efficient_inner_product
-        if params.dataset in ["fwi"]
-        else None
+        memory_efficient_inner_product if params.dataset in ["fwi"] else None
     ),
     regularization=params.regularization,
 )
