@@ -6,31 +6,27 @@ import tqdm
 import os
 
 
-class ConditionalAdditiveCoupling(torch.nn.Module):
+class AdditiveCoupling(torch.nn.Module):
     def __init__(
         self,
         input_size,
-        condition_size,
         hidden_sizes=[128, 128],
         split_dim=None,
         activation=torch.nn.ReLU(),
     ):
-        super(ConditionalAdditiveCoupling, self).__init__()
+        super(AdditiveCoupling, self).__init__()
 
         self.input_size = input_size
-        self.condition_size = condition_size
         if split_dim is None:
             self.split_dim = input_size // 2
         else:
             self.split_dim = split_dim
 
-        # Neural network to transform the first part conditioned on y
-        # Input: [x1, y] where x1 has size (input_size - split_dim) and y has size condition_size
-        # Output: transformation for x2 which has size split_dim
+        # Neural network to transform the first part
         self.net = torch.nn.Sequential()
 
         # Create layers with the specified hidden sizes
-        layer_sizes = [input_size - self.split_dim + condition_size] + hidden_sizes + [self.split_dim]
+        layer_sizes = [input_size - self.split_dim] + hidden_sizes + [self.split_dim]
         for i in range(len(layer_sizes) - 1):
             self.net.add_module(
                 f"linear_{i}", torch.nn.Linear(layer_sizes[i], layer_sizes[i + 1])
@@ -38,69 +34,83 @@ class ConditionalAdditiveCoupling(torch.nn.Module):
             if i < len(layer_sizes) - 2:  # No activation after the last layer
                 self.net.add_module(f"activation_{i}", activation)
 
-    def forward(self, x, condition):
+    def forward(self, x):
         """
-        Forward transformation: x -> y conditioned on condition
-        Implements the conditional additive coupling layer: y1 = x1, y2 = x2 + f(x1, condition)
+        Forward transformation: x -> y
+        Implements the additive coupling layer: y1 = x1, y2 = x2 + f(x1)
         """
         x1, x2 = torch.split(x, [self.split_dim, x.size(-1) - self.split_dim], dim=-1)
         y1 = x1
-        # Concatenate x1 and condition for the neural network input
-        net_input = torch.cat([x1, condition], dim=-1)
-        y2 = x2 + self.net(net_input)
+        y2 = x2 + self.net(x1)
         return torch.cat([y1, y2], dim=-1)
 
-    def inverse(self, y, condition):
+    def inverse(self, y):
         """
-        Inverse transformation: y -> x conditioned on condition
-        Implements the inverse of conditional additive coupling: x1 = y1, x2 = y2 - f(y1, condition)
+        Inverse transformation: y -> x
+        Implements the inverse of additive coupling: x1 = y1, x2 = y2 - f(y1)
         """
         y1, y2 = torch.split(y, [self.split_dim, y.size(-1) - self.split_dim], dim=-1)
         x1 = y1
-        # Concatenate y1 and condition for the neural network input
-        net_input = torch.cat([y1, condition], dim=-1)
-        x2 = y2 - self.net(net_input)
+        x2 = y2 - self.net(y1)
         return torch.cat([x1, x2], dim=-1)
 
 
-class ConditionalInvertibleNeuralNetwork(torch.nn.Module):
+class InnAdditive(torch.nn.Module):
     def __init__(self, coupling_layers):
-        super(ConditionalInvertibleNeuralNetwork, self).__init__()
+        super(InnAdditive, self).__init__()
         self.coupling_layers = torch.nn.ModuleList(coupling_layers)
 
-    def forward(self, alpha, beta):
+    def forward(self, alpha):
         """
-        Forward transformation: transform alpha to latent z conditioned on beta
-        This is the key difference from standard INN - we transform x to z given y
+        Forward transformation, applies all coupling layers in sequence.
         """
         x = alpha
         for layer in self.coupling_layers:
-            x = layer.forward(x, beta)
+            x = layer.forward(x)
         return x
 
-    def inverse(self, z, beta):
+    def inverse(self, beta):
         """
-        Inverse transformation: transform latent z back to alpha conditioned on beta
+        Inverse transformation, applies all coupling layers in reverse order.
         """
-        y = z
+        y = beta
         for layer in reversed(self.coupling_layers):
-            y = layer.inverse(y, beta)
+            y = layer.inverse(y)
         return y
+    
+    def sample_posterior(self, beta, n_samples):
+        """
+        Sample from the posterior distribution given observed beta.
+        For additive INN, this is just the deterministic inverse mapping.
+        
+        Args:
+            beta: Observed output coefficients [batch_size, beta_dim]
+            n_samples: Number of samples to generate (ignored for deterministic mapping)
+            
+        Returns:
+            samples: Generated alpha samples [n_samples, batch_size, alpha_dim]
+        """
+        alpha_sample = self.inverse(beta)
+        # For deterministic mapping, return the same sample n_samples times
+        return alpha_sample.unsqueeze(0).repeat(n_samples, 1, 1)
 
 
-def create_model(input_size, condition_size, hidden_sizes=[128, 128], n_coupling_layers=2):
+def create_model(input_size, output_size=None, hidden_sizes=[128, 128], n_coupling_layers=2):
     """
-    Create a conditional invertible neural network model.
+    Create an invertible neural network model.
 
     Args:
-        input_size: Size of the input features (alpha coefficients)
-        condition_size: Size of the conditioning features (beta coefficients)
+        input_size: Size of the input features
         hidden_sizes: List of hidden layer sizes for the coupling layers
         n_coupling_layers: Number of coupling layers to use
 
     Returns:
-        ConditionalInvertibleNeuralNetwork instance
+        InvertibleNeuralNetwork instance
     """
+    # For additive INN, input_size must equal output_size
+    if output_size is not None and input_size != output_size:
+        raise ValueError(f"For additive INN, input_size ({input_size}) must equal output_size ({output_size})")
+    
     coupling_layers = []
 
     for i in range(n_coupling_layers):
@@ -110,15 +120,12 @@ def create_model(input_size, condition_size, hidden_sizes=[128, 128], n_coupling
         else:
             split_dim = input_size - input_size // 2
 
-        layer = ConditionalAdditiveCoupling(
-            input_size=input_size, 
-            condition_size=condition_size,
-            hidden_sizes=hidden_sizes, 
-            split_dim=split_dim
+        layer = AdditiveCoupling(
+            input_size=input_size, hidden_sizes=hidden_sizes, split_dim=split_dim
         )
         coupling_layers.append(layer)
 
-    return ConditionalInvertibleNeuralNetwork(coupling_layers=coupling_layers)
+    return InnAdditive(coupling_layers=coupling_layers)
 
 
 def save(model, path):
@@ -164,27 +171,16 @@ def load_checkpoint(
 
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
-    """
-    Loss function for conditional invertible network.
-    
-    The key difference: we transform alpha to latent z conditioned on beta,
-    then transform z back to alpha_pred conditioned on beta.
-    """
     X, u, Y, s = batch
 
     alpha, _ = input_function_encoder.compute_coefficients(X, u)
     beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
-    # Forward pass: alpha -> z conditioned on beta
-    z = model.forward(alpha, beta)
-    
-    # Inverse pass: z -> alpha_pred conditioned on beta
-    alpha_pred = model.inverse(z, beta)
+    alpha_pred = model.inverse(beta)
 
-    # Reconstruct input function from predicted coefficients
     u_pred = input_function_encoder(X, alpha_pred)
 
-    # Use function reconstruction loss for better supervision
+    # pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
     pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     return pred_loss
@@ -205,6 +201,7 @@ def train(
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
+    forward_model=None,
 ):
     start_epoch = 0
 
@@ -220,6 +217,7 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
+    # train_dataloader_iter = iter(train_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()
@@ -244,11 +242,30 @@ def train(
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
+        # Compute and log re-simulation loss
+        if forward_model is not None:
+            total_resim_loss = 0.0
+            with torch.no_grad():
+                for batch in test_dataloader:
+                    batch_resim_loss = resimulation_loss(
+                        model=model,
+                        batch=batch,
+                        input_function_encoder=input_function_encoder,
+                        output_function_encoder=output_function_encoder,
+                        forward_model=forward_model,
+                        n_samples=5  # Use fewer samples for efficiency during training
+                    )
+                    total_resim_loss += batch_resim_loss
+            avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
+            summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
+            tqdm_bar.set_postfix_str(f"test {avg_test_loss:.4e} resim {avg_resim_loss:.4e}")
+        else:
+            tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
+
         # Save checkpoint
         if (epoch + 1) % checkpoint_interval == 0:
             save_checkpoint(model, optimizer, epoch + 1, avg_test_loss, checkpoint_path)
 
-        tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
 
 
@@ -274,34 +291,42 @@ def test_model(
     return avg_test_loss
 
 
-def evaluate(model, point, input_function_encoder, output_function_encoder):
+def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):
     """
-    Evaluate conditional invertible network.
+    Compute re-simulation loss for additive INN model.
     
-    Given output observation (Y, s), predict input (u) by:
-    1. Encode output to beta coefficients
-    2. Sample or use zero latent z
-    3. Transform z to alpha conditioned on beta
-    4. Reconstruct input function from alpha
+    For additive INN: Sample from posterior given beta*, apply forward operator, measure MSE to beta*
+    Since additive INN is deterministic, we just use the inverse mapping.
     """
+    if forward_model is None:
+        return 0.0
+        
+    X, u, Y, s = batch
+    
+    # Get target beta coefficients
+    beta_target, _ = output_function_encoder.compute_coefficients(Y, s)
+    
+    model.eval()
+    forward_model.eval()
+    with torch.no_grad():
+        # For deterministic additive INN, just use inverse mapping
+        alpha_pred = model.inverse(beta_target)
+        beta_predicted = forward_model(alpha_pred)
+        resim_loss = torch.nn.functional.mse_loss(beta_predicted, beta_target)
+    
+    model.train()
+    return resim_loss.item()
+
+
+def evaluate(model, point, input_function_encoder, output_function_encoder):
     model.eval()
     with torch.no_grad():
         X, u, Y, s = point
 
-        # Encode the output observation to beta coefficients
         beta_result = output_function_encoder.compute_coefficients(Y, s)
         beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
 
-        # For evaluation, we can sample from standard normal or use zeros for latent
-        # Using zeros for deterministic evaluation
-        batch_size = beta.shape[0]
-        latent_dim = beta.shape[1]  # Assuming same dimensionality
-        z = torch.zeros(batch_size, latent_dim, device=beta.device)
-        
-        # Transform latent z to input coefficients alpha conditioned on beta
-        alpha_pred = model.inverse(z, beta)
-        
-        # Reconstruct input function from predicted coefficients
+        alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)
 
         return pred

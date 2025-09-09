@@ -117,37 +117,53 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
-        case "invertible_network":
-            from models.invertible_network import create_model
-            
-            if input_size is None:
-                raise ValueError("input_size is required for invertible_network")
-            
-            model = create_model(
-                input_size=input_size,
-                hidden_sizes=params.hidden_sizes,
-                n_coupling_layers=2,
-            ).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
-            
-        case "realnvp":
-            from models.realnvp import create_model
-            
-            if input_size is None:
-                raise ValueError("input_size is required for realnvp")
-            
-            model = create_model(
-                input_size=input_size,
-                hidden_sizes=params.hidden_sizes,
-                n_coupling_layers=2,
-            ).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
-            
-        case "conditional_invertible_network":
-            from models.conditional_invertible_network import create_model
+        case "inn_additive":
+            from models.inn_additive import create_model
             
             if input_size is None or output_size is None:
-                raise ValueError("input_size and output_size are required for conditional_invertible_network")
+                raise ValueError("input_size and output_size are required for inn_additive")
+            
+            model = create_model(
+                input_size=input_size,
+                output_size=output_size,
+                hidden_sizes=params.hidden_sizes,
+                n_coupling_layers=2,
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+            
+        case "inn_affine":
+            from models.inn_affine import create_model
+            
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for inn_affine")
+            
+            model = create_model(
+                input_size=input_size,
+                output_size=output_size,
+                hidden_sizes=params.hidden_sizes,
+                n_coupling_layers=2,
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+            
+        case "cinn_additive":
+            from models.cinn_additive import create_model
+            
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for cinn_additive")
+            
+            model = create_model(
+                input_size=input_size,
+                condition_size=output_size,  # Condition on output coefficients (beta)
+                hidden_sizes=params.hidden_sizes,
+                n_coupling_layers=2,
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+            
+        case "cinn_affine":
+            from models.cinn_affine import create_model
+            
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for cinn_affine")
             
             model = create_model(
                 input_size=input_size,

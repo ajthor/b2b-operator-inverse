@@ -125,18 +125,23 @@ match params.model:
             train as train_model,
             save as save_model,
         )
-    case "invertible_network":
-        from models.invertible_network import (
+    case "inn_additive":
+        from models.inn_additive import (
             train as train_model,
             save as save_model,
         )
-    case "conditional_invertible_network":
-        from models.conditional_invertible_network import (
+    case "cinn_additive":
+        from models.cinn_additive import (
             train as train_model,
             save as save_model,
         )
-    case "realnvp":
-        from models.realnvp import (
+    case "inn_affine":
+        from models.inn_affine import (
+            train as train_model,
+            save as save_model,
+        )
+    case "cinn_affine":
+        from models.cinn_affine import (
             train as train_model,
             save as save_model,
         )
@@ -148,38 +153,34 @@ match params.model:
     case _:
         raise ValueError(f"Unknown model: {params.model}")
 
-# Load function encoders and parameters for models that need them
-if params.model.startswith("b2b") or params.model in [
-    "variational_autoencoder",
-    "invertible_network",
-    "conditional_invertible_network",
-    "realnvp",
-    "ifno",
-]:
-    from models.load_model import load_function_encoders, load_function_encoder_params
+# Always load function encoders and forward model for consistency
+from models.load_model import load_function_encoders, load_function_encoder_params, load_forward_model
 
-    # Load function encoder parameters to get sizes for model creation
-    input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
+# Load function encoder parameters to get sizes for model creation
+input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
 
-    # Create model with correct sizes
-    model, optimizer = create_model(
-        params.model,
-        params,
-        dataset_info,
-        device,
-        input_encoder_params.n_basis,  # input size (alpha coefficients)
-        output_encoder_params.n_basis,  # output size (beta coefficients)
-    )
+# Create model with correct sizes (pass sizes for all models, some will ignore them)
+model, optimizer = create_model(
+    params.model,
+    params,
+    dataset_info,
+    device,
+    input_encoder_params.n_basis,  # input size (alpha coefficients)
+    output_encoder_params.n_basis,  # output size (beta coefficients)
+)
 
-    # Load function encoders
-    input_function_encoder, output_function_encoder = load_function_encoders(
-        log_dir, dataset_info, params, device
-    )
-else:
-    # For models that don't need function encoders (like deeponet)
-    model, optimizer = create_model(params.model, params, dataset_info, device)
-    input_function_encoder = None
-    output_function_encoder = None
+# Load function encoders (all models will receive them, some may not use them)
+input_function_encoder, output_function_encoder = load_function_encoders(
+    log_dir, dataset_info, params, device
+)
+
+# Load forward model (all models will receive it, some may not use it)
+try:
+    forward_model = load_forward_model(log_dir, device=device)
+    print(f"Loaded forward model for re-simulation loss")
+except Exception as e:
+    print(f"Warning: Could not load forward model for re-simulation loss: {e}")
+    forward_model = None
 
 # Train model
 
@@ -194,6 +195,7 @@ test_dataloader = DataLoader(
     shuffle=True,
 )
 
+# Single consistent training function call for all models
 train_model(
     model=model,
     train_dataloader=train_dataloader,
@@ -209,6 +211,7 @@ train_model(
     checkpoint_dir=params.checkpoint_dir,
     checkpoint_interval=params.checkpoint_interval,
     device=device,
+    forward_model=forward_model,
 )
 
 # Save model

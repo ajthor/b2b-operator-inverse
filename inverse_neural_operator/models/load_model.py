@@ -39,6 +39,50 @@ def load_function_encoder_params(log_dir: str):
     return input_function_encoder_params, output_function_encoder_params
 
 
+def load_forward_model(log_dir: str, device: str = "cpu"):
+    """
+    Load the pre-trained forward B2B operator from the shared directory.
+    
+    Args:
+        log_dir (str): Directory containing the forward model
+        device (str): Device to load the model on
+        
+    Returns:
+        torch.nn.Module: Loaded forward B2B operator
+    """
+    import torch
+    
+    # Load function encoder parameters to get sizes
+    input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
+    
+    # Create forward model params object (minimal required fields)
+    class ForwardParams:
+        def __init__(self):
+            self.learning_rate = 1e-3
+            self.hidden_sizes = [256, 256]  # Default from the forward model
+    
+    forward_params = ForwardParams()
+    
+    # Create forward model
+    forward_model, _ = create_forward_model(
+        model_name="b2b_nonlinear_fwd",
+        params=forward_params,
+        input_size=input_encoder_params.n_basis,
+        output_size=output_encoder_params.n_basis,
+        device=device,
+    )
+    
+    # Load forward model weights
+    forward_model_path = os.path.join(log_dir, "forward_b2b_nonlinear_fwd.pth")
+    if os.path.exists(forward_model_path):
+        forward_model.load_state_dict(torch.load(forward_model_path, map_location=device))
+        forward_model.eval()
+    else:
+        print(f"Warning: Forward model not found at {forward_model_path}. Re-simulation loss will not be accurate.")
+    
+    return forward_model
+
+
 def load_function_encoders(log_dir: str, dataset_info: dict, params: dict, device: str = "cpu"):
     """
     Load pre-trained function encoders from disk.
@@ -176,7 +220,7 @@ def load_models(
     # For b2b models, we need to get the parameter sizes
     input_size = None
     output_size = None
-    if params.model.startswith("b2b") or params.model in ["variational_autoencoder", "invertible_network", "conditional_invertible_network", "realnvp", "ifno"]:
+    if params.model.startswith("b2b") or params.model in ["variational_autoencoder", "inn_additive", "cinn_additive", "inn_affine", "cinn_affine", "ifno"]:
         input_params, output_params = load_function_encoder_params(log_dir)
         input_size = input_params.n_basis
         output_size = output_params.n_basis
@@ -197,12 +241,15 @@ def load_models(
             from models.deeponet import load, evaluate
         case "variational_autoencoder":
             from models.variational_autoencoder import load, evaluate
-        case "realnvp":
-            from models.realnvp import load, evaluate
-        case "invertible_network":
-            from models.invertible_network import load, evaluate
-        case "conditional_invertible_network":
-            from models.conditional_invertible_network import load, evaluate
+        case "inn_affine":
+            from models.inn_affine import load, evaluate
+        case "inn_additive":
+            from models.inn_additive import load, evaluate
+        case "cinn_additive":
+            from models.cinn_additive import load, evaluate
+            
+        case "cinn_affine":
+            from models.cinn_affine import load, evaluate
         case "ifno":
             from models.ifno import load, evaluate
         case _:

@@ -228,6 +228,7 @@ def train(
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
+    forward_model=None,  # Not used but kept for API compatibility
 ):
     start_epoch = 0
 
@@ -293,6 +294,16 @@ def test_model(
 
     avg_test_loss = total_test_loss / len(test_dataloader.dataset)
     return avg_test_loss
+
+
+def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):
+    """
+    Compute re-simulation loss for DeepONet model.
+    
+    For DeepONet: The model predicts u from s directly, so this is not applicable.
+    Returns 0.0 as placeholder.
+    """
+    return 0.0
 
 
 def evaluate(model, point, input_function_encoder=None, output_function_encoder=None):

@@ -254,6 +254,7 @@ def train(
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
+    forward_model=None,
 ):
     start_epoch = 0
 
@@ -326,6 +327,57 @@ def test_model(
 
     avg_test_loss = total_test_loss / len(test_dataloader.dataset)
     return avg_test_loss
+
+
+def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):
+    """
+    Compute re-simulation loss for VAE model.
+    
+    For VAE: Sample from posterior given beta*, apply forward operator, measure MSE to beta*
+    """
+    if forward_model is None:
+        return 0.0
+        
+    X, u, Y, s = batch
+    
+    # Get target beta coefficients
+    beta_result = output_function_encoder.compute_coefficients(Y, s)
+    beta_target = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+    
+    model.eval()
+    forward_model.eval()
+    with torch.no_grad():
+        # Generate samples from the posterior
+        samples = []
+        batch_size = beta_target.shape[0]
+        
+        for _ in range(n_samples):
+            # Sample z from prior distribution
+            z = model.sample_prior(batch_size, device=beta_target.device)
+            
+            # Generate alpha sample
+            alpha_sample = model.inverse(beta_target, z)
+            samples.append(alpha_sample)
+            
+        alpha_samples = torch.stack(samples, dim=0)  # [n_samples, batch_size, alpha_dim]
+        
+        # Reshape for forward pass: [n_samples * batch_size, alpha_dim]
+        alpha_dim = alpha_samples.shape[2]
+        alpha_samples_flat = alpha_samples.view(-1, alpha_dim)
+        
+        # Apply forward operator to generated samples
+        beta_predicted_flat = forward_model(alpha_samples_flat)  # [n_samples * batch_size, beta_dim]
+        
+        # Reshape back: [n_samples, batch_size, beta_dim]
+        beta_predicted = beta_predicted_flat.view(n_samples, batch_size, -1)
+        
+        # Compute MSE between predicted and target beta for each sample, then average
+        beta_target_expanded = beta_target.unsqueeze(0).expand(n_samples, -1, -1)  # [n_samples, batch_size, beta_dim]
+        mse_per_sample = torch.mean((beta_predicted - beta_target_expanded)**2, dim=(1, 2))  # [n_samples]
+        resim_loss = torch.mean(mse_per_sample)
+    
+    model.train()
+    return resim_loss.item()
 
 
 def evaluate(model, point, input_function_encoder, output_function_encoder):
