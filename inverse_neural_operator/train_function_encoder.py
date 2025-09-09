@@ -54,7 +54,7 @@ parser.add_argument("--seed", type=int, default=42)
 # Checkpoint args
 parser.add_argument("--checkpoint_interval", type=int, default=100)
 parser.add_argument("--checkpoint_dir", type=str, default=None)
-parser.add_argument("--resume", type=bool, default=False)
+parser.add_argument("--resume", type=bool, default=True)
 
 params = parser.parse_args()
 

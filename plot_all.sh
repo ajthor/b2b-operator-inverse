@@ -5,9 +5,9 @@ set -euo pipefail
 # Same datasets and models as in run_all.sh
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d)
-# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet invertible_network realnvp)
+# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet invertible_network conditional_invertible_network realnvp)
 DATASETS=(burgers_1d)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet invertible_network realnvp)
+MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet invertible_network conditional_invertible_network realnvp)
 
 # Base directory for experiment logs - same as in run_all.sh
 LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"

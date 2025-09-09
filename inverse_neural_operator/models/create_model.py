@@ -143,6 +143,20 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
+        case "conditional_invertible_network":
+            from models.conditional_invertible_network import create_model
+            
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for conditional_invertible_network")
+            
+            model = create_model(
+                input_size=input_size,
+                condition_size=output_size,  # Condition on output coefficients (beta)
+                hidden_sizes=params.hidden_sizes,
+                n_coupling_layers=2,
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+            
         case "ifno":
             from models.ifno import create_model
             

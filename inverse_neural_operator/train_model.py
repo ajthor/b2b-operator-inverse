@@ -130,6 +130,11 @@ match params.model:
             train as train_model,
             save as save_model,
         )
+    case "conditional_invertible_network":
+        from models.conditional_invertible_network import (
+            train as train_model,
+            save as save_model,
+        )
     case "realnvp":
         from models.realnvp import (
             train as train_model,
@@ -144,22 +149,28 @@ match params.model:
         raise ValueError(f"Unknown model: {params.model}")
 
 # Load function encoders and parameters for models that need them
-if params.model.startswith("b2b") or params.model in ["variational_autoencoder", "invertible_network", "realnvp", "ifno"]:
+if params.model.startswith("b2b") or params.model in [
+    "variational_autoencoder",
+    "invertible_network",
+    "conditional_invertible_network",
+    "realnvp",
+    "ifno",
+]:
     from models.load_model import load_function_encoders, load_function_encoder_params
-    
+
     # Load function encoder parameters to get sizes for model creation
     input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
-    
+
     # Create model with correct sizes
     model, optimizer = create_model(
-        params.model, 
-        params, 
-        dataset_info, 
-        device, 
+        params.model,
+        params,
+        dataset_info,
+        device,
         input_encoder_params.n_basis,  # input size (alpha coefficients)
-        output_encoder_params.n_basis   # output size (beta coefficients)
+        output_encoder_params.n_basis,  # output size (beta coefficients)
     )
-    
+
     # Load function encoders
     input_function_encoder, output_function_encoder = load_function_encoders(
         log_dir, dataset_info, params, device
