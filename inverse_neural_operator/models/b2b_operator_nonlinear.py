@@ -106,7 +106,14 @@ def load_checkpoint(
     return model, optimizer, checkpoint["epoch"], checkpoint["loss"]
 
 
-def loss_function(model, batch, input_function_encoder, output_function_encoder, forward_model=None, lambda_forward=0.0):
+def loss_function(
+    model,
+    batch,
+    input_function_encoder,
+    output_function_encoder,
+    forward_model=None,
+    lambda_forward=0.0,
+):
     X, u, Y, s = batch
 
     alpha, _ = input_function_encoder.compute_coefficients(X, u)
@@ -118,7 +125,7 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder,
 
     # pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
     pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
-    
+
     # Add forward model consistency loss if available
     if forward_model is not None and lambda_forward > 0.0:
         with torch.no_grad():
@@ -217,31 +224,37 @@ def test_model(
     return avg_test_loss
 
 
-def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):
+def resimulation_loss(
+    model,
+    batch,
+    input_function_encoder,
+    output_function_encoder,
+    forward_model,
+    n_samples=5,
+):
     """
     Compute re-simulation loss for B2B nonlinear operator model.
-    
+
     For B2B nonlinear: Apply inverse operator to get alpha, then forward operator to get beta, measure MSE.
     """
-        
+
     X, u, Y, s = batch
-    
+
     # Get target beta coefficients
-    beta_result = output_function_encoder.compute_coefficients(Y, s)
-    beta_target = beta_result[0] if isinstance(beta_result, tuple) else beta_result
-    
+    beta_target, _ = output_function_encoder.compute_coefficients(Y, s)
+
     model.eval()
     forward_model.eval()
     with torch.no_grad():
         # Apply inverse operator to get alpha
         alpha_pred = model.inverse(beta_target)
-        
+
         # Apply forward operator to get predicted beta
         beta_predicted = forward_model(alpha_pred)
-        
+
         # Compute MSE between predicted and target beta
         resim_loss = torch.nn.functional.mse_loss(beta_predicted, beta_target)
-    
+
     model.train()
     return resim_loss.item()
 
@@ -251,8 +264,7 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
     with torch.no_grad():
         X, u, Y, s = point
 
-        beta_result = output_function_encoder.compute_coefficients(Y, s)
-        beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+        beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)

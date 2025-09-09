@@ -22,11 +22,15 @@ class AdditiveCoupling(torch.nn.Module):
         else:
             self.split_dim = split_dim
 
-        # Neural network to transform the first part
+        # Neural network to transform the second part conditioned on the first
         self.net = torch.nn.Sequential()
 
         # Create layers with the specified hidden sizes
-        layer_sizes = [input_size - self.split_dim] + hidden_sizes + [self.split_dim]
+        # We keep x1 unchanged and transform x2 using f(x1):
+        #   y1 = x1
+        #   y2 = x2 + f(x1)
+        # Therefore, net input dim = split_dim (x1), output dim = input_size - split_dim (x2)
+        layer_sizes = [self.split_dim] + hidden_sizes + [input_size - self.split_dim]
         for i in range(len(layer_sizes) - 1):
             self.net.add_module(
                 f"linear_{i}", torch.nn.Linear(layer_sizes[i], layer_sizes[i + 1])
@@ -77,16 +81,16 @@ class InnAdditive(torch.nn.Module):
         for layer in reversed(self.coupling_layers):
             y = layer.inverse(y)
         return y
-    
+
     def sample_posterior(self, beta, n_samples):
         """
         Sample from the posterior distribution given observed beta.
         For additive INN, this is just the deterministic inverse mapping.
-        
+
         Args:
             beta: Observed output coefficients [batch_size, beta_dim]
             n_samples: Number of samples to generate (ignored for deterministic mapping)
-            
+
         Returns:
             samples: Generated alpha samples [n_samples, batch_size, alpha_dim]
         """
@@ -95,7 +99,9 @@ class InnAdditive(torch.nn.Module):
         return alpha_sample.unsqueeze(0).repeat(n_samples, 1, 1)
 
 
-def create_model(input_size, output_size=None, hidden_sizes=[128, 128], n_coupling_layers=2):
+def create_model(
+    input_size, output_size=None, hidden_sizes=[128, 128], n_coupling_layers=2
+):
     """
     Create an invertible neural network model.
 
@@ -109,8 +115,10 @@ def create_model(input_size, output_size=None, hidden_sizes=[128, 128], n_coupli
     """
     # For additive INN, input_size must equal output_size
     if output_size is not None and input_size != output_size:
-        raise ValueError(f"For additive INN, input_size ({input_size}) must equal output_size ({output_size})")
-    
+        raise ValueError(
+            f"For additive INN, input_size ({input_size}) must equal output_size ({output_size})"
+        )
+
     coupling_layers = []
 
     for i in range(n_coupling_layers):
@@ -242,8 +250,9 @@ def train(
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
-        # Compute and log re-simulation loss
+        # Compute and log re-simulation loss (average over batches)
         total_resim_loss = 0.0
+        n_resim_batches = 0
         with torch.no_grad():
             for batch in test_dataloader:
                 batch_resim_loss = resimulation_loss(
@@ -252,11 +261,14 @@ def train(
                     input_function_encoder=input_function_encoder,
                     output_function_encoder=output_function_encoder,
                     forward_model=forward_model,
-                    n_samples=5  # Use fewer samples for efficiency during training
+                    n_samples=1,  # Use deterministic evaluation
                 )
                 total_resim_loss += batch_resim_loss
-        avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
-        summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
+                n_resim_batches += 1
+        avg_resim_loss = total_resim_loss / max(n_resim_batches, 1)
+        summary_writer.add_scalars(
+            "loss/resimulation", {model_name: avg_resim_loss}, epoch
+        )
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
 
         # Save checkpoint
@@ -274,6 +286,7 @@ def test_model(
 ):
     model.eval()
     total_test_loss = 0.0
+    n_batches = 0
     with torch.no_grad():
         for batch in test_dataloader:
             loss = loss_function(
@@ -283,32 +296,46 @@ def test_model(
                 output_function_encoder=output_function_encoder,
             )
             total_test_loss += loss.item()
+            n_batches += 1
 
-    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+    avg_test_loss = total_test_loss / max(n_batches, 1)
     return avg_test_loss
 
 
-def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):
+def resimulation_loss(
+    model,
+    batch,
+    input_function_encoder,
+    output_function_encoder,
+    forward_model,
+    n_samples=1,
+):
     """
     Compute re-simulation loss for additive INN model.
-    
-    For additive INN: Sample from posterior given beta*, apply forward operator, measure MSE to beta*
-    Since additive INN is deterministic, we just use the inverse mapping.
+
+    For additive INN: Use deterministic inverse mapping beta* -> alpha,
+    apply forward operator alpha -> beta_resim, measure MSE(beta_resim, beta*).
+    Since additive INN is deterministic, n_samples parameter is ignored.
+
+    Re-simulation flow: beta_measured -> alpha_pred -> beta_resim -> loss(beta_resim, beta_measured)
     """
-        
     X, u, Y, s = batch
-    
-    # Get target beta coefficients
+
+    # Get target beta coefficients from observed output
     beta_target, _ = output_function_encoder.compute_coefficients(Y, s)
-    
+
     model.eval()
     forward_model.eval()
     with torch.no_grad():
-        # For deterministic additive INN, just use inverse mapping
-        alpha_pred = model.inverse(beta_target)
-        beta_predicted = forward_model(alpha_pred)
-        resim_loss = torch.nn.functional.mse_loss(beta_predicted, beta_target)
-    
+        # Deterministic inverse: beta -> alpha (no sampling needed)
+        alpha_pred = model.inverse(beta_target)  # [batch_size, alpha_dim]
+
+        # Forward re-simulation: alpha -> beta
+        beta_resim = forward_model(alpha_pred)  # [batch_size, beta_dim]
+
+        # Compare re-simulated beta with measured beta
+        resim_loss = torch.nn.functional.mse_loss(beta_resim, beta_target)
+
     model.train()
     return resim_loss.item()
 
@@ -318,8 +345,7 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
     with torch.no_grad():
         X, u, Y, s = point
 
-        beta_result = output_function_encoder.compute_coefficients(Y, s)
-        beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+        beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)

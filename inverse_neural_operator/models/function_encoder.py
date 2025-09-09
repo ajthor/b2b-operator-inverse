@@ -198,11 +198,7 @@ def evaluate(model, point):
     with torch.no_grad():
         example_xs, example_ys, xs, ys = point
 
-        result = model.compute_coefficients(example_xs, example_ys)
-        if isinstance(result, tuple):
-            coefficients = result[0]
-        else:
-            coefficients = result
+        coefficients, _ = model.compute_coefficients(example_xs, example_ys)
         pred = model(xs, coefficients)
 
         return pred

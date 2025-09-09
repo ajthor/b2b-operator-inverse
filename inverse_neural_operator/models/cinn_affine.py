@@ -25,7 +25,7 @@ class ConditionalAffineCoupling(torch.nn.Module):
             self.split_dim = split_dim
 
         # Neural network to compute scale and translation conditioned on [x2, condition]
-        # Input: [x2, condition] where x2 has size (input_size - split_dim) and condition has size condition_size  
+        # Input: [x2, condition] where x2 has size (input_size - split_dim) and condition has size condition_size
         # Output: [scale, translation] for x1 which has size 2 * split_dim
         self.net = torch.nn.Sequential()
 
@@ -47,7 +47,7 @@ class ConditionalAffineCoupling(torch.nn.Module):
         Returns: (z, log_det_jacobian)
         """
         x1, x2 = torch.split(x, [self.split_dim, x.size(-1) - self.split_dim], dim=-1)
-        
+
         # Concatenate x2 and condition for the neural network input
         net_input = torch.cat([x2, condition], dim=-1)
         net_output = self.net(net_input)
@@ -72,7 +72,7 @@ class ConditionalAffineCoupling(torch.nn.Module):
         Implements inverse conditional affine coupling: x1 = (z1 - t(z2, condition)) / exp(s(z2, condition)), x2 = z2
         """
         z1, z2 = torch.split(z, [self.split_dim, z.size(-1) - self.split_dim], dim=-1)
-        
+
         # Concatenate z2 and condition for the neural network input
         net_input = torch.cat([z2, condition], dim=-1)
         net_output = self.net(net_input)
@@ -102,11 +102,11 @@ class CinnAffine(torch.nn.Module):
         """
         x = alpha
         log_det_J_total = 0.0
-        
+
         for layer in self.coupling_layers:
             x, log_det_J = layer.forward(x, beta)
             log_det_J_total += log_det_J
-            
+
         return x, log_det_J_total
 
     def inverse(self, z, beta):
@@ -121,34 +121,36 @@ class CinnAffine(torch.nn.Module):
     def sample_posterior(self, beta, n_samples):
         """
         Sample from the posterior distribution given observed beta.
-        
+
         Args:
             beta: Observed output coefficients [batch_size, beta_dim]
             n_samples: Number of samples to generate
-            
+
         Returns:
             samples: Generated alpha samples [n_samples, batch_size, alpha_dim]
         """
         samples = []
         batch_size = beta.shape[0]
-        
+
         # Determine alpha dimension based on model architecture
         # This assumes input_size was used to create the model
         # For cINN, alpha_dim typically equals beta_dim (or can be inferred from coupling layers)
         alpha_dim = self.coupling_layers[0].input_size
-        
+
         for _ in range(n_samples):
             # Sample z from standard normal distribution
             z = torch.randn(batch_size, alpha_dim, device=beta.device, dtype=beta.dtype)
-            
+
             # Generate alpha sample
             alpha_sample = self.inverse(z, beta)
             samples.append(alpha_sample)
-            
+
         return torch.stack(samples, dim=0)
 
 
-def create_model(input_size, condition_size, hidden_sizes=[128, 128], n_coupling_layers=2):
+def create_model(
+    input_size, condition_size, hidden_sizes=[128, 128], n_coupling_layers=2
+):
     """
     Create a conditional affine invertible neural network model.
 
@@ -226,20 +228,25 @@ def load_checkpoint(
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
     X, u, Y, s = batch
 
-    alpha, _ = input_function_encoder.compute_coefficients(X, u)
+    # Encode observed coefficients
     beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
-    # cINN loss: transform alpha to z conditioned on beta
-    z, log_det_J = model.forward(alpha, beta)
-    
-    # cINN loss components
-    # 1. Latent term: 0.5 * ||z||^2 (assumes standard normal prior)
-    latent_term = 0.5 * torch.mean(z**2)
-    
-    # 2. Change of variables term: -mean(log|det J|)
+    # Train inverse: deterministic z = 0
+    batch_size = beta.shape[0]
+    alpha_dim = model.coupling_layers[0].input_size
+    z_zero = torch.zeros(batch_size, alpha_dim, device=beta.device, dtype=beta.dtype)
+
+    alpha_pred = model.inverse(z_zero, beta)
+    u_pred = input_function_encoder(X, alpha_pred)
+    recon_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+
+    # Weak NLL-style regularization on forward pass
+    alpha_gt, _ = input_function_encoder.compute_coefficients(X, u)
+    z_fwd, log_det_J = model.forward(alpha_gt, beta)
+    latent_term = 0.5 * torch.mean(z_fwd**2)
     change_of_vars = -torch.mean(log_det_J)
-    
-    return latent_term + change_of_vars
+
+    return recon_loss + 1e-4 * (latent_term + change_of_vars)
 
 
 def train(
@@ -297,8 +304,9 @@ def train(
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
-        # Compute and log re-simulation loss
+        # Compute and log re-simulation loss (average over batches)
         total_resim_loss = 0.0
+        n_resim_batches = 0
         with torch.no_grad():
             for batch in test_dataloader:
                 batch_resim_loss = resimulation_loss(
@@ -307,11 +315,14 @@ def train(
                     input_function_encoder=input_function_encoder,
                     output_function_encoder=output_function_encoder,
                     forward_model=forward_model,
-                    n_samples=5  # Use fewer samples for efficiency during training
+                    n_samples=1,
                 )
                 total_resim_loss += batch_resim_loss
-        avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
-        summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
+                n_resim_batches += 1
+        avg_resim_loss = total_resim_loss / max(n_resim_batches, 1)
+        summary_writer.add_scalars(
+            "loss/resimulation", {model_name: avg_resim_loss}, epoch
+        )
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
 
         # Save checkpoint
@@ -329,6 +340,7 @@ def test_model(
 ):
     model.eval()
     total_test_loss = 0.0
+    n_batches = 0
     with torch.no_grad():
         for batch in test_dataloader:
             loss = loss_function(
@@ -338,44 +350,52 @@ def test_model(
                 output_function_encoder=output_function_encoder,
             )
             total_test_loss += loss.item()
+            n_batches += 1
 
-    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+    avg_test_loss = total_test_loss / max(n_batches, 1)
     return avg_test_loss
 
 
-def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):
+def resimulation_loss(
+    model,
+    batch,
+    input_function_encoder,
+    output_function_encoder,
+    forward_model,
+    n_samples=1,
+):
     """
     Compute re-simulation loss for affine cINN model.
-    
-    For cINN: Sample from posterior given beta*, apply forward operator, measure MSE to beta*
+
+    For cINN: Use deterministic inverse mapping (z=0) beta* -> alpha,
+    apply forward operator alpha -> beta_resim, measure MSE(beta_resim, beta*).
+    Since we use z=0 for deterministic evaluation, n_samples parameter is ignored.
+
+    Re-simulation flow: beta_measured -> alpha_pred -> beta_resim -> loss(beta_resim, beta_measured)
     """
-        
     X, u, Y, s = batch
-    
-    # Get target beta coefficients
+
+    # Get target beta coefficients from observed output
     beta_target, _ = output_function_encoder.compute_coefficients(Y, s)
-    
+
     model.eval()
     forward_model.eval()
     with torch.no_grad():
-        # Generate samples from the posterior
-        alpha_samples = model.sample_posterior(beta_target, n_samples)  # [n_samples, batch_size, alpha_dim]
-        
-        # Reshape for forward pass: [n_samples * batch_size, alpha_dim]
-        batch_size, alpha_dim = alpha_samples.shape[1], alpha_samples.shape[2]
-        alpha_samples_flat = alpha_samples.view(-1, alpha_dim)
-        
-        # Apply forward operator to generated samples
-        beta_predicted_flat = forward_model(alpha_samples_flat)  # [n_samples * batch_size, beta_dim]
-        
-        # Reshape back: [n_samples, batch_size, beta_dim]
-        beta_predicted = beta_predicted_flat.view(n_samples, batch_size, -1)
-        
-        # Compute MSE between predicted and target beta for each sample, then average
-        beta_target_expanded = beta_target.unsqueeze(0).expand(n_samples, -1, -1)  # [n_samples, batch_size, beta_dim]
-        mse_per_sample = torch.mean((beta_predicted - beta_target_expanded)**2, dim=(1, 2))  # [n_samples]
-        resim_loss = torch.mean(mse_per_sample)
-    
+        # Deterministic inverse: beta -> alpha (using z=0 for deterministic behavior)
+        batch_size = beta_target.shape[0]
+        alpha_dim = model.coupling_layers[0].input_size
+        z_zero = torch.zeros(
+            batch_size, alpha_dim, device=beta_target.device, dtype=beta_target.dtype
+        )
+
+        alpha_pred = model.inverse(z_zero, beta_target)  # [batch_size, alpha_dim]
+
+        # Forward re-simulation: alpha -> beta
+        beta_resim = forward_model(alpha_pred)  # [batch_size, beta_dim]
+
+        # Compare re-simulated beta with measured beta
+        resim_loss = torch.nn.functional.mse_loss(beta_resim, beta_target)
+
     model.train()
     return resim_loss.item()
 
@@ -385,13 +405,16 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
     with torch.no_grad():
         X, u, Y, s = point
 
-        beta_result = output_function_encoder.compute_coefficients(Y, s)
-        beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+        beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
-        # Sample from posterior distribution
-        alpha_samples = model.sample_posterior(beta.unsqueeze(0), n_samples=1)
-        alpha_pred = alpha_samples[0, 0]  # Take first sample
-        
+        # Deterministic inverse with z = 0 for evaluation
+        batch_size = beta.shape[0]
+        alpha_dim = model.coupling_layers[0].input_size
+        z_zero = torch.zeros(
+            batch_size, alpha_dim, device=beta.device, dtype=beta.dtype
+        )
+        alpha_pred = model.inverse(z_zero, beta)
+
         pred = input_function_encoder(X, alpha_pred)
 
         return pred

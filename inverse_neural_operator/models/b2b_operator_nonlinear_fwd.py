@@ -111,11 +111,8 @@ def load_checkpoint(
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
     X, u, Y, s = batch
 
-    alpha_result = input_function_encoder.compute_coefficients(X, u)
-    alpha = alpha_result[0] if isinstance(alpha_result, tuple) else alpha_result
-    
-    beta_result = output_function_encoder.compute_coefficients(Y, s)
-    beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+    alpha, _ = input_function_encoder.compute_coefficients(X, u)
+    beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
     beta_pred = model.forward(alpha)
 
@@ -220,12 +217,11 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         X, u, Y, s = point
 
         # Compute alpha from input u
-        alpha_result = input_function_encoder.compute_coefficients(X, u)
-        alpha = alpha_result[0] if isinstance(alpha_result, tuple) else alpha_result
+        alpha, _ = input_function_encoder.compute_coefficients(X, u)
 
         # Forward pass: alpha -> beta
         beta_pred = model.forward(alpha)
-        
+
         # Reconstruct output s from predicted beta
         s_pred = output_function_encoder(Y, beta_pred)
 

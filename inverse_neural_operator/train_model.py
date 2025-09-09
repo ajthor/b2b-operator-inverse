@@ -110,11 +110,6 @@ match params.model:
             train as train_model,
             save as save_model,
         )
-    case "b2b_nonlinear_fwd":
-        from models.b2b_operator_nonlinear_fwd import (
-            train as train_model,
-            save as save_model,
-        )
     case "deeponet":
         from models.deeponet import (
             train as train_model,
@@ -159,7 +154,11 @@ match params.model:
         raise ValueError(f"Unknown model: {params.model}")
 
 # Always load function encoders and forward model for consistency
-from models.load_model import load_function_encoders, load_function_encoder_params, load_forward_model
+from models.load_model import (
+    load_function_encoders,
+    load_function_encoder_params,
+    load_forward_model,
+)
 
 # Load function encoder parameters to get sizes for model creation
 input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)

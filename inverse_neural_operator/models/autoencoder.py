@@ -293,8 +293,9 @@ def train(
         avg_test_loss = total_test_loss / len(test_dataloader.dataset)
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
-        # Compute and log re-simulation loss
+        # Compute and log re-simulation loss (average over batches)
         total_resim_loss = 0.0
+        n_resim_batches = 0
         with torch.no_grad():
             for batch in test_dataloader:
                 batch_resim_loss = resimulation_loss(
@@ -303,42 +304,60 @@ def train(
                     input_function_encoder=input_function_encoder,
                     output_function_encoder=output_function_encoder,
                     forward_model=forward_model,
-                    n_samples=5  # Use fewer samples for efficiency during training
+                    n_samples=1,  # Use deterministic evaluation
                 )
                 total_resim_loss += batch_resim_loss
-        avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
-        summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
+                n_resim_batches += 1
+        avg_resim_loss = total_resim_loss / max(n_resim_batches, 1)
+        summary_writer.add_scalars(
+            "loss/resimulation", {model_name: avg_resim_loss}, epoch
+        )
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
 
 
-def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):
+def resimulation_loss(
+    model,
+    batch,
+    input_function_encoder,
+    output_function_encoder,
+    forward_model,
+    n_samples=1,
+):
     """
     Compute re-simulation loss for autoencoder model.
-    
-    For autoencoder: Predict alpha given beta, apply forward operator, measure MSE to beta*
-    """        
+
+    For autoencoder: Use deterministic inverse mapping beta* -> alpha,
+    apply forward operator alpha -> beta_resim, measure MSE(beta_resim, beta*).
+    Since autoencoder is deterministic, n_samples parameter is ignored.
+
+    Re-simulation flow: beta_measured -> alpha_pred -> beta_resim -> loss(beta_resim, beta_measured)
+    """
     X = batch["X"]
     u = batch["u"]
     Y = batch["Y"]
     s = batch["s"]
-    
-    # Get target beta coefficients
+
+    # Get target beta coefficients from observed output
     beta_target = output_function_encoder.compute_coefficients(Y, s)
-    
+
     model.eval()
     forward_model.eval()
     with torch.no_grad():
-        # Get alpha coefficients from the model given beta
-        alpha_pred = model(torch.zeros_like(beta_target), beta_target)  # Autoencoder takes dummy alpha input
-        
-        # Apply forward operator to predicted alpha
-        beta_predicted = forward_model(alpha_pred)
-        
-        # Compute MSE between predicted and target beta
-        resim_loss = torch.nn.functional.mse_loss(beta_predicted, beta_target, reduction="mean")
-    
+        # Deterministic inverse: beta -> alpha
+        alpha_pred = model(
+            torch.zeros_like(beta_target), beta_target
+        )  # [batch_size, alpha_dim]
+
+        # Forward re-simulation: alpha -> beta
+        beta_resim = forward_model(alpha_pred)  # [batch_size, beta_dim]
+
+        # Compare re-simulated beta with measured beta
+        resim_loss = torch.nn.functional.mse_loss(
+            beta_resim, beta_target, reduction="mean"
+        )
+
     model.train()
     return resim_loss.item()
 
@@ -351,8 +370,7 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         Y = point["Y"]
         s = point["s"]
 
-        beta_result = output_function_encoder.compute_coefficients(Y, s)
-        beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+        beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
         alpha_pred = model(torch.zeros_like(beta), beta)  # Dummy alpha input
         pred = input_function_encoder(X, alpha_pred)

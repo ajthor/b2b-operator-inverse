@@ -183,29 +183,32 @@ def load_checkpoint(
 
 
 def loss_function(
-    model, batch, input_function_encoder, output_function_encoder, forward_model=None, lambda_forward=0.0, lambda_u: float = 0.0
+    model,
+    batch,
+    input_function_encoder,
+    output_function_encoder,
+    forward_model=None,
+    lambda_forward=0.0,
+    lambda_u: float = 0.0,
 ):
     X, u, Y, s = batch
 
-    alpha_result = input_function_encoder.compute_coefficients(X, u)
-    alpha = alpha_result[0] if isinstance(alpha_result, tuple) else alpha_result
-
-    beta_result = output_function_encoder.compute_coefficients(Y, s)
-    beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+    alpha, _ = input_function_encoder.compute_coefficients(X, u)
+    beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
     z, mu, logvar = model(alpha, beta)
     alpha_pred = model.inverse(beta, z)
 
     u_pred = input_function_encoder(X, alpha_pred)
 
-    # Reconstruction loss: negative log probability assuming unit variance Gaussian
+    # # Reconstruction loss: negative log probability assuming unit variance Gaussian
     # reconstruction_loss = 0.5 * torch.sum((alpha_pred - alpha) ** 2, dim=-1).mean()
 
-    # Forward consistency loss: encode alpha_pred with beta and compare z values
-    z_reconstructed, *_ = model(alpha_pred, beta)
-    consistency_loss = torch.nn.functional.mse_loss(
-        z_reconstructed, z, reduction="mean"
-    )
+    # # Forward consistency loss: encode alpha_pred with beta and compare z values
+    # z_reconstructed, *_ = model(alpha_pred, beta)
+    # consistency_loss = torch.nn.functional.mse_loss(
+    #     z_reconstructed, z, reduction="mean"
+    # )
 
     # Function space loss (u-loss)
     pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
@@ -225,16 +228,16 @@ def loss_function(
     )
     kl_loss = kl_per.mean()
 
-    total_loss = pred_loss + consistency_loss + kl_loss
-    
-    # Add forward model consistency loss if available
-    if forward_model is not None and lambda_forward > 0.0:
-        with torch.no_grad():
-            forward_model.eval()
-        # Forward consistency: alpha_pred -> beta_pred should match beta
-        beta_pred = forward_model.forward(alpha_pred)
-        forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
-        total_loss = total_loss + lambda_forward * forward_loss
+    total_loss = pred_loss + kl_loss
+
+    # # Add forward model consistency loss if available
+    # if forward_model is not None and lambda_forward > 0.0:
+    #     with torch.no_grad():
+    #         forward_model.eval()
+    #     # Forward consistency: alpha_pred -> beta_pred should match beta
+    #     beta_pred = forward_model.forward(alpha_pred)
+    #     forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
+    #     total_loss = total_loss + lambda_forward * forward_loss
 
     return total_loss
 
@@ -297,8 +300,9 @@ def train(
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
-        # Compute and log re-simulation loss
+        # Compute and log re-simulation loss (average over batches)
         total_resim_loss = 0.0
+        n_resim_batches = 0
         with torch.no_grad():
             for batch in test_dataloader:
                 batch_resim_loss = resimulation_loss(
@@ -307,11 +311,14 @@ def train(
                     input_function_encoder=input_function_encoder,
                     output_function_encoder=output_function_encoder,
                     forward_model=forward_model,
-                    n_samples=5  # Use fewer samples for efficiency during training
+                    n_samples=1,  # Use deterministic evaluation
                 )
                 total_resim_loss += batch_resim_loss
-        avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
-        summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
+                n_resim_batches += 1
+        avg_resim_loss = total_resim_loss / max(n_resim_batches, 1)
+        summary_writer.add_scalars(
+            "loss/resimulation", {model_name: avg_resim_loss}, epoch
+        )
 
         # Save checkpoint
         if (epoch + 1) % checkpoint_interval == 0:
@@ -345,51 +352,45 @@ def test_model(
     return avg_test_loss
 
 
-def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):
+def resimulation_loss(
+    model,
+    batch,
+    input_function_encoder,
+    output_function_encoder,
+    forward_model,
+    n_samples=1,
+):
     """
     Compute re-simulation loss for VAE model.
-    
-    For VAE: Sample from posterior given beta*, apply forward operator, measure MSE to beta*
+
+    For VAE: Use deterministic inverse mapping (z=0) beta* -> alpha,
+    apply forward operator alpha -> beta_resim, measure MSE(beta_resim, beta*).
+    Since we use z=0 for deterministic evaluation, n_samples parameter is ignored.
+
+    Re-simulation flow: beta_measured -> alpha_pred -> beta_resim -> loss(beta_resim, beta_measured)
     """
-        
     X, u, Y, s = batch
-    
-    # Get target beta coefficients
-    beta_result = output_function_encoder.compute_coefficients(Y, s)
-    beta_target = beta_result[0] if isinstance(beta_result, tuple) else beta_result
-    
+
+    # Get target beta coefficients from observed output
+    beta_target, _ = output_function_encoder.compute_coefficients(Y, s)
+
     model.eval()
     forward_model.eval()
     with torch.no_grad():
-        # Generate samples from the posterior
-        samples = []
+        # Deterministic inverse: beta -> alpha (using z=0 for deterministic behavior)
         batch_size = beta_target.shape[0]
-        
-        for _ in range(n_samples):
-            # Sample z from prior distribution
-            z = model.sample_prior(batch_size, device=beta_target.device)
-            
-            # Generate alpha sample
-            alpha_sample = model.inverse(beta_target, z)
-            samples.append(alpha_sample)
-            
-        alpha_samples = torch.stack(samples, dim=0)  # [n_samples, batch_size, alpha_dim]
-        
-        # Reshape for forward pass: [n_samples * batch_size, alpha_dim]
-        alpha_dim = alpha_samples.shape[2]
-        alpha_samples_flat = alpha_samples.view(-1, alpha_dim)
-        
-        # Apply forward operator to generated samples
-        beta_predicted_flat = forward_model(alpha_samples_flat)  # [n_samples * batch_size, beta_dim]
-        
-        # Reshape back: [n_samples, batch_size, beta_dim]
-        beta_predicted = beta_predicted_flat.view(n_samples, batch_size, -1)
-        
-        # Compute MSE between predicted and target beta for each sample, then average
-        beta_target_expanded = beta_target.unsqueeze(0).expand(n_samples, -1, -1)  # [n_samples, batch_size, beta_dim]
-        mse_per_sample = torch.mean((beta_predicted - beta_target_expanded)**2, dim=(1, 2))  # [n_samples]
-        resim_loss = torch.mean(mse_per_sample)
-    
+        z_zero = (
+            model.sample_prior(batch_size, device=beta_target.device) * 0
+        )  # Zero out the prior sample
+
+        alpha_pred = model.inverse(beta_target, z_zero)  # [batch_size, alpha_dim]
+
+        # Forward re-simulation: alpha -> beta
+        beta_resim = forward_model(alpha_pred)  # [batch_size, beta_dim]
+
+        # Compare re-simulated beta with measured beta
+        resim_loss = torch.nn.functional.mse_loss(beta_resim, beta_target)
+
     model.train()
     return resim_loss.item()
 
@@ -399,8 +400,7 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
     with torch.no_grad():
         X, u, Y, s = point
 
-        beta_result = output_function_encoder.compute_coefficients(Y, s)
-        beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+        beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
         z = model.sample_prior(1, device=X.device)
         alpha_pred = model.inverse(beta, z)
