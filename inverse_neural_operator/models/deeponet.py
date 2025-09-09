@@ -224,11 +224,11 @@ def train(
     summary_writer,
     params,
     model_name,
+    forward_model,  # Not used but kept for API compatibility
     resume_from_checkpoint=False,
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
-    forward_model=None,  # Not used but kept for API compatibility
 ):
     start_epoch = 0
 

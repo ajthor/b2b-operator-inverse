@@ -142,11 +142,11 @@ def train(
     summary_writer,
     params,
     model_name,
+    forward_model,
     resume_from_checkpoint=False,
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
-    forward_model=None,
 ):
     start_epoch = 0
 
@@ -223,8 +223,6 @@ def resimulation_loss(model, batch, input_function_encoder, output_function_enco
     
     For B2B nonlinear: Apply inverse operator to get alpha, then forward operator to get beta, measure MSE.
     """
-    if forward_model is None:
-        return 0.0
         
     X, u, Y, s = batch
     

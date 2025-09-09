@@ -150,6 +150,11 @@ match params.model:
             train as train_model,
             save as save_model,
         )
+    case "mixture_density_network":
+        from models.mixture_density_network import (
+            train as train_model,
+            save as save_model,
+        )
     case _:
         raise ValueError(f"Unknown model: {params.model}")
 

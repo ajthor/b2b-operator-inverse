@@ -87,6 +87,34 @@ class ConditionalInvertibleNeuralNetwork(torch.nn.Module):
             y = layer.inverse(y, beta)
         return y
 
+    def sample_posterior(self, beta, n_samples):
+        """
+        Sample from the posterior distribution given observed beta.
+        
+        Args:
+            beta: Observed output coefficients [batch_size, beta_dim]
+            n_samples: Number of samples to generate
+            
+        Returns:
+            samples: Generated alpha samples [n_samples, batch_size, alpha_dim]
+        """
+        samples = []
+        batch_size = beta.shape[0]
+        
+        # Determine alpha dimension based on model architecture
+        # For cINN, alpha_dim typically equals beta_dim (or can be inferred from coupling layers)
+        alpha_dim = self.coupling_layers[0].input_size
+        
+        for _ in range(n_samples):
+            # Sample z from standard normal distribution
+            z = torch.randn(batch_size, alpha_dim, device=beta.device, dtype=beta.dtype)
+            
+            # Generate alpha sample
+            alpha_sample = self.inverse(z, beta)
+            samples.append(alpha_sample)
+            
+        return torch.stack(samples, dim=0)
+
 
 def create_model(input_size, condition_size, hidden_sizes=[128, 128], n_coupling_layers=2):
     """
@@ -201,11 +229,11 @@ def train(
     summary_writer,
     params,
     model_name,
+    forward_model,
     resume_from_checkpoint=False,
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
-    forward_model=None,
 ):
     start_epoch = 0
 
@@ -246,24 +274,21 @@ def train(
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         # Compute and log re-simulation loss
-        if forward_model is not None:
-            total_resim_loss = 0.0
-            with torch.no_grad():
-                for batch in test_dataloader:
-                    batch_resim_loss = resimulation_loss(
-                        model=model,
-                        batch=batch,
-                        input_function_encoder=input_function_encoder,
-                        output_function_encoder=output_function_encoder,
-                        forward_model=forward_model,
-                        n_samples=5  # Use fewer samples for efficiency during training
-                    )
-                    total_resim_loss += batch_resim_loss
-            avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
-            summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
-            tqdm_bar.set_postfix_str(f"test {avg_test_loss:.4e} resim {avg_resim_loss:.4e}")
-        else:
-            tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
+        total_resim_loss = 0.0
+        with torch.no_grad():
+            for batch in test_dataloader:
+                batch_resim_loss = resimulation_loss(
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                    forward_model=forward_model,
+                    n_samples=5  # Use fewer samples for efficiency during training
+                )
+                total_resim_loss += batch_resim_loss
+        avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
+        summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
+        tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
 
         # Save checkpoint
         if (epoch + 1) % checkpoint_interval == 0:
@@ -300,8 +325,6 @@ def resimulation_loss(model, batch, input_function_encoder, output_function_enco
     
     For cINN: Sample from posterior given beta*, apply forward operator, measure MSE to beta*
     """
-    if forward_model is None:
-        return 0.0
         
     X, u, Y, s = batch
     

@@ -200,6 +200,20 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
+        case "mixture_density_network":
+            from models.mixture_density_network import create_model
+            
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for mixture_density_network")
+            
+            model = create_model(
+                input_size=output_size,  # Takes beta coefficients as input
+                output_size=input_size,  # Outputs alpha coefficients 
+                hidden_sizes=params.hidden_sizes,
+                n_components=getattr(params, 'n_components', 5),
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+            
         case _:
             raise ValueError(f"Unknown model: {model_name}")
     

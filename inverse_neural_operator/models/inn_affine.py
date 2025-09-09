@@ -51,7 +51,8 @@ class AffineCoupling(torch.nn.Module):
         s, t = torch.chunk(net_output, 2, dim=-1)
 
         # Bound scale parameters for numerical stability
-        s = torch.tanh(s)
+        # Use clipping instead of tanh to avoid scaling issues
+        s = torch.clamp(s, min=-10.0, max=10.0)
 
         # Apply affine transformation to x1
         y1 = x1 * torch.exp(s) + t
@@ -148,7 +149,10 @@ class InnAffine(torch.nn.Module):
         
         for _ in range(n_samples):
             # Sample z from standard normal distribution
-            z = torch.randn(batch_size, beta_dim, device=beta.device, dtype=beta.dtype)
+            # z should have the remaining dimensions after beta
+            input_size = self.coupling_layers[0].input_size
+            z_size = input_size - self.output_size
+            z = torch.randn(batch_size, z_size, device=beta.device, dtype=beta.dtype)
             
             # Generate alpha sample
             alpha_sample = self.inverse(beta=beta, z=z)
@@ -176,11 +180,12 @@ def create_model(input_size, output_size=None, hidden_sizes=[128, 128], n_coupli
     coupling_layers = []
 
     for i in range(n_coupling_layers):
-        # Alternate between splitting at different positions for better flow
+        # Alternate between splitting at output_size and remaining dimensions
+        # This ensures compatibility with the final beta/z split
         if i % 2 == 0:
-            split_dim = input_size // 2
+            split_dim = output_size
         else:
-            split_dim = input_size - input_size // 2
+            split_dim = input_size - output_size
 
         layer = AffineCoupling(
             input_size=input_size, hidden_sizes=hidden_sizes, split_dim=split_dim
@@ -271,7 +276,7 @@ def train(
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
-    forward_model=None,
+    forward_model,
 ):
     start_epoch = 0
 
@@ -313,24 +318,22 @@ def train(
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         # Compute and log re-simulation loss
-        if forward_model is not None:
-            total_resim_loss = 0.0
-            with torch.no_grad():
-                for batch in test_dataloader:
-                    batch_resim_loss = resimulation_loss(
-                        model=model,
-                        batch=batch,
-                        input_function_encoder=input_function_encoder,
-                        output_function_encoder=output_function_encoder,
-                        forward_model=forward_model,
-                        n_samples=5  # Use fewer samples for efficiency during training
-                    )
-                    total_resim_loss += batch_resim_loss
-            avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
-            summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
-            tqdm_bar.set_postfix_str(f"test {avg_test_loss:.4e} resim {avg_resim_loss:.4e}")
-        else:
-            tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
+        total_resim_loss = 0.0
+        with torch.no_grad():
+            for batch in test_dataloader:
+                batch_resim_loss = resimulation_loss(
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                    forward_model=forward_model,
+                    n_samples=5  # Use fewer samples for efficiency during training
+                )
+                total_resim_loss += batch_resim_loss
+        avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
+        summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
+        
+        tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
 
         # Save checkpoint
         if (epoch + 1) % checkpoint_interval == 0:
@@ -367,9 +370,6 @@ def resimulation_loss(model, batch, input_function_encoder, output_function_enco
     
     For affine INN: Sample from posterior given beta*, apply forward operator, measure MSE to beta*
     """
-    if forward_model is None:
-        return 0.0
-        
     X, u, Y, s = batch
     
     # Get target beta coefficients

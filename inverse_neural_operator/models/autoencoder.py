@@ -258,6 +258,7 @@ def train(
     model_name,
     params,
     device,
+    forward_model,
 ):
 
     tqdm_bar = tqdm.tqdm(range(n_epochs))
@@ -292,5 +293,68 @@ def train(
         avg_test_loss = total_test_loss / len(test_dataloader.dataset)
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
+        # Compute and log re-simulation loss
+        total_resim_loss = 0.0
+        with torch.no_grad():
+            for batch in test_dataloader:
+                batch_resim_loss = resimulation_loss(
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                    forward_model=forward_model,
+                    n_samples=5  # Use fewer samples for efficiency during training
+                )
+                total_resim_loss += batch_resim_loss
+        avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
+        summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
+
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
+
+
+def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):
+    """
+    Compute re-simulation loss for autoencoder model.
+    
+    For autoencoder: Predict alpha given beta, apply forward operator, measure MSE to beta*
+    """        
+    X = batch["X"]
+    u = batch["u"]
+    Y = batch["Y"]
+    s = batch["s"]
+    
+    # Get target beta coefficients
+    beta_target = output_function_encoder.compute_coefficients(Y, s)
+    
+    model.eval()
+    forward_model.eval()
+    with torch.no_grad():
+        # Get alpha coefficients from the model given beta
+        alpha_pred = model(torch.zeros_like(beta_target), beta_target)  # Autoencoder takes dummy alpha input
+        
+        # Apply forward operator to predicted alpha
+        beta_predicted = forward_model(alpha_pred)
+        
+        # Compute MSE between predicted and target beta
+        resim_loss = torch.nn.functional.mse_loss(beta_predicted, beta_target, reduction="mean")
+    
+    model.train()
+    return resim_loss.item()
+
+
+def evaluate(model, point, input_function_encoder, output_function_encoder):
+    model.eval()
+    with torch.no_grad():
+        X = point["X"]
+        u = point["u"]
+        Y = point["Y"]
+        s = point["s"]
+
+        beta_result = output_function_encoder.compute_coefficients(Y, s)
+        beta = beta_result[0] if isinstance(beta_result, tuple) else beta_result
+
+        alpha_pred = model(torch.zeros_like(beta), beta)  # Dummy alpha input
+        pred = input_function_encoder(X, alpha_pred)
+
+        return pred

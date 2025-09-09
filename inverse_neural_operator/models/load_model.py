@@ -220,7 +220,7 @@ def load_models(
     # For b2b models, we need to get the parameter sizes
     input_size = None
     output_size = None
-    if params.model.startswith("b2b") or params.model in ["variational_autoencoder", "inn_additive", "cinn_additive", "inn_affine", "cinn_affine", "ifno"]:
+    if params.model.startswith("b2b") or params.model in ["variational_autoencoder", "inn_additive", "cinn_additive", "inn_affine", "cinn_affine", "ifno", "mixture_density_network"]:
         input_params, output_params = load_function_encoder_params(log_dir)
         input_size = input_params.n_basis
         output_size = output_params.n_basis
@@ -252,6 +252,8 @@ def load_models(
             from models.cinn_affine import load, evaluate
         case "ifno":
             from models.ifno import load, evaluate
+        case "mixture_density_network":
+            from models.mixture_density_network import load, evaluate
         case _:
             raise ValueError(f"Unknown model: {params.model}")
 

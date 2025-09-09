@@ -250,11 +250,11 @@ def train(
     summary_writer,
     model_name,
     params,
+    forward_model,
     resume_from_checkpoint=False,
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
-    forward_model=None,
 ):
     start_epoch = 0
 
@@ -297,6 +297,22 @@ def train(
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
+        # Compute and log re-simulation loss
+        total_resim_loss = 0.0
+        with torch.no_grad():
+            for batch in test_dataloader:
+                batch_resim_loss = resimulation_loss(
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                    forward_model=forward_model,
+                    n_samples=5  # Use fewer samples for efficiency during training
+                )
+                total_resim_loss += batch_resim_loss
+        avg_resim_loss = total_resim_loss / len(test_dataloader.dataset)
+        summary_writer.add_scalars("loss/resimulation", {model_name: avg_resim_loss}, epoch)
+
         # Save checkpoint
         if (epoch + 1) % checkpoint_interval == 0:
             save_checkpoint(model, optimizer, epoch + 1, avg_test_loss, checkpoint_path)
@@ -335,8 +351,6 @@ def resimulation_loss(model, batch, input_function_encoder, output_function_enco
     
     For VAE: Sample from posterior given beta*, apply forward operator, measure MSE to beta*
     """
-    if forward_model is None:
-        return 0.0
         
     X, u, Y, s = batch
     
