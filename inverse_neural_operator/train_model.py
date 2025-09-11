@@ -62,7 +62,7 @@ params = parser.parse_args()
 
 if params.device is None:
     if torch.cuda.is_available():
-        device = "cuda:5"
+        device = "cuda"
     elif torch.backends.mps.is_available():
         device = "mps"
     else:

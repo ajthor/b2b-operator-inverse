@@ -23,7 +23,7 @@ LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
-DATASETS=(wave_scattering)
+DATASETS=(fwi)
 MODELS=(b2b_linear b2b_nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
 FORWARD_MODELS=(b2b_nonlinear_fwd)  # Currently only b2b_nonlinear_fwd is supported
 SEEDS=(1)   # add more seeds if you like

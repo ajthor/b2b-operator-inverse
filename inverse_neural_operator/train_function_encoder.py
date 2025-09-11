@@ -33,7 +33,7 @@ parser.add_argument("--model", type=str, default="b2b_nonlinear")
 
 # Function encoder args
 parser.add_argument("--n_basis", type=int, default=100)
-parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
+parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
 parser.add_argument("--regularization", type=float, default=1e-3)  # 1e-4 for chladni_2d
 
 # Training args
@@ -54,7 +54,7 @@ parser.add_argument("--seed", type=int, default=42)
 # Checkpoint args
 parser.add_argument("--checkpoint_interval", type=int, default=100)
 parser.add_argument("--checkpoint_dir", type=str, default=None)
-parser.add_argument("--resume", type=bool, default=True)
+parser.add_argument("--resume", type=bool, default=False)
 
 params = parser.parse_args()
 

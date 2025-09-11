@@ -19,10 +19,10 @@ class ChladniDataset(Dataset):
 
     def __init__(self, dataset, device="cpu"):
         """
-        Initialize the dataset by extracting 'X', 'u', 'Y', 's' values.
+        Initialize the dataset by extracting spatial coordinates and function values.
 
         Args:
-            dataset: HuggingFace dataset with 'X', 'u', 'Y', 's' fields
+            dataset: HuggingFace dataset with new field structure
             device: The device to put tensors on
         """
         self.device = device
@@ -31,10 +31,37 @@ class ChladniDataset(Dataset):
         # Preload all data to GPU for fast training
         print(f"📊 Loading {self.n_samples} samples to {device}...")
         
-        self.X = torch.tensor(dataset["X"], device=device, dtype=torch.float32)  # Input coordinates
-        self.u = torch.tensor(dataset["u"], device=device, dtype=torch.float32)  # Input function (forces) 
-        self.Y = torch.tensor(dataset["Y"], device=device, dtype=torch.float32)  # Output coordinates
-        self.s = torch.tensor(dataset["s"], device=device, dtype=torch.float32)  # Output function (displacements)
+        # Check if using new format or old format
+        if "spatial_coordinates" in dataset.features:
+            # New HuggingFace format
+            print("Using new HuggingFace dataset format with spatial_coordinates")
+            
+            # spatial_coordinates is the same for all samples, so we can use the first sample
+            # and expand it to all samples
+            spatial_coords = torch.tensor(dataset["spatial_coordinates"], device=device, dtype=torch.float32)
+            
+            # spatial_coords should be [batch_size, num_points, 2] but each sample has same coordinates
+            # So we take the first sample's coordinates and expand
+            if len(spatial_coords.shape) == 3:  # [batch_size, num_points, 2]
+                self.X = spatial_coords  # Input coordinates
+                self.Y = spatial_coords  # Output coordinates (same for Chladni)
+            elif len(spatial_coords.shape) == 2:  # [num_points, 2] - single set of coordinates
+                # Expand to all samples
+                spatial_coords = spatial_coords.unsqueeze(0).expand(self.n_samples, -1, -1)
+                self.X = spatial_coords  # Input coordinates  
+                self.Y = spatial_coords  # Output coordinates (same for Chladni)
+            
+            # Function values - flattened forcing (S) and displacement (Z) 
+            self.u = torch.tensor(dataset["S"], device=device, dtype=torch.float32)  # Flattened forcing
+            self.s = torch.tensor(dataset["Z"], device=device, dtype=torch.float32)  # Flattened displacement
+            
+        else:
+            # Fallback to old format
+            print("Using legacy dataset format")
+            self.X = torch.tensor(dataset["X"], device=device, dtype=torch.float32)  # Input coordinates
+            self.u = torch.tensor(dataset["u"], device=device, dtype=torch.float32)  # Input function (forces) 
+            self.Y = torch.tensor(dataset["Y"], device=device, dtype=torch.float32)  # Output coordinates
+            self.s = torch.tensor(dataset["s"], device=device, dtype=torch.float32)  # Output function (displacements)
         
         # Ensure correct dimensions
         if self.u.dim() == 2:  # [batch, values]
@@ -67,6 +94,10 @@ class ChladniDataset(Dataset):
 
     def get_info(self):
         """Extract info from model dataset."""
+        # Try to infer grid size from coordinates
+        n_points = self.X.shape[1]
+        grid_size = int(np.sqrt(n_points))  # Assume square grid
+        
         return {
             # Basic info (existing)
             "X_size": self.X.shape[-1],
@@ -78,9 +109,9 @@ class ChladniDataset(Dataset):
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
             
-            # iFNO spatial info (hardcoded for Chladni 2D)
-            "input_spatial_dims": (25, 25),      # 25x25 grid
-            "output_spatial_dims": (25, 25),     # Same for symmetric problem
+            # iFNO spatial info (inferred from data)
+            "input_spatial_dims": (grid_size, grid_size),      # Square grid
+            "output_spatial_dims": (grid_size, grid_size),     # Same for symmetric problem
             "input_function_channels": 1,        # Scalar force field
             "output_function_channels": 1,       # Scalar displacement field
             "coordinate_dim": 2,                 # 2D spatial coordinates
@@ -100,14 +131,22 @@ def load_data(params=None, device="cpu", split="train"):
         A ChladniDataset instance for the specified split
     """
     try:
-        # Load the pre-generated dataset
-        ds = load_from_disk('Data/chladni_dataset')
-        model_dataset = ChladniDataset(ds[split], device=device)
+        # Load from new HuggingFace dataset
+        from datasets import load_dataset
+        ds = load_dataset("ajthor/chladni", split=split)
+        model_dataset = ChladniDataset(ds, device=device)
         return model_dataset
     except Exception as e:
-        print(f"Error loading Chladni dataset: {e}")
-        print("Please run generate_chladni_data() first to create the dataset.")
-        raise
+        print(f"Error loading Chladni dataset from HuggingFace: {e}")
+        # Fallback to local dataset
+        try:
+            ds = load_from_disk('Data/chladni_dataset')
+            model_dataset = ChladniDataset(ds[split], device=device)
+            return model_dataset
+        except Exception as e2:
+            print(f"Error loading local Chladni dataset: {e2}")
+            print("Please ensure the dataset is available from HuggingFace or run generate_chladni_data() to create local dataset.")
+            raise
 
 
 def generate_chladni_data():
@@ -292,10 +331,17 @@ def generate_chladni_data():
 def load_chladni_data():
     """Load the generated Chladni data in HuggingFace format."""
     try:
-        return load_from_disk('Data/chladni_dataset')
+        # Try new HuggingFace dataset first
+        from datasets import load_dataset
+        return load_dataset("ajthor/chladni")
     except:
-        data = np.load('Data/ChladniData_original.npz')
-        return {key: data[key] for key in data.keys()}
+        try:
+            # Fallback to local dataset
+            return load_from_disk('Data/chladni_dataset')
+        except:
+            # Last resort - load original arrays
+            data = np.load('Data/ChladniData_original.npz')
+            return {key: data[key] for key in data.keys()}
 
 
 def load_chladni_original():

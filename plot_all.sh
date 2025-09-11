@@ -75,6 +75,12 @@ for dataset in "${DATASETS[@]}"; do
       --model "$model" \
       --log_dir "$LOG_BASE_DIR" \
       --results_dir "$RESULTS_DIR"
+      
+      # Also generate probabilistic plots
+      python inverse_neural_operator/plots/plot_burgers_probabilistic.py \
+      --model "$model" \
+      --log_dir "$LOG_BASE_DIR" \
+      --results_dir "$RESULTS_DIR/probabilistic"
       ;;
       chladni)
       python inverse_neural_operator/plots/plot_chladni.py \
@@ -87,6 +93,12 @@ for dataset in "${DATASETS[@]}"; do
       --model "$model" \
       --log_dir "$LOG_BASE_DIR" \
       --results_dir "$RESULTS_DIR"
+      
+      # Also generate probabilistic plots
+      python inverse_neural_operator/plots/plot_darcy_probabilistic.py \
+      --model "$model" \
+      --log_dir "$LOG_BASE_DIR" \
+      --results_dir "$RESULTS_DIR/probabilistic"
       ;;
       fwi)
       python inverse_neural_operator/plots/plot_fwi.py \
@@ -105,6 +117,12 @@ for dataset in "${DATASETS[@]}"; do
       --model "$model" \
       --log_dir "$LOG_BASE_DIR" \
       --results_dir "$RESULTS_DIR"
+      
+      # Also generate probabilistic plots
+      python inverse_neural_operator/plots/plot_wave_scattering_probabilistic.py \
+      --model "$model" \
+      --log_dir "$LOG_BASE_DIR" \
+      --results_dir "$RESULTS_DIR/probabilistic"
       ;;
       *)
       echo "Unknown dataset: $dataset"
