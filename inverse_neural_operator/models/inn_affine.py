@@ -243,9 +243,10 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     X, u, Y, s = batch
 
     # Encode ground-truth coefficients
+    alpha_gt, _ = input_function_encoder.compute_coefficients(X, u)
     beta_gt, _ = output_function_encoder.compute_coefficients(Y, s)
 
-    # Train primarily on inverse mapping: beta -> alpha -> u
+    # Inverse loss: beta -> alpha -> u_pred vs u_gt
     # Use deterministic inverse by setting z = 0 for stability
     batch_size = beta_gt.shape[0]
     input_size = model.coupling_layers[0].input_size
@@ -254,10 +255,13 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
 
     alpha_pred = model.inverse(beta=beta_gt, z=z_zero)
     u_pred = input_function_encoder(X, alpha_pred)
+    inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
-    # Reconstruction loss in function space
-    pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
-    return pred_loss
+    # Forward prediction loss: alpha_gt -> beta_pred vs beta_gt
+    beta_pred, _, _ = model.forward(alpha_gt)  # Extract tensor, ignore log_det_J
+    forward_loss = torch.nn.functional.mse_loss(beta_pred, beta_gt, reduction="mean")
+
+    return inverse_loss + forward_loss
 
 
 def train(

@@ -126,15 +126,6 @@ def loss_function(
     # pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
     pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
-    # Add forward model consistency loss if available
-    if forward_model is not None and lambda_forward > 0.0:
-        with torch.no_grad():
-            forward_model.eval()
-        # Forward consistency: alpha_pred -> beta_pred should match beta
-        beta_pred = forward_model.forward(alpha_pred)
-        forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
-        pred_loss = pred_loss + lambda_forward * forward_loss
-
     return pred_loss
 
 
@@ -193,6 +184,27 @@ def train(
             output_function_encoder=output_function_encoder,
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+
+        # Compute and log re-simulation loss (average over batches)
+        if forward_model is not None:
+            total_resim_loss = 0.0
+            n_resim_batches = 0
+            with torch.no_grad():
+                for batch in test_dataloader:
+                    batch_resim_loss = resimulation_loss(
+                        model=model,
+                        batch=batch,
+                        input_function_encoder=input_function_encoder,
+                        output_function_encoder=output_function_encoder,
+                        forward_model=forward_model,
+                        n_samples=1,
+                    )
+                    total_resim_loss += batch_resim_loss
+                    n_resim_batches += 1
+            avg_resim_loss = total_resim_loss / max(n_resim_batches, 1)
+            summary_writer.add_scalars(
+                "loss/resimulation", {model_name: avg_resim_loss}, epoch
+            )
 
         # Save checkpoint
         if (epoch + 1) % checkpoint_interval == 0:

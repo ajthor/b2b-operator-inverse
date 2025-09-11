@@ -230,14 +230,14 @@ def loss_function(
 
     total_loss = pred_loss + kl_loss
 
-    # # Add forward model consistency loss if available
-    # if forward_model is not None and lambda_forward > 0.0:
-    #     with torch.no_grad():
-    #         forward_model.eval()
-    #     # Forward consistency: alpha_pred -> beta_pred should match beta
-    #     beta_pred = forward_model.forward(alpha_pred)
-    #     forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
-    #     total_loss = total_loss + lambda_forward * forward_loss
+    # Add forward model consistency loss if available
+    if forward_model is not None:
+        with torch.no_grad():
+            forward_model.eval()
+        # Forward consistency: alpha_pred -> beta_pred should match beta
+        beta_pred = forward_model.forward(alpha_pred)
+        forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
+        total_loss = total_loss + forward_loss
 
     return total_loss
 

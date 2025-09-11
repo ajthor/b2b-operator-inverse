@@ -229,24 +229,35 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     X, u, Y, s = batch
 
     # Encode observed coefficients
-    beta, _ = output_function_encoder.compute_coefficients(Y, s)
+    alpha_gt, _ = input_function_encoder.compute_coefficients(X, u)
+    beta_gt, _ = output_function_encoder.compute_coefficients(Y, s)
 
+    # Inverse loss: beta -> alpha -> u_pred vs u_gt
     # Train inverse: deterministic z = 0
-    batch_size = beta.shape[0]
+    batch_size = beta_gt.shape[0]
     alpha_dim = model.coupling_layers[0].input_size
-    z_zero = torch.zeros(batch_size, alpha_dim, device=beta.device, dtype=beta.dtype)
+    z_zero = torch.zeros(
+        batch_size, alpha_dim, device=beta_gt.device, dtype=beta_gt.dtype
+    )
 
-    alpha_pred = model.inverse(z_zero, beta)
+    alpha_pred = model.inverse(z_zero, beta_gt)
     u_pred = input_function_encoder(X, alpha_pred)
-    recon_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+    inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     # Weak NLL-style regularization on forward pass
-    alpha_gt, _ = input_function_encoder.compute_coefficients(X, u)
-    z_fwd, log_det_J = model.forward(alpha_gt, beta)
+    z_fwd, log_det_J = model.forward(alpha_gt, beta_gt)
     latent_term = 0.5 * torch.mean(z_fwd**2)
     change_of_vars = -torch.mean(log_det_J)
 
-    return recon_loss + 1e-4 * (latent_term + change_of_vars)
+    # # Forward prediction loss: alpha_gt -> z -> alpha_reconstructed vs alpha_gt
+    # # Since cINN maps alpha to latent z conditioned on beta, we test round-trip consistency
+    # z_pred, _ = model.forward(alpha_gt, beta_gt)
+    # alpha_reconstructed = model.inverse(z_pred, beta_gt)
+    # forward_loss = torch.nn.functional.mse_loss(
+    #     alpha_reconstructed, alpha_gt, reduction="mean"
+    # )
+
+    return inverse_loss + (latent_term + change_of_vars)
 
 
 def train(

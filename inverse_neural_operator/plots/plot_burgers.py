@@ -502,15 +502,14 @@ for model_name in models_to_plot:
         total_failed.append(model_name)
         continue
 
-    # Create model-specific subdirectory for results
-    model_results_dir = os.path.join(results_dir, model_name)
-    os.makedirs(model_results_dir, exist_ok=True)
+    # Use results_dir directly (already includes model path from plot_all.sh)
+    os.makedirs(results_dir, exist_ok=True)
 
     # Plot results for this model
     success = plot_model_results(
         model_name=model_name,
         log_dir=log_dir,
-        results_dir=model_results_dir,  # Use model-specific directory
+        results_dir=results_dir,  # Use directory passed from plot_all.sh
         test_dataset=test_dataset,
         dataset_info=dataset_info,
         n_samples=args.n_samples,
@@ -519,7 +518,7 @@ for model_name in models_to_plot:
 
     if success:
         print(
-            f"✓ Plotted {model_name} ({args.n_samples} samples) → {model_results_dir}"
+            f"✓ Plotted {model_name} ({args.n_samples} samples) → {results_dir}"
         )
         total_success += 1
     else:

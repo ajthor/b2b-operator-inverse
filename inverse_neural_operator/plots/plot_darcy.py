@@ -18,7 +18,7 @@ from inverse_neural_operator.models.function_encoder import (
 )
 
 from data.load_dataset import load_dataset
-from models.load_model import load_models
+from models.load_model import load_models, load_forward_model
 
 device = "cpu"
 
@@ -26,15 +26,6 @@ torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
 
-# Available models to plot
-MODELS = [
-    "b2b_linear",
-    "b2b_nonlinear",
-    "variational_autoencoder",
-    "invertible_network",
-    "realnvp",
-    "deeponet",
-]
 
 
 def plot_darcy_sample(
@@ -42,37 +33,63 @@ def plot_darcy_sample(
     evaluate_fn,
     input_function_encoder,
     output_function_encoder,
+    forward_model,
     sample,
     sample_idx,
     model_name,
     save_dir=None,
 ):
     """
-    Plot a single Darcy sample with input, prediction, ground truth, and error.
+    Plot a single Darcy sample with observed output, true vs predicted input, and re-simulation.
     """
     model.eval()
+    forward_model.eval()
 
-    X, u_true, Y, s = sample
+    X, u_true, Y, s_observed = sample
 
     # Ensure tensors are on correct device
     X = X.to(device)
     u_true = u_true.to(device)
     Y = Y.to(device)
-    s = s.to(device)
+    s_observed = s_observed.to(device)
 
-    # Get model prediction
+    # Get model prediction for input
     with torch.no_grad():
-        point = (X.unsqueeze(0), u_true.unsqueeze(0), Y.unsqueeze(0), s.unsqueeze(0))
+        point = (
+            X.unsqueeze(0),
+            u_true.unsqueeze(0),
+            Y.unsqueeze(0),
+            s_observed.unsqueeze(0),
+        )
         u_pred = evaluate_fn(
             model, point, input_function_encoder, output_function_encoder
         )
         u_pred = u_pred.squeeze(0)
 
+    # Re-simulate using forward model
+    with torch.no_grad():
+        # Add batch dimension for forward model
+        X_batch = X.unsqueeze(0)
+        u_pred_batch = u_pred.unsqueeze(0)
+        Y_batch = Y.unsqueeze(0)
+
+        # Compute alpha coefficients from predicted input
+        alpha, _ = input_function_encoder.compute_coefficients(X_batch, u_pred_batch)
+
+        # Forward pass through model to get beta coefficients
+        beta_pred = forward_model.forward(alpha)
+
+        # Reconstruct re-simulation output
+        s_resim = output_function_encoder(Y_batch, beta_pred)
+        s_resim = s_resim.squeeze(0)  # Remove batch dimension
+
     # Convert to numpy for plotting
     u_true_np = u_true.squeeze(-1).cpu().numpy()
     u_pred_np = u_pred.squeeze(-1).cpu().numpy()
-    s_np = s.squeeze(-1).cpu().numpy()
+    s_observed_np = s_observed.squeeze(-1).cpu().numpy()
+    s_resim_np = s_resim.squeeze(-1).cpu().numpy()
     X_np = X.squeeze(-1).cpu().numpy()
+    Y_np = Y.squeeze(-1).cpu().numpy()
 
     # Try to determine grid size (assuming square grid)
     n_points = len(X_np)
@@ -80,61 +97,121 @@ def plot_darcy_sample(
 
     # If not a perfect square, use the data as-is for 1D case
     if grid_size * grid_size != n_points:
-        # Create a simple 1D plot with 2 subplots
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        # Create 1D plot with 3 subplots
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
         # Extract x coordinates for 1D plotting
         if X_np.ndim == 1:
             x_coords = X_np  # Already 1D coordinates
+            y_coords = Y_np
         else:
             x_coords = X_np[:, 0]  # Use the first coordinate (x)
+            y_coords = Y_np[:, 0]  # Use the first coordinate (y)
 
         # Plot 1: Observed output function (what we can measure)
-        axes[0].plot(x_coords, s_np, "g-", label="Observed Output Function")
-        axes[0].set_title("Observed Output Function s(x)")
-        axes[0].set_xlabel("x")
-        axes[0].set_ylabel("s(x)")
+        axes[0].plot(
+            y_coords, s_observed_np, "g-", label="Observed Output s(y)", linewidth=2
+        )
+        axes[0].set_title("Observed Output Function s(y)", fontsize=12)
+        axes[0].set_xlabel("y")
+        axes[0].set_ylabel("s(y)")
         axes[0].legend()
-        axes[0].grid(True)
+        axes[0].grid(True, alpha=0.3)
 
         # Plot 2: Input function comparison (what we want to predict)
-        axes[1].plot(x_coords, u_true_np, "b-", label="True Input", alpha=0.7)
-        axes[1].plot(x_coords, u_pred_np, "r--", label="Predicted Input", alpha=0.7)
-        axes[1].set_title("Input Function: True vs Predicted u(x)")
+        axes[1].plot(
+            x_coords, u_true_np, "b-", label="True Input u(x)", linewidth=2, alpha=0.8
+        )
+        axes[1].plot(
+            x_coords,
+            u_pred_np,
+            "r--",
+            label="Predicted Input û(x)",
+            linewidth=2,
+            alpha=0.8,
+        )
+        axes[1].set_title("Input Function: True vs Predicted", fontsize=12)
         axes[1].set_xlabel("x")
         axes[1].set_ylabel("u(x)")
         axes[1].legend()
-        axes[1].grid(True)
+        axes[1].grid(True, alpha=0.3)
+
+        # Plot 3: Re-simulation comparison
+        axes[2].plot(
+            y_coords,
+            s_observed_np,
+            "g-",
+            label="True Observed s(y)",
+            linewidth=2,
+            alpha=0.8,
+        )
+        axes[2].plot(
+            y_coords,
+            s_resim_np,
+            "m--",
+            label="Re-simulated ŝ(y)",
+            linewidth=2,
+            alpha=0.8,
+        )
+
+        # Calculate and display error metrics
+        mse_resim = np.mean((s_observed_np - s_resim_np) ** 2)
+        mae_resim = np.mean(np.abs(s_observed_np - s_resim_np))
+
+        axes[2].set_title(
+            f"Re-simulation vs Observed\nMSE: {mse_resim:.6f}, MAE: {mae_resim:.6f}",
+            fontsize=12,
+        )
+        axes[2].set_xlabel("y")
+        axes[2].set_ylabel("s(y)")
+        axes[2].legend()
+        axes[2].grid(True, alpha=0.3)
 
     else:
         # 2D visualization
         # Reshape to 2D grids
         u_true_2d = u_true_np.reshape(grid_size, grid_size)
         u_pred_2d = u_pred_np.reshape(grid_size, grid_size)
-        s_2d = s_np.reshape(grid_size, grid_size)
+        s_observed_2d = s_observed_np.reshape(grid_size, grid_size)
+        s_resim_2d = s_resim_np.reshape(grid_size, grid_size)
 
-        # Calculate error
-        error_2d = np.abs(u_pred_2d - u_true_2d)
+        # Calculate errors
+        input_error_2d = np.abs(u_pred_2d - u_true_2d)
+        resim_error_2d = np.abs(s_resim_2d - s_observed_2d)
 
-        # Create the plot with 2 subplots
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        # Create the plot with 3 subplots
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
         # Physical domain extent (assuming normalized coordinates)
         extent = [0, 1, 0, 1]
 
         # Plot 1: Observed output function
-        im1 = axes[0].imshow(s_2d, cmap="viridis", extent=extent, origin="lower")
+        im1 = axes[0].imshow(
+            s_observed_2d, cmap="viridis", extent=extent, origin="lower"
+        )
         axes[0].set_title("Observed Output Function s(x,y)", fontsize=12)
         axes[0].set_xlabel("x")
         axes[0].set_ylabel("y")
         plt.colorbar(im1, ax=axes[0], fraction=0.046)
 
-        # Plot 2: Absolute error for input function prediction
-        im2 = axes[1].imshow(error_2d, cmap="Reds", extent=extent, origin="lower")
-        axes[1].set_title("Input Prediction Error |u_pred - u_true|", fontsize=12)
+        # Plot 2: Input prediction error
+        im2 = axes[1].imshow(input_error_2d, cmap="Reds", extent=extent, origin="lower")
+        axes[1].set_title("Input Prediction Error |û - u|", fontsize=12)
         axes[1].set_xlabel("x")
         axes[1].set_ylabel("y")
         plt.colorbar(im2, ax=axes[1], fraction=0.046)
+
+        # Plot 3: Re-simulation error
+        im3 = axes[2].imshow(
+            resim_error_2d, cmap="Blues", extent=extent, origin="lower"
+        )
+        mse_resim = np.mean((s_observed_2d - s_resim_2d) ** 2)
+        axes[2].set_title(
+            f"Re-simulation Error |ŝ - s|\nMSE: {mse_resim:.6f}", fontsize=12
+        )
+        axes[2].set_xlabel("x")
+        axes[2].set_ylabel("y")
+        plt.colorbar(im3, ax=axes[2], fraction=0.046)
 
     plt.tight_layout()
 
@@ -152,6 +229,7 @@ def plot_multiple_samples(
     evaluate_fn,
     input_function_encoder,
     output_function_encoder,
+    forward_model,
     test_dataset,
     model_name,
     n_samples=3,
@@ -171,6 +249,7 @@ def plot_multiple_samples(
             evaluate_fn,
             input_function_encoder,
             output_function_encoder,
+            forward_model,
             sample,
             idx,
             model_name,
@@ -185,10 +264,6 @@ def plot_model_results(
 
     model_log_dir = os.path.join(log_dir, model_name, "seed_1")
 
-    # Check if model exists
-    if not os.path.exists(os.path.join(model_log_dir, "params.pth")):
-        return False
-
     # Load model parameters
     params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
 
@@ -200,8 +275,8 @@ def plot_model_results(
         device=device,
     )
 
-    # Use results_dir directly (already includes dataset/model path from plot_all.sh)
-    # model_results_dir = os.path.join(results_dir, model_name)
+    # Load forward model for re-simulation
+    forward_model = load_forward_model(log_dir=model_log_dir, device=device)
 
     # Plot results
     plot_multiple_samples(
@@ -209,13 +284,12 @@ def plot_model_results(
         evaluate_fn=evaluate_fn,
         input_function_encoder=input_function_encoder,
         output_function_encoder=output_function_encoder,
+        forward_model=forward_model,
         test_dataset=test_dataset,
         model_name=model_name,
         n_samples=n_samples,
         save_dir=results_dir,
     )
-
-    return True
 
 
 # Parse command line arguments
@@ -259,17 +333,7 @@ dataset = "darcy_1d"
 log_dir = os.path.join(args.log_dir, dataset)
 results_dir = args.results_dir
 
-# Validate the specified model
 model_name = args.model
-if model_name not in MODELS:
-    print(f"ERROR: Unknown model: {model_name}. Available models: {MODELS}")
-    exit(1)
-
-# Check if the specified model is available
-model_path = os.path.join(log_dir, model_name, f"seed_{args.seed}", "params.pth")
-if not os.path.exists(model_path):
-    print(f"ERROR: Trained model not found: {model_path}")
-    exit(1)
 
 # Load dataset using the specified model's parameters
 temp_log_dir = os.path.join(log_dir, model_name, f"seed_{args.seed}")
@@ -278,7 +342,7 @@ temp_params = torch.load(os.path.join(temp_log_dir, "params.pth"), weights_only=
 test_dataset, dataset_info = load_dataset(temp_params.dataset, temp_params, device, split="test", return_info=True)
 
 # Plot results for the specified model
-success = plot_model_results(
+plot_model_results(
     model_name=model_name,
     log_dir=log_dir,
     results_dir=results_dir,
@@ -287,8 +351,4 @@ success = plot_model_results(
     n_samples=args.n_samples,
 )
 
-if success:
-    print(f"SUCCESS: Plotted {model_name}, {args.n_samples} total plots")
-else:
-    print(f"ERROR: Failed to plot {model_name}")
-    exit(1)
+print(f"SUCCESS: Plotted {model_name}, {args.n_samples} total plots")

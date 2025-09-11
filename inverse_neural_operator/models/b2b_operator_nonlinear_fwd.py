@@ -137,7 +137,6 @@ def train(
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
-    forward_model=None,  # Not used but kept for API compatibility
 ):
     start_epoch = 0
 

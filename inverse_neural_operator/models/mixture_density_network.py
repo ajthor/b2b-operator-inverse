@@ -175,11 +175,14 @@ class MixtureDensityNetwork(torch.nn.Module):
 
             # Improve numerical stability: symmetrize and add jitter
             eye = torch.eye(
-                self.output_size, device=selected_precision.device, dtype=selected_precision.dtype
+                self.output_size,
+                device=selected_precision.device,
+                dtype=selected_precision.dtype,
             ).unsqueeze(0)
-            selected_precision = 0.5 * (
-                selected_precision + selected_precision.transpose(-1, -2)
-            ) + 1e-6 * eye
+            selected_precision = (
+                0.5 * (selected_precision + selected_precision.transpose(-1, -2))
+                + 1e-6 * eye
+            )
 
             # Sample from multivariate normal using precision directly (avoids inversion)
             dist = torch.distributions.MultivariateNormal(
@@ -235,7 +238,9 @@ class MixtureDensityNetwork(torch.nn.Module):
             # Compute log-determinant of precision matrix robustly
             sign, logabsdet = torch.linalg.slogdet(precision_k)
             # For SPD matrices, sign should be +1; clamp otherwise to avoid NaNs
-            log_det_precision = torch.where(sign > 0, logabsdet, torch.full_like(logabsdet, -50.0))
+            log_det_precision = torch.where(
+                sign > 0, logabsdet, torch.full_like(logabsdet, -50.0)
+            )
 
             # Clamp log determinant to prevent extreme values
             log_det_precision = torch.clamp(log_det_precision, min=-50.0, max=50.0)
@@ -346,30 +351,64 @@ def loss_function(
 ):
     """
     Loss function for Mixture Density Network.
-    Uses negative conditional log-likelihood as described in the docs.
+    Uses the direct loss formula from the docs: L(μx,Σ⁻¹x) = ½·(x-μ)ᵀ·Σ⁻¹·(x-μ) - log|Σ⁻¹|^½
     """
     X, u, Y, s = batch
 
     # Get alpha and beta coefficients
     alpha, _ = input_function_encoder.compute_coefficients(X, u)
-
     beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
-    # Compute negative log-likelihood
-    log_prob = model.log_prob(alpha, beta)
-    nll_loss = -log_prob.mean()
+    # Get mixture parameters from model
+    pi, mu, precision_matrices = model.forward(beta)
+    batch_size = alpha.shape[0]
+    n_components = model.n_components
+    output_size = model.output_size
 
-    total_loss = nll_loss
+    # Compute loss for each component
+    component_losses = torch.zeros(batch_size, n_components, device=alpha.device)
 
-    # Add forward model consistency loss if available
-    if forward_model is not None and lambda_forward > 0.0:
-        with torch.no_grad():
-            forward_model.eval()
-        # Sample from the model and check forward consistency
-        alpha_pred = model.inverse(beta)
-        beta_pred = forward_model.forward(alpha_pred)
-        forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
-        total_loss = total_loss + lambda_forward * forward_loss
+    for k in range(n_components):
+        # Extract component parameters
+        mu_k = mu[:, k, :]  # (batch_size, output_size)
+        precision_k = precision_matrices[
+            :, k, :, :
+        ]  # (batch_size, output_size, output_size)
+
+        # Symmetrize and add small jitter for numerical stability
+        precision_k = 0.5 * (precision_k + precision_k.transpose(-1, -2))
+        precision_k = precision_k + 1e-6 * torch.eye(
+            output_size, device=precision_k.device, dtype=precision_k.dtype
+        ).unsqueeze(0)
+
+        # Compute quadratic term: ½·(x-μ)ᵀ·Σ⁻¹·(x-μ)
+        diff = alpha * mu_k  # (batch_size, output_size)
+        quadratic = torch.sum(
+            diff.unsqueeze(-2) @ precision_k @ diff.unsqueeze(-1), dim=(-2, -1)
+        )
+        quadratic = quadratic.squeeze(-1)  # (batch_size,)
+        quadratic_term = 0.5 * quadratic
+
+        # Compute log-determinant term: log|Σ⁻¹|^½ = 0.5 * log|Σ⁻¹|
+        sign, logabsdet = torch.linalg.slogdet(precision_k)
+        log_det_precision = torch.where(
+            sign > 0, logabsdet, torch.full_like(logabsdet, -50.0)
+        )
+        log_det_precision = torch.clamp(log_det_precision, min=-50.0, max=50.0)
+        log_det_term = 0.5 * log_det_precision
+
+        # Direct loss for this component: L = ½·(x-μ)ᵀ·Σ⁻¹·(x-μ) - log|Σ⁻¹|^½
+        component_loss = quadratic_term - log_det_term
+        component_losses[:, k] = component_loss
+
+    # Weight by mixture probabilities and sum across components
+    # Add small epsilon to avoid numerical issues
+    pi_stable = pi + 1e-12
+    weighted_losses = component_losses * pi_stable
+    total_loss_per_sample = torch.sum(weighted_losses, dim=-1)  # (batch_size,)
+
+    # Return mean loss across batch
+    total_loss = total_loss_per_sample.mean()
 
     return total_loss
 
@@ -550,13 +589,11 @@ def resimulation_loss(
 def evaluate(model, point, input_function_encoder, output_function_encoder):
     model.eval()
     with torch.no_grad():
-        _, _, Y, s = point
+        X, u, Y, s = point
 
         beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
         alpha_pred = model.inverse(beta)
-        pred = input_function_encoder(
-            Y, alpha_pred
-        )  # Use Y instead of X since we're predicting input function
+        pred = input_function_encoder(X, alpha_pred)
 
         return pred

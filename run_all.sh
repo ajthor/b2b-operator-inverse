@@ -23,8 +23,8 @@ LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
-DATASETS=(burgers_1d)
-MODELS=(variational_autoencoder mixture_density_network)
+DATASETS=(wave_scattering)
+MODELS=(b2b_linear b2b_nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
 FORWARD_MODELS=(b2b_nonlinear_fwd)  # Currently only b2b_nonlinear_fwd is supported
 SEEDS=(1)   # add more seeds if you like
 
@@ -256,119 +256,119 @@ export LOCK_FILE
 #── MAIN SCHEDULER ────────────────────────────────────────
 count=0
 
-# # Phase 1: Train function encoders for each dataset-seed combination
-# echo "=== Phase 1: Training function encoders in parallel ==="
-# for dataset in "${DATASETS[@]}"; do
-#   for seed in "${SEEDS[@]}"; do
-#     count=$((count+1))
+# Phase 1: Train function encoders for each dataset-seed combination
+echo "=== Phase 1: Training function encoders in parallel ==="
+for dataset in "${DATASETS[@]}"; do
+  for seed in "${SEEDS[@]}"; do
+    count=$((count+1))
     
-#     # We need 2 GPUs for parallel training (input and output encoders)
-#     input_gpu=""
-#     output_gpu=""
+    # We need 2 GPUs for parallel training (input and output encoders)
+    input_gpu=""
+    output_gpu=""
     
-#     # Wait until we have 2 free GPU slots
-#     while [[ -z "$input_gpu" || -z "$output_gpu" ]]; do
-#       for gpu_idx in "${!ALL_GPUS[@]}"; do
-#         gpu="${ALL_GPUS[$gpu_idx]}"
-#         if flock $LOCK_FILE bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
-#           if [[ -z "$input_gpu" ]]; then
-#             input_gpu="$gpu"
-#             # claim it for input encoder
-#             flock $LOCK_FILE bash -c "
-#               c=\$(< $STATUS_DIR/gpu_$gpu)
-#               echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
-#             "
-#           elif [[ -z "$output_gpu" && "$gpu" != "$input_gpu" ]]; then
-#             output_gpu="$gpu"
-#             # claim it for output encoder
-#             flock $LOCK_FILE bash -c "
-#               c=\$(< $STATUS_DIR/gpu_$gpu)
-#               echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
-#             "
-#           fi
-#         fi
-#       done
+    # Wait until we have 2 free GPU slots
+    while [[ -z "$input_gpu" || -z "$output_gpu" ]]; do
+      for gpu_idx in "${!ALL_GPUS[@]}"; do
+        gpu="${ALL_GPUS[$gpu_idx]}"
+        if flock $LOCK_FILE bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
+          if [[ -z "$input_gpu" ]]; then
+            input_gpu="$gpu"
+            # claim it for input encoder
+            flock $LOCK_FILE bash -c "
+              c=\$(< $STATUS_DIR/gpu_$gpu)
+              echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
+            "
+          elif [[ -z "$output_gpu" && "$gpu" != "$input_gpu" ]]; then
+            output_gpu="$gpu"
+            # claim it for output encoder
+            flock $LOCK_FILE bash -c "
+              c=\$(< $STATUS_DIR/gpu_$gpu)
+              echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
+            "
+          fi
+        fi
+      done
       
-#       # If we don't have 2 different GPUs, wait and try again
-#       if [[ -z "$input_gpu" || -z "$output_gpu" ]]; then
-#         sleep 2
-#       fi
-#     done
+      # If we don't have 2 different GPUs, wait and try again
+      if [[ -z "$input_gpu" || -z "$output_gpu" ]]; then
+        sleep 2
+      fi
+    done
 
-#     echo "=== [$count] Training function encoders for $dataset | seed=$seed → input:cuda:$input_gpu, output:cuda:$output_gpu ==="
+    echo "=== [$count] Training function encoders for $dataset | seed=$seed → input:cuda:$input_gpu, output:cuda:$output_gpu ==="
 
-#     # Launch both encoders in parallel
-#     train_input_function_encoder \
-#       --dataset "$dataset" \
-#       --seed    "$seed"  \
-#       --gpu     "$input_gpu"  \
-#       --count   "${count}a" &
+    # Launch both encoders in parallel
+    train_input_function_encoder \
+      --dataset "$dataset" \
+      --seed    "$seed"  \
+      --gpu     "$input_gpu"  \
+      --count   "${count}a" &
     
-#     train_output_function_encoder \
-#       --dataset "$dataset" \
-#       --seed    "$seed"  \
-#       --gpu     "$output_gpu"  \
-#       --count   "${count}b" &
+    train_output_function_encoder \
+      --dataset "$dataset" \
+      --seed    "$seed"  \
+      --gpu     "$output_gpu"  \
+      --count   "${count}b" &
 
-#     # Wait for both encoders to complete before moving to next dataset-seed
-#     wait
+    # Wait for both encoders to complete before moving to next dataset-seed
+    wait
 
-#     sleep 1
+    sleep 1
 
-#   done
-# done
+  done
+done
 
-# echo "=== Phase 1 completed: All function encoders trained ==="
+echo "=== Phase 1 completed: All function encoders trained ==="
 
-# # Reset count for Phase 2
-# count=0
+# Reset count for Phase 2
+count=0
 
-# # Phase 2: Train forward models using the pre-trained function encoders
-# echo "=== Phase 2: Training forward models ==="
-# if [ ${#FORWARD_MODELS[@]} -gt 0 ]; then
-#   for dataset in "${DATASETS[@]}"; do
-#     for model in "${FORWARD_MODELS[@]}"; do
-#       for seed in "${SEEDS[@]}"; do
-#         count=$((count+1))
+# Phase 2: Train forward models using the pre-trained function encoders
+echo "=== Phase 2: Training forward models ==="
+if [ ${#FORWARD_MODELS[@]} -gt 0 ]; then
+  for dataset in "${DATASETS[@]}"; do
+    for model in "${FORWARD_MODELS[@]}"; do
+      for seed in "${SEEDS[@]}"; do
+        count=$((count+1))
 
-#         # wait for a free GPU slot
-#         while :; do
-#           for gpu_idx in "${!ALL_GPUS[@]}"; do
-#             gpu="${ALL_GPUS[$gpu_idx]}"
-#             if flock $LOCK_FILE bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
+        # wait for a free GPU slot
+        while :; do
+          for gpu_idx in "${!ALL_GPUS[@]}"; do
+            gpu="${ALL_GPUS[$gpu_idx]}"
+            if flock $LOCK_FILE bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
 
-#               # claim it
-#               flock $LOCK_FILE bash -c "
-#                 c=\$(< $STATUS_DIR/gpu_$gpu)
-#                 echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
-#               "
+              # claim it
+              flock $LOCK_FILE bash -c "
+                c=\$(< $STATUS_DIR/gpu_$gpu)
+                echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
+              "
 
-#               train_forward_model \
-#                 --dataset "$dataset" \
-#                 --model   "$model" \
-#                 --seed    "$seed"  \
-#                 --gpu     "$gpu"  \
-#                 --count   "$count" &
+              train_forward_model \
+                --dataset "$dataset" \
+                --model   "$model" \
+                --seed    "$seed"  \
+                --gpu     "$gpu"  \
+                --count   "$count" &
 
-#               sleep 1
+              sleep 1
 
-#               # break out so we move on to the next (dataset, model, seed)
-#               break 2
-#             fi
-#           done
-#           sleep 2
-#         done
+              # break out so we move on to the next (dataset, model, seed)
+              break 2
+            fi
+          done
+          sleep 2
+        done
 
-#       done
-#     done
-#   done
+      done
+    done
+  done
 
-#   # Wait for all forward model training to complete
-#   wait
-#   echo "=== Phase 2 completed: All forward models trained ==="
-# else
-#   echo "=== Phase 2 skipped: No forward models specified ==="
-# fi
+  # Wait for all forward model training to complete
+  wait
+  echo "=== Phase 2 completed: All forward models trained ==="
+else
+  echo "=== Phase 2 skipped: No forward models specified ==="
+fi
 
 # Reset count for Phase 3
 count=0
