@@ -42,15 +42,22 @@ def main():
     
     # Training args
     parser.add_argument("--batch_size", type=int, default=10)
-    parser.add_argument("--epochs", type=int, default=25)
+    parser.add_argument("--epochs", type=int, default=500)  # Paper suggests longer training
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     
-    # IFNO-specific training parameters
-    parser.add_argument("--epochs_vae", type=int, default=50, help="VAE pretraining epochs")
-    parser.add_argument("--epochs_ifno", type=int, default=100, help="IFNO pretraining epochs") 
+    # IFNO-specific training parameters (following paper recommendations)
+    parser.add_argument("--epochs_vae", type=int, default=200, help="VAE pretraining epochs (paper: {50,100,200})")
+    parser.add_argument("--epochs_ifno", type=int, default=200, help="IFNO pretraining epochs (paper: {100,200,500})") 
     parser.add_argument("--lr_vae", type=float, default=1e-4, help="VAE learning rate")
-    parser.add_argument("--lr_ifno", type=float, default=1e-3, help="IFNO pretraining learning rate")
+    parser.add_argument("--lr_ifno", type=float, default=5e-3, help="IFNO pretraining learning rate (paper: 5e-3)")
     parser.add_argument("--lr_forward", type=float, default=1e-4, help="Joint training learning rate")
+    
+    # IFNO architecture parameters (following paper recommendations)
+    parser.add_argument("--n_layers", type=int, default=3, help="Number of invertible Fourier blocks (paper: {1,2,3,4})")
+    parser.add_argument("--width", type=int, default=64, help="Channel lifting dimension (paper: {32,64,128})")
+    parser.add_argument("--modes", type=int, default=16, help="Number of Fourier modes (paper: {8,12,16,32})")
+    parser.add_argument("--vae_latent_dim", type=int, default=24, help="VAE latent dimension")
+    parser.add_argument("--beta", type=float, default=2.0, help="Beta parameter for softplus activation")
     
     # I/O args
     parser.add_argument(
@@ -119,20 +126,20 @@ def main():
     
     print(f"Dataset info: {dataset_info}")
     
-    # Create IFNO model
+    # Create IFNO model with paper-recommended hyperparameters
     print("Creating IFNO model...")
     model = create_model(
         input_size=None,  # Not used by IFNO
         hidden_sizes=[256, 256, 256],  # Not used by IFNO
-        n_coupling_layers=2,
-        modes1=8,
-        modes2=8, 
-        width=8,
-        beta=2.0,
-        n_layers=2,
+        n_coupling_layers=2,  # Not used by IFNO
+        modes1=args.modes,  # Use paper-recommended values
+        modes2=args.modes,  # Use paper-recommended values
+        width=args.width,  # Use paper-recommended values
+        beta=args.beta,
+        n_layers=args.n_layers,  # Use paper-recommended values
         padding=20,
-        vae_latent_dim=8,
-        intermediate_dim=32,
+        vae_latent_dim=args.vae_latent_dim,
+        intermediate_dim=args.width // 2,  # Scale with width
         # IFNO-specific parameters from dataset info
         input_spatial_dims=dataset_info["input_spatial_dims"],
         output_spatial_dims=dataset_info["output_spatial_dims"], 
@@ -174,6 +181,7 @@ def main():
         summary_writer=writer,
         model_name=args.model,
         params=args,
+        forward_model=None,  # Unused placeholder for IFNO
         resume_from_checkpoint=args.resume,
         checkpoint_dir=args.checkpoint_dir,
         checkpoint_interval=args.checkpoint_interval,
