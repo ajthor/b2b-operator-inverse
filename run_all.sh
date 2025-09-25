@@ -4,7 +4,7 @@ set -euo pipefail
 #── CONFIGURATION ────────────────────────────────────────
 
 # List of GPUs to use
-GPUS=(1 2 3 4)
+GPUS=(0 1)
 ALL_GPUS=("${GPUS[@]}")
 if [ ${#ALL_GPUS[@]} -eq 0 ]; then
   echo "Error: No GPUs specified" >&2
@@ -18,13 +18,14 @@ LOCK_FILE=/tmp/gpu_lock_file
 STATUS_DIR=/tmp/gpu_status
 
 # Base directory for experiment logs
-# LOG_BASE_DIR="/workspaces/b2b-operator-inverse/logs"
-LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
+LOG_BASE_DIR="/geoelements/Stepan/b2b-operator-inverse/logs"
+#LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
 
-# DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d)
+# DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d elastic_plate)
 # MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
-DATASETS=(fwi)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
+DATASETS=(elastic_plate)
+# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
+MODELS=(b2b_nonlinear)
 FORWARD_MODELS=(b2b_nonlinear_fwd)  # Currently only b2b_nonlinear_fwd is supported
 SEEDS=(1)   # add more seeds if you like
 
