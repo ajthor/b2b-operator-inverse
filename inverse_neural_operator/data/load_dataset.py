@@ -52,6 +52,8 @@ def load_dataset(dataset_name, params, device, split="train", return_info=False)
             from data.chladni_2d import load_data
         case "fwi":
             from data.fwi_data import load_data
+        case "elastic_plate":
+            from data.elastic_plate import load_data
         case _:
             raise ValueError(f"Unknown dataset: {dataset_name}")
 
