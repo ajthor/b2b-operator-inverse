@@ -26,7 +26,7 @@ parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 25
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=5000)
+parser.add_argument("--epochs", type=int, default=1000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 parser.add_argument("--lambda_u", type=float, default=0.0)
 
@@ -124,12 +124,12 @@ input_function_encoder, output_function_encoder = load_function_encoders(
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=params.batch_size,
-    # shuffle=True,
+    shuffle=True,
 )
 test_dataloader = DataLoader(
     test_dataset,
     batch_size=params.batch_size,
-    # shuffle=True,
+    shuffle=True,
 )
 
 train_model(

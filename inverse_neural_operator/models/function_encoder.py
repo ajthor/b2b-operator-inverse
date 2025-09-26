@@ -156,12 +156,10 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
-    train_dataloader_iter = iter(train_dataloader)
-    test_dataloader_iter = iter(test_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()
-        batch = next(train_dataloader_iter)
+        batch = next(iter(train_dataloader))
         optimizer.zero_grad()
         loss = loss_function(model=model, batch=batch)
         loss.backward()
@@ -169,7 +167,7 @@ def train(
 
         summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
-        avg_test_loss = test_model(model=model, test_dataloader_iter=test_dataloader_iter)
+        avg_test_loss = test_model(model=model, test_dataloader=test_dataloader)
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         # Save checkpoint
@@ -182,11 +180,11 @@ def train(
 
 def test_model(
     model,
-    test_dataloader_iter,
+    test_dataloader,
 ):
     model.eval()
     with torch.no_grad():
-        batch = next(test_dataloader_iter)
+        batch = next(iter(test_dataloader))
         loss = loss_function(model=model, batch=batch)
 
     return loss.item()

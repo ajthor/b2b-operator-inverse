@@ -179,10 +179,9 @@ def train(
 
         model.linear.weight.copy_(W.T)
 
-        test_dataloader_iter = iter(test_dataloader)
         avg_test_loss = test_model(
             model=model,
-            test_dataloader_iter=test_dataloader_iter,
+            test_dataloader=test_dataloader,
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
         )
@@ -191,13 +190,13 @@ def train(
 
 def test_model(
     model,
-    test_dataloader_iter,
+    test_dataloader,
     input_function_encoder,
     output_function_encoder,
 ):
     model.eval()
     with torch.no_grad():
-        batch = next(test_dataloader_iter)
+        batch = next(iter(test_dataloader))
         loss = loss_function(
             model=model,
             batch=batch,

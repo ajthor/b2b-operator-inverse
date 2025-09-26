@@ -444,12 +444,10 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
-    train_dataloader_iter = iter(train_dataloader)
-    test_dataloader_iter = iter(test_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()
-        batch = next(train_dataloader_iter)
+        batch = next(iter(train_dataloader))
         optimizer.zero_grad()
         loss = loss_function(
             model=model,
@@ -466,7 +464,7 @@ def train(
 
         avg_test_loss = test_model(
             model=model,
-            test_dataloader_iter=test_dataloader_iter,
+            test_dataloader=test_dataloader,
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
             forward_model=forward_model,
@@ -504,7 +502,7 @@ def train(
 
 def test_model(
     model,
-    test_dataloader_iter,
+    test_dataloader,
     input_function_encoder,
     output_function_encoder,
     forward_model=None,
@@ -513,7 +511,7 @@ def test_model(
     model.eval()
     # total_test_loss = 0.0
     with torch.no_grad():
-        batch = next(test_dataloader_iter)
+        batch = next(iter(test_dataloader))
         loss = loss_function(
             model=model,
             batch=batch,

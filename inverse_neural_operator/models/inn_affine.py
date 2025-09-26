@@ -259,7 +259,9 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
 
     # Forward prediction loss: alpha_gt -> beta_pred vs beta_gt
     beta_pred, _, _ = model.forward(alpha_gt)  # Extract tensor, ignore log_det_J
-    forward_loss = torch.nn.functional.mse_loss(beta_pred, beta_gt, reduction="mean")
+    s_pred = output_function_encoder(Y, beta_pred)
+    # forward_loss = torch.nn.functional.mse_loss(beta_pred, beta_gt, reduction="mean")
+    forward_loss = torch.nn.functional.mse_loss(s_pred, s, reduction="mean")
 
     return inverse_loss + forward_loss
 
@@ -295,12 +297,10 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
-    train_dataloader_iter = iter(train_dataloader)
-    test_dataloader_iter = iter(test_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()
-        batch = next(train_dataloader_iter)
+        batch = next(iter(train_dataloader))
         optimizer.zero_grad()
         loss = loss_function(
             model=model,
@@ -315,7 +315,7 @@ def train(
 
         avg_test_loss = test_model(
             model=model,
-            test_dataloader_iter=test_dataloader_iter,
+            test_dataloader=test_dataloader,
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
         )
@@ -352,7 +352,7 @@ def train(
 
 def test_model(
     model,
-    test_dataloader_iter,
+    test_dataloader,
     input_function_encoder,
     output_function_encoder,
 ):
@@ -360,7 +360,7 @@ def test_model(
     # total_test_loss = 0.0
     # n_batches = 0
     with torch.no_grad():
-        batch = next(test_dataloader_iter)
+        batch = next(iter(test_dataloader))
         loss = loss_function(
             model=model,
             batch=batch,
