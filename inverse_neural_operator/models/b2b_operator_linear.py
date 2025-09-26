@@ -179,9 +179,10 @@ def train(
 
         model.linear.weight.copy_(W.T)
 
+        test_dataloader_iter = iter(test_dataloader)
         avg_test_loss = test_model(
             model=model,
-            test_dataloader=test_dataloader,
+            test_dataloader_iter=test_dataloader_iter,
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
         )
@@ -190,24 +191,21 @@ def train(
 
 def test_model(
     model,
-    test_dataloader,
+    test_dataloader_iter,
     input_function_encoder,
     output_function_encoder,
 ):
     model.eval()
-    total_test_loss = 0.0
     with torch.no_grad():
-        for batch in test_dataloader:
-            loss = loss_function(
-                model=model,
-                batch=batch,
-                input_function_encoder=input_function_encoder,
-                output_function_encoder=output_function_encoder,
-            )
-            total_test_loss += loss.item()
+        batch = next(test_dataloader_iter)
+        loss = loss_function(
+            model=model,
+            batch=batch,
+            input_function_encoder=input_function_encoder,
+            output_function_encoder=output_function_encoder,
+        )
 
-    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
-    return avg_test_loss
+    return loss.item()
 
 
 def resimulation_loss(

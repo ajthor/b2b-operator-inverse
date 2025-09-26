@@ -244,11 +244,12 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
-    # train_dataloader_iter = iter(train_dataloader)
+    train_dataloader_iter = iter(train_dataloader)
+    test_dataloader_iter = iter(test_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()
-        batch = next(iter(train_dataloader))
+        batch = next(train_dataloader_iter)
         optimizer.zero_grad()
         loss = loss_function(
             model=model,
@@ -262,7 +263,7 @@ def train(
 
         avg_test_loss = test_model(
             model=model,
-            test_dataloader=test_dataloader,
+            test_dataloader_iter=test_dataloader_iter,
         )
 
         if summary_writer:
@@ -278,22 +279,19 @@ def train(
 
 def test_model(
     model,
-    test_dataloader,
+    test_dataloader_iter,
     input_function_encoder=None,  # Not used but kept for API compatibility
     output_function_encoder=None,  # Not used but kept for API compatibility
 ):
     model.eval()
-    total_test_loss = 0.0
     with torch.no_grad():
-        for batch in test_dataloader:
-            loss = loss_function(
-                model=model,
-                batch=batch,
-            )
-            total_test_loss += loss.item()
+        batch = next(test_dataloader_iter)
+        loss = loss_function(
+            model=model,
+            batch=batch,
+        )
 
-    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
-    return avg_test_loss
+    return loss.item()
 
 
 def resimulation_loss(model, batch, input_function_encoder, output_function_encoder, forward_model, n_samples=5):

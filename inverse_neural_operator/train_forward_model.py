@@ -124,12 +124,12 @@ input_function_encoder, output_function_encoder = load_function_encoders(
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=params.batch_size,
-    shuffle=True,
+    # shuffle=True,
 )
 test_dataloader = DataLoader(
     test_dataset,
     batch_size=params.batch_size,
-    shuffle=True,
+    # shuffle=True,
 )
 
 train_model(

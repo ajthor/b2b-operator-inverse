@@ -34,7 +34,7 @@ parser.add_argument("--output_channels", type=int, default=1)
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=2000)
+parser.add_argument("--epochs", type=int, default=1000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)
 parser.add_argument("--lambda_u", type=float, default=0.0)
 
@@ -191,12 +191,12 @@ except Exception as e:
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=params.batch_size,
-    shuffle=True,
+    # shuffle=True,
 )
 test_dataloader = DataLoader(
     test_dataset,
     batch_size=params.batch_size,
-    shuffle=True,
+    # shuffle=True,
 )
 
 # Single consistent training function call for all models

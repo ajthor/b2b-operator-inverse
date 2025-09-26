@@ -115,18 +115,18 @@ def load_checkpoint(
 def loss_function(model, batch):
     example_xs, example_ys, xs, ys = batch
 
-    coefficients, _ = model.compute_coefficients(example_xs, example_ys)
+    coefficients, G = model.compute_coefficients(example_xs, example_ys)
     y_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(y_pred, ys)
 
-    # # norm_loss = basis_normalization_loss(model.basis_functions(xs))
+    norm_loss = basis_normalization_loss(G)
     # G = model.basis_functions(xs)
     # K = model.inner_product(G, G)
     # K = K + torch.eye(K.shape[1], device=K.device)
     # norm_loss = ((torch.diagonal(K, dim1=-2, dim2=-1) - 1) ** 2).mean()
 
-    return pred_loss  # + norm_loss
+    return pred_loss + norm_loss
 
 
 def train(
@@ -156,11 +156,12 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
-    # train_dataloader_iter = iter(train_dataloader)
+    train_dataloader_iter = iter(train_dataloader)
+    test_dataloader_iter = iter(test_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
     for epoch in range(start_epoch, n_epochs):
         model.train()
-        batch = next(iter(train_dataloader))
+        batch = next(train_dataloader_iter)
         optimizer.zero_grad()
         loss = loss_function(model=model, batch=batch)
         loss.backward()
@@ -168,7 +169,7 @@ def train(
 
         summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
 
-        avg_test_loss = test_model(model=model, test_dataloader=test_dataloader)
+        avg_test_loss = test_model(model=model, test_dataloader_iter=test_dataloader_iter)
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
         # Save checkpoint
@@ -181,17 +182,14 @@ def train(
 
 def test_model(
     model,
-    test_dataloader,
+    test_dataloader_iter,
 ):
     model.eval()
-    total_test_loss = 0.0
     with torch.no_grad():
-        for batch in test_dataloader:
-            loss = loss_function(model=model, batch=batch)
-            total_test_loss += loss.item()
+        batch = next(test_dataloader_iter)
+        loss = loss_function(model=model, batch=batch)
 
-    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
-    return avg_test_loss
+    return loss.item()
 
 
 def evaluate(model, point):
