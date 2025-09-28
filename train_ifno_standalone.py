@@ -64,7 +64,7 @@ def main():
         "--log_dir",
         type=str,
         default=None,
-        help="Log directory (defaults to ./logs/{dataset}_ifno_standalone/)",
+        help="Log directory (defaults to ./logs_ifno/{dataset}/)",
     )
     parser.add_argument("--checkpoint_dir", type=str, default=None)
     parser.add_argument("--checkpoint_interval", type=int, default=100)
@@ -92,7 +92,7 @@ def main():
     
     # Resolve log directory
     if args.log_dir is None:
-        args.log_dir = f"./logs/{args.dataset}_ifno_standalone/"
+        args.log_dir = f"./logs_ifno/{args.dataset}/"
     # Create log directory
     os.makedirs(args.log_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=args.log_dir)
