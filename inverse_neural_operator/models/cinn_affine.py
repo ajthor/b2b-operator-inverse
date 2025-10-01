@@ -385,8 +385,6 @@ def resimulation_loss(
     beta_target, _ = output_function_encoder.compute_coefficients(Y, s)
 
     model.eval()
-    if forward_model is None:
-        return 0.0
     forward_model.eval()
     with torch.no_grad():
         # Deterministic inverse: beta -> alpha (using z=0 for deterministic behavior)
