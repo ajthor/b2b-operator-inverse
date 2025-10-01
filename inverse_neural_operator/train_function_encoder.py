@@ -33,12 +33,12 @@ parser.add_argument("--model", type=str, default="b2b_nonlinear")
 
 # Function encoder args
 parser.add_argument("--n_basis", type=int, default=100)
-parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
+parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
 parser.add_argument("--regularization", type=float, default=1e-3)  # 1e-4 for chladni_2d
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=5000)
+parser.add_argument("--epochs", type=int, default=1000)
 parser.add_argument("--learning_rate", type=float, default=1e-3)  # 1e-3 for chladni_2d
 
 # SummaryWriter args
@@ -120,12 +120,12 @@ match params.encoder_type:
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=params.batch_size,
-    # shuffle=True,
+    shuffle=True,
 )
 test_dataloader = DataLoader(
     test_dataset,
     batch_size=params.batch_size,
-    # shuffle=True,
+    shuffle=True,
 )
 
 match params.encoder_type:

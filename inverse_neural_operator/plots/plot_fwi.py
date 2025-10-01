@@ -14,7 +14,11 @@ from inverse_neural_operator.models.function_encoder import (
 from data.load_dataset import load_dataset
 from models.load_model import load_models
 
-from inverse_neural_operator.models.model_evaluation import evaluate_random, find_best_case, find_worst_case
+from inverse_neural_operator.models.model_evaluation import (
+    evaluate_random,
+    find_best_case,
+    find_worst_case,
+)
 
 device = "cpu"
 
@@ -34,22 +38,26 @@ parser.add_argument(
 args = parser.parse_args()
 
 log_dir = args.log_dir
-model_path = args.model
-dataset_path = "fwi"
+model_name = args.model
+dataset = "fwi"
 results_dir = args.results_dir
 
-log_dir = os.path.join(log_dir, dataset_path, model_path, "seed_1")
+# Construct path to dataset directory
+log_dir = os.path.join(log_dir, dataset)
 
-# load params
-params = torch.load(f"{log_dir}/params.pth", weights_only=False)
+# Load params from specific model/seed
+model_log_dir = os.path.join(log_dir, model_name, "seed_1")
+params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
 
 
 # Load dataset
-test_dataset, dataset_info = load_dataset(params.dataset, params, device, split="test", return_info=True)
+test_dataset, dataset_info = load_dataset(
+    params.dataset, params, device, split="test", return_info=True
+)
 
 # Load models
 input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
-    log_dir,
+    model_log_dir,
     dataset_info,
     params,
     device=device,
@@ -70,7 +78,7 @@ def plot_fwi_sample(
     """
     Plot a single FWI sample with 5-panel layout:
     1. True velocity model (input)
-    2. Predicted velocity model 
+    2. Predicted velocity model
     3. Measured seismic transform (output)
     4. Re-simulated seismic transform
     5. Error between measured and re-simulated seismic transforms
@@ -110,7 +118,9 @@ def plot_fwi_sample(
             Y_batch = Y.unsqueeze(0)
 
             # Compute alpha coefficients from predicted input
-            alpha, _ = input_function_encoder.compute_coefficients(X_batch, u_pred_batch)
+            alpha, _ = input_function_encoder.compute_coefficients(
+                X_batch, u_pred_batch
+            )
 
             # Forward pass through model to get beta coefficients
             beta_pred = forward_model.forward(alpha)
@@ -127,7 +137,7 @@ def plot_fwi_sample(
     # Reshape velocity models from flattened (1152,) to 2D (24, 48)
     u_true_2d = u_true_np.reshape(24, 48)
     u_pred_2d = u_pred_np.reshape(24, 48)
-    
+
     # Reshape seismic transforms from flattened (30400,) to 2D (400, 76)
     s_observed_2d = s_observed_np.reshape(400, 76)
 
@@ -143,9 +153,9 @@ def plot_fwi_sample(
     for i in range(24):  # Each row (y-coordinate)
         y_offset = i * offset_scale * 0.3  # Vertical offset for waterfall effect
         axes[0].plot(x_coords, u_true_2d[i, :] + y_offset, linewidth=1, alpha=0.8)
-    axes[0].set_title('True Velocity Model u(x,y)', fontsize=12)
-    axes[0].set_xlabel('x')
-    axes[0].set_ylabel('y (with offset)')
+    axes[0].set_title("True Velocity Model u(x,y)", fontsize=12)
+    axes[0].set_xlabel("x")
+    axes[0].set_ylabel("y (with offset)")
     axes[0].grid(True, alpha=0.3)
 
     # Panel 2: Predicted Velocity Model (Waterfall Plot)
@@ -153,27 +163,27 @@ def plot_fwi_sample(
     for i in range(24):  # Each row (y-coordinate)
         y_offset = i * offset_scale * 0.3  # Vertical offset for waterfall effect
         axes[1].plot(x_coords, u_pred_2d[i, :] + y_offset, linewidth=1, alpha=0.8)
-    axes[1].set_title('Predicted Velocity Model û(x,y)', fontsize=12)
-    axes[1].set_xlabel('x')
-    axes[1].set_ylabel('y (with offset)')
+    axes[1].set_title("Predicted Velocity Model û(x,y)", fontsize=12)
+    axes[1].set_xlabel("x")
+    axes[1].set_ylabel("y (with offset)")
     axes[1].grid(True, alpha=0.3)
 
     # Panel 3: Measured Seismic Transform
     im3 = axes[2].imshow(s_observed_2d, cmap="magma", aspect="auto", origin="lower")
-    axes[2].set_title('Measured Seismic Transform s(f,t)', fontsize=12)
-    axes[2].set_xlabel('Frequency')
-    axes[2].set_ylabel('Time')
+    axes[2].set_title("Measured Seismic Transform s(f,t)", fontsize=12)
+    axes[2].set_xlabel("Frequency")
+    axes[2].set_ylabel("Time")
     plt.colorbar(im3, ax=axes[2], fraction=0.046)
 
     if s_resim is not None:
         s_resim_np = s_resim.squeeze(-1).cpu().numpy()
         s_resim_2d = s_resim_np.reshape(400, 76)
-        
+
         # Panel 4: Re-simulated Seismic Transform
         im4 = axes[3].imshow(s_resim_2d, cmap="magma", aspect="auto", origin="lower")
-        axes[3].set_title('Re-simulated Seismic Transform ŝ(f,t)', fontsize=12)
-        axes[3].set_xlabel('Frequency')
-        axes[3].set_ylabel('Time')
+        axes[3].set_title("Re-simulated Seismic Transform ŝ(f,t)", fontsize=12)
+        axes[3].set_xlabel("Frequency")
+        axes[3].set_ylabel("Time")
         plt.colorbar(im4, ax=axes[3], fraction=0.046)
 
         # Panel 5: Error Field
@@ -186,8 +196,8 @@ def plot_fwi_sample(
             f"Re-simulation Error |s - ŝ|\nMSE: {mse_resim:.6f}, MAE: {mae_resim:.6f}",
             fontsize=12,
         )
-        axes[4].set_xlabel('Frequency')
-        axes[4].set_ylabel('Time')
+        axes[4].set_xlabel("Frequency")
+        axes[4].set_ylabel("Time")
         plt.colorbar(im5, ax=axes[4], fraction=0.046)
 
     plt.tight_layout()
@@ -216,7 +226,7 @@ def plot_multiple_samples(
 ):
     """Plot multiple random samples from the test set."""
     import random
-    
+
     # Select random samples
     test_indices = random.sample(
         range(len(test_dataset)), min(n_samples, len(test_dataset))
@@ -237,55 +247,27 @@ def plot_multiple_samples(
         )
 
 
-def plot_model_results(
-    model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3
-):
-    """Plot results for a single model."""
+# Try to load forward model for re-simulation (may not exist)
+forward_model = None
+try:
+    from models.load_model import load_forward_model
 
-    model_log_dir = os.path.join(log_dir, model_name, "seed_1")
+    forward_model = load_forward_model(log_dir=model_log_dir, device=device)
+    print("Loaded forward model for re-simulation")
+except (FileNotFoundError, ImportError) as e:
+    print(f"Forward model not available: {e}")
 
-    # Load model parameters
-    params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
-
-    # Load models
-    input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
-        log_dir=model_log_dir,
-        dataset_info=dataset_info,
-        params=params,
-        device=device,
-    )
-
-    # Try to load forward model for re-simulation (may not exist)
-    forward_model = None
-    try:
-        from models.load_model import load_forward_model
-        forward_model = load_forward_model(log_dir=model_log_dir, device=device)
-        print("Loaded forward model for re-simulation")
-    except (FileNotFoundError, ImportError) as e:
-        print(f"Forward model not available: {e}")
-
-    # Plot results
-    plot_multiple_samples(
-        model=model,
-        evaluate_fn=evaluate_fn,
-        input_function_encoder=input_function_encoder,
-        output_function_encoder=output_function_encoder,
-        forward_model=forward_model,
-        test_dataset=test_dataset,
-        model_name=model_name,
-        n_samples=n_samples,
-        save_dir=results_dir,
-    )
-
-
-# Plot results for the specified model
-plot_model_results(
-    model_name=args.model,
-    log_dir=os.path.dirname(log_dir),  # Remove the specific model/seed path
-    results_dir=results_dir,
+# Plot results
+plot_multiple_samples(
+    model=model,
+    evaluate_fn=evaluate_fn,
+    input_function_encoder=input_function_encoder,
+    output_function_encoder=output_function_encoder,
+    forward_model=forward_model,
     test_dataset=test_dataset,
-    dataset_info=dataset_info,
+    model_name=model_name,
     n_samples=3,
+    save_dir=results_dir,
 )
 
-print(f"SUCCESS: Plotted {args.model} FWI results")
+print(f"SUCCESS: Plotted {model_name} FWI results")

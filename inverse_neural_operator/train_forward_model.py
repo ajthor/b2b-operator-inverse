@@ -22,7 +22,7 @@ parser.add_argument(
     default="b2b_nonlinear_fwd",
     help="Forward model type (currently only b2b_nonlinear_fwd is supported)",
 )
-parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
+parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)

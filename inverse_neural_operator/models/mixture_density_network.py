@@ -8,9 +8,10 @@ import os
 class MixtureDensityNetwork(torch.nn.Module):
     """
     Mixture Density Network that takes observation y as input and predicts
-    a Gaussian mixture p(x|y) with full precision matrices Σ_x^{-1}.
+    a Gaussian mixture p(x|y) with full covariance matrices Σ_x.
 
-    The network predicts mixture weights, means, and precision matrices.
+    The network predicts mixture weights, means, and covariance matrices via
+    Cholesky decomposition, ensuring positive definiteness without matrix inversion.
     Used for going from beta coefficients to alpha coefficients.
     """
 
@@ -50,11 +51,11 @@ class MixtureDensityNetwork(torch.nn.Module):
             final_hidden_size, n_components * output_size, bias=bias
         )
 
-        # Component precision matrices (Σ^{-1}) - we'll predict the lower triangular part
-        # For full precision matrix, we need output_size * (output_size + 1) / 2 parameters per component
-        n_precision_params = output_size * (output_size + 1) // 2
-        self.precision_head = torch.nn.Linear(
-            final_hidden_size, n_components * n_precision_params, bias=bias
+        # Component covariance matrices (Σ) - we'll predict the lower triangular Cholesky factor
+        # For full covariance matrix, we need output_size * (output_size + 1) / 2 parameters per component
+        n_cholesky_params = output_size * (output_size + 1) // 2
+        self.cholesky_head = torch.nn.Linear(
+            final_hidden_size, n_components * n_cholesky_params, bias=bias
         )
 
     def forward(self, y):
@@ -65,10 +66,10 @@ class MixtureDensityNetwork(torch.nn.Module):
             y: Observation tensor of shape (batch_size, input_size)
 
         Returns:
-            tuple: (pi, mu, precision_matrices)
+            tuple: (pi, mu, covariance_matrices)
                 - pi: mixture weights (batch_size, n_components)
                 - mu: component means (batch_size, n_components, output_size)
-                - precision_matrices: precision matrices (batch_size, n_components, output_size, output_size)
+                - covariance_matrices: covariance matrices (batch_size, n_components, output_size, output_size)
         """
         batch_size = y.shape[0]
 
@@ -85,67 +86,68 @@ class MixtureDensityNetwork(torch.nn.Module):
         mu_flat = self.mu_head(x)  # (batch_size, n_components * output_size)
         mu = mu_flat.view(batch_size, self.n_components, self.output_size)
 
-        # Compute precision matrices
-        precision_flat = self.precision_head(
+        # Compute covariance matrices via Cholesky decomposition
+        cholesky_flat = self.cholesky_head(
             x
-        )  # (batch_size, n_components * n_precision_params)
-        n_precision_params = self.output_size * (self.output_size + 1) // 2
-        precision_params = precision_flat.view(
-            batch_size, self.n_components, n_precision_params
+        )  # (batch_size, n_components * n_cholesky_params)
+        n_cholesky_params = self.output_size * (self.output_size + 1) // 2
+        cholesky_params = cholesky_flat.view(
+            batch_size, self.n_components, n_cholesky_params
         )
 
-        # Build precision matrices from lower triangular parameters
-        precision_matrices = self._build_precision_matrices(precision_params)
+        # Build covariance matrices from Cholesky factors
+        covariance_matrices = self._build_covariance_matrices(cholesky_params)
 
-        return pi, mu, precision_matrices
+        return pi, mu, covariance_matrices
 
-    def _build_precision_matrices(self, precision_params):
+    def _build_covariance_matrices(self, cholesky_params):
         """
-        Build full precision matrices from lower triangular parameters.
+        Build full covariance matrices from Cholesky factor parameters.
+        This approach guarantees positive definiteness without needing matrix inversion.
 
         Args:
-            precision_params: (batch_size, n_components, n_precision_params)
+            cholesky_params: (batch_size, n_components, n_cholesky_params)
 
         Returns:
-            precision_matrices: (batch_size, n_components, output_size, output_size)
+            covariance_matrices: (batch_size, n_components, output_size, output_size)
         """
-        batch_size, n_components, _ = precision_params.shape
-        precision_matrices = torch.zeros(
+        batch_size, n_components, _ = cholesky_params.shape
+        covariance_matrices = torch.zeros(
             batch_size,
             n_components,
             self.output_size,
             self.output_size,
-            device=precision_params.device,
-            dtype=precision_params.dtype,
+            device=cholesky_params.device,
+            dtype=cholesky_params.dtype,
         )
 
         # Fill lower triangular part
         tril_indices = torch.tril_indices(self.output_size, self.output_size, offset=0)
 
         for k in range(n_components):
-            # For each component, build the lower triangular matrix
+            # For each component, build the lower triangular Cholesky factor
             L = torch.zeros(
                 batch_size,
                 self.output_size,
                 self.output_size,
-                device=precision_params.device,
-                dtype=precision_params.dtype,
+                device=cholesky_params.device,
+                dtype=cholesky_params.dtype,
             )
 
             # Fill lower triangular part
-            L[:, tril_indices[0], tril_indices[1]] = precision_params[:, k, :]
+            L[:, tril_indices[0], tril_indices[1]] = cholesky_params[:, k, :]
 
-            # Ensure positive diagonal elements with better numerical stability
+            # Ensure positive diagonal elements for valid Cholesky factor
             diag_indices = torch.arange(self.output_size)
-            # Use softplus with larger minimum value for better conditioning
+            # Use softplus to ensure positivity with a reasonable minimum
             L[:, diag_indices, diag_indices] = (
                 F.softplus(L[:, diag_indices, diag_indices]) + 1e-3
             )
 
-            # Precision matrix is L @ L^T (ensures positive definiteness)
-            precision_matrices[:, k, :, :] = torch.bmm(L, L.transpose(-2, -1))
+            # Covariance matrix is L @ L^T (guaranteed positive definite)
+            covariance_matrices[:, k, :, :] = torch.bmm(L, L.transpose(-2, -1))
 
-        return precision_matrices
+        return covariance_matrices
 
     def inverse(self, beta):
         """
@@ -158,7 +160,7 @@ class MixtureDensityNetwork(torch.nn.Module):
             alpha: Sampled alpha coefficients of shape (batch_size, output_size)
         """
         with torch.no_grad():
-            pi, mu, precision_matrices = self.forward(beta)
+            pi, mu, covariance_matrices = self.forward(beta)
             batch_size = beta.shape[0]
 
             # Sample component indices based on mixture weights
@@ -169,24 +171,14 @@ class MixtureDensityNetwork(torch.nn.Module):
             selected_mu = mu[
                 torch.arange(batch_size), component_indices
             ]  # (batch_size, output_size)
-            selected_precision = precision_matrices[
+            selected_covariance = covariance_matrices[
                 torch.arange(batch_size), component_indices
             ]  # (batch_size, output_size, output_size)
 
-            # Improve numerical stability: symmetrize and add jitter
-            eye = torch.eye(
-                self.output_size,
-                device=selected_precision.device,
-                dtype=selected_precision.dtype,
-            ).unsqueeze(0)
-            selected_precision = (
-                0.5 * (selected_precision + selected_precision.transpose(-1, -2))
-                + 1e-6 * eye
-            )
-
-            # Sample from multivariate normal using precision directly (avoids inversion)
+            # Sample directly from multivariate normal using covariance matrix
+            # No need for matrix inversion since we already have covariance
             dist = torch.distributions.MultivariateNormal(
-                selected_mu, precision_matrix=selected_precision
+                selected_mu, covariance_matrix=selected_covariance
             )
             alpha = dist.sample()
 
@@ -203,14 +195,14 @@ class MixtureDensityNetwork(torch.nn.Module):
         Returns:
             log_prob: Log probabilities (batch_size,)
         """
-        pi, mu, precision_matrices = self.forward(beta)
+        pi, mu, covariance_matrices = self.forward(beta)
         batch_size = alpha.shape[0]
 
         # Use mixture weights from forward pass for consistency
         # Add small epsilon to avoid log(0)
         log_pi = torch.log(pi + 1e-12)  # (batch_size, n_components)
 
-        # Compute log probabilities for each component
+        # Compute log probabilities for each component using torch.distributions
         log_probs_components = torch.zeros(
             batch_size, self.n_components, device=alpha.device
         )
@@ -218,46 +210,13 @@ class MixtureDensityNetwork(torch.nn.Module):
         for k in range(self.n_components):
             # Extract component parameters
             mu_k = mu[:, k, :]  # (batch_size, output_size)
-            precision_k = precision_matrices[
-                :, k, :, :
-            ]  # (batch_size, output_size, output_size)
+            cov_k = covariance_matrices[:, k, :, :]  # (batch_size, output_size, output_size)
 
-            # Compute quadratic term: (x - μ)^T Σ^{-1} (x - μ)
-            diff = alpha - mu_k  # (batch_size, output_size)
-            quadratic = torch.sum(
-                diff.unsqueeze(-2) @ precision_k @ diff.unsqueeze(-1), dim=(-2, -1)
+            # Use torch.distributions for robust log probability computation
+            dist = torch.distributions.MultivariateNormal(
+                mu_k, covariance_matrix=cov_k
             )
-            quadratic = quadratic.squeeze(-1)  # (batch_size,)
-
-            # Symmetrize and add small jitter for numerical stability
-            precision_k = 0.5 * (precision_k + precision_k.transpose(-1, -2))
-            precision_k = precision_k + 1e-6 * torch.eye(
-                self.output_size, device=precision_k.device, dtype=precision_k.dtype
-            ).unsqueeze(0)
-
-            # Compute log-determinant of precision matrix robustly
-            sign, logabsdet = torch.linalg.slogdet(precision_k)
-            # For SPD matrices, sign should be +1; clamp otherwise to avoid NaNs
-            log_det_precision = torch.where(
-                sign > 0, logabsdet, torch.full_like(logabsdet, -50.0)
-            )
-
-            # Clamp log determinant to prevent extreme values
-            log_det_precision = torch.clamp(log_det_precision, min=-50.0, max=50.0)
-
-            # Log probability for this component (including normalization constant)
-            # Normalization constant: -0.5 * output_size * log(2π)
-            normalization_constant = (
-                -0.5
-                * self.output_size
-                * torch.log(
-                    torch.tensor(2 * torch.pi, device=alpha.device, dtype=alpha.dtype)
-                )
-            )
-            log_prob_k = (
-                -0.5 * quadratic + 0.5 * log_det_precision + normalization_constant
-            )
-            log_probs_components[:, k] = log_prob_k
+            log_probs_components[:, k] = dist.log_prob(alpha)
 
         # Add mixture weights and compute log-sum-exp with better numerical stability
         log_probs_weighted = log_probs_components + log_pi
@@ -351,7 +310,7 @@ def loss_function(
 ):
     """
     Loss function for Mixture Density Network.
-    Uses the direct loss formula from the docs: L(μx,Σ⁻¹x) = ½·(x-μ)ᵀ·Σ⁻¹·(x-μ) - log|Σ⁻¹|^½
+    Computes negative log-likelihood: -log p(alpha|beta)
     """
     X, u, Y, s = batch
 
@@ -359,58 +318,13 @@ def loss_function(
     alpha, _ = input_function_encoder.compute_coefficients(X, u)
     beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
-    # Get mixture parameters from model
-    pi, mu, precision_matrices = model.forward(beta)
-    batch_size = alpha.shape[0]
-    n_components = model.n_components
-    output_size = model.output_size
+    # Compute negative log-likelihood using the model's log_prob method
+    log_likelihood = model.log_prob(alpha, beta)
 
-    # Compute loss for each component
-    component_losses = torch.zeros(batch_size, n_components, device=alpha.device)
+    # Return negative log-likelihood (loss to minimize)
+    nll_loss = -log_likelihood.mean()
 
-    for k in range(n_components):
-        # Extract component parameters
-        mu_k = mu[:, k, :]  # (batch_size, output_size)
-        precision_k = precision_matrices[
-            :, k, :, :
-        ]  # (batch_size, output_size, output_size)
-
-        # Symmetrize and add small jitter for numerical stability
-        precision_k = 0.5 * (precision_k + precision_k.transpose(-1, -2))
-        precision_k = precision_k + 1e-6 * torch.eye(
-            output_size, device=precision_k.device, dtype=precision_k.dtype
-        ).unsqueeze(0)
-
-        # Compute quadratic term: ½·(x-μ)ᵀ·Σ⁻¹·(x-μ)
-        diff = alpha * mu_k  # (batch_size, output_size)
-        quadratic = torch.sum(
-            diff.unsqueeze(-2) @ precision_k @ diff.unsqueeze(-1), dim=(-2, -1)
-        )
-        quadratic = quadratic.squeeze(-1)  # (batch_size,)
-        quadratic_term = 0.5 * quadratic
-
-        # Compute log-determinant term: log|Σ⁻¹|^½ = 0.5 * log|Σ⁻¹|
-        sign, logabsdet = torch.linalg.slogdet(precision_k)
-        log_det_precision = torch.where(
-            sign > 0, logabsdet, torch.full_like(logabsdet, -50.0)
-        )
-        log_det_precision = torch.clamp(log_det_precision, min=-50.0, max=50.0)
-        log_det_term = 0.5 * log_det_precision
-
-        # Direct loss for this component: L = ½·(x-μ)ᵀ·Σ⁻¹·(x-μ) - log|Σ⁻¹|^½
-        component_loss = quadratic_term - log_det_term
-        component_losses[:, k] = component_loss
-
-    # Weight by mixture probabilities and sum across components
-    # Add small epsilon to avoid numerical issues
-    pi_stable = pi + 1e-12
-    weighted_losses = component_losses * pi_stable
-    total_loss_per_sample = torch.sum(weighted_losses, dim=-1)  # (batch_size,)
-
-    # Return mean loss across batch
-    total_loss = total_loss_per_sample.mean()
-
-    return total_loss
+    return nll_loss
 
 
 def train(

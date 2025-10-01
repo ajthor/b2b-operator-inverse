@@ -77,6 +77,7 @@ class InputFunctionEncoderDataset(Dataset):
             device: The device to put tensors on
         """
         self.device = device
+
         self.n_samples = len(dataset)
 
         # self.X = dataset.X
@@ -124,6 +125,7 @@ class OutputFunctionEncoderDataset(Dataset):
             device: The device to put tensors on
         """
         self.device = device
+
         self.n_samples = len(dataset)
 
         # self.Y = dataset.Y
@@ -157,3 +159,99 @@ class OutputFunctionEncoderDataset(Dataset):
         ys = s[remaining_indices]
 
         return (example_xs, example_ys, xs, ys)
+
+
+class IterableInputFunctionEncoderDataset(torch.utils.data.IterableDataset):
+    """Iterable dataset for input function encoder that works with streaming datasets."""
+
+    def __init__(self, dataset, device="cpu"):
+        """
+        Initialize from any base dataset that provides X, u, Y, s tensors.
+
+        Args:
+            dataset: Iterable dataset with iteration returning (X, u, Y, s)
+            device: The device to put tensors on
+        """
+        self.device = device
+        self.dataset = dataset
+
+    def __iter__(self):
+        """
+        Iterate over the dataset and yield input function encoder samples.
+
+        Yields:
+            A tuple of (example_xs, example_ys, xs, ys) where:
+            - example_xs are the example input coordinates
+            - example_ys are the example input function values
+            - xs are the remaining input coordinates
+            - ys are the remaining input function values
+        """
+        for X, u, Y, s in self.dataset:
+            # X: input coordinates, u: input function values
+            # Split the input domain into examples and remaining points
+            n_examples = 5
+            total_points = X.shape[0]
+
+            if total_points <= n_examples:
+                # If we don't have enough points, use all as examples
+                example_indices = torch.arange(total_points, device=self.device)
+                remaining_indices = torch.arange(total_points, device=self.device)
+            else:
+                # Randomly select example indices
+                example_indices = torch.randperm(total_points, device=self.device)[:n_examples]
+                remaining_indices = torch.arange(total_points, device=self.device)
+
+            example_xs = X[example_indices]
+            example_ys = u[example_indices]
+            xs = X[remaining_indices]
+            ys = u[remaining_indices]
+
+            yield (example_xs, example_ys, xs, ys)
+
+
+class IterableOutputFunctionEncoderDataset(torch.utils.data.IterableDataset):
+    """Iterable dataset for output function encoder that works with streaming datasets."""
+
+    def __init__(self, dataset, device="cpu"):
+        """
+        Initialize from any base dataset that provides X, u, Y, s tensors.
+
+        Args:
+            dataset: Iterable dataset with iteration returning (X, u, Y, s)
+            device: The device to put tensors on
+        """
+        self.device = device
+        self.dataset = dataset
+
+    def __iter__(self):
+        """
+        Iterate over the dataset and yield output function encoder samples.
+
+        Yields:
+            A tuple of (example_xs, example_ys, xs, ys) where:
+            - example_xs are the example output coordinates
+            - example_ys are the example output function values
+            - xs are the remaining output coordinates
+            - ys are the remaining output function values
+        """
+        for X, u, Y, s in self.dataset:
+            # Y: output coordinates, s: output function values
+            # Split the output domain into examples and remaining points
+            n_examples = 5
+            total_points = Y.shape[0]
+
+            if total_points <= n_examples:
+                # If we don't have enough points, use all as examples
+                example_indices = torch.arange(total_points, device=self.device)
+                remaining_indices = torch.arange(total_points, device=self.device)
+            else:
+                # Randomly select example indices
+                example_indices = torch.randperm(total_points, device=self.device)[:n_examples]
+                remaining_indices = torch.arange(total_points, device=self.device)
+
+            example_xs = Y[example_indices]
+            example_ys = s[example_indices]
+            xs = Y[remaining_indices]
+            ys = s[remaining_indices]
+
+            yield (example_xs, example_ys, xs, ys)
