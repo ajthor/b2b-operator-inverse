@@ -218,7 +218,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='Visualize IFNO results on Darcy 1D dataset')
     parser.add_argument('--model_path', type=str, 
-                       default='./logs/darcy_1d_ifno_standalone/ifno_model.pth',
+                       default='logs_ifno/darcy_1d/ifno_model.pth',
                        help='Path to trained IFNO model')
     parser.add_argument('--n_samples', type=int, default=3, 
                        help='Number of samples to visualize')

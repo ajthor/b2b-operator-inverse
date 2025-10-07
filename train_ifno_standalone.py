@@ -33,6 +33,7 @@ def main():
             "chladni_2d",
             "wave_scattering",
             "fwi",
+            "elastic_plate",
         ],
         help="Which dataset to use",
     )
@@ -115,6 +116,8 @@ def main():
         from inverse_neural_operator.data.wave_scattering import load_data as load_data_fn
     elif args.dataset == "fwi":
         from inverse_neural_operator.data.fwi_data import load_data as load_data_fn
+    elif args.dataset == "elastic_plate":
+        from inverse_neural_operator.data.elastic_plate import load_data as load_data_fn
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 

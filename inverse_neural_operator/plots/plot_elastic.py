@@ -147,6 +147,8 @@ def plot_elastic_sample(
     s_observed = s_observed.to(device)
 
     # Get model prediction for input (inverse problem: predict force from displacement)
+    # For stochastic models, draw multiple samples and plot overlays
+    sampled_predictions_np = None
     with torch.no_grad():
         point = (
             X.unsqueeze(0),
@@ -154,10 +156,64 @@ def plot_elastic_sample(
             Y.unsqueeze(0),
             s_observed.unsqueeze(0),
         )
-        u_pred = evaluate_fn(
-            model, point, input_function_encoder, output_function_encoder
-        )
-        u_pred = u_pred.squeeze(0)
+
+        if model_name == "variational_autoencoder":
+            num_samples = 10
+            # Compute beta coefficients from observed displacement
+            beta, _ = output_function_encoder.compute_coefficients(point[2], point[3])
+            # Sample z ~ N(0, I)
+            z = model.sample_prior(num_samples, device=X.device)
+            # Repeat beta along batch to match z samples
+            beta_rep = beta.expand(num_samples, -1)
+            # Invert to alpha for each sample and decode to u on X grid
+            alpha_samples = model.inverse(beta_rep, z)
+            X_rep = X.unsqueeze(0).repeat(num_samples, 1, 1)
+            u_pred_samples = input_function_encoder(X_rep, alpha_samples)  # [S, N, 1]
+            sampled_predictions_np = u_pred_samples.squeeze(-1).cpu().numpy()      # [S, N]
+            # Use the mean as the representative single prediction
+            u_pred = u_pred_samples.mean(dim=0)  # [N, 1]
+        elif model_name in [
+            "mixture_density_network",
+            "inn_affine",
+            "cinn_affine",
+            "cinn_additive",
+        ]:
+            num_samples = 10
+            # Compute beta coefficients from observed displacement
+            beta, _ = output_function_encoder.compute_coefficients(point[2], point[3])  # [1, B]
+
+            if model_name == "mixture_density_network":
+                # MDN samples by calling inverse(beta) repeatedly
+                alpha_list = []
+                for _ in range(num_samples):
+                    alpha_i = model.inverse(beta)  # [1, A]
+                    alpha_list.append(alpha_i.squeeze(0))  # [A]
+                alpha_samples = torch.stack(alpha_list, dim=0)  # [S, A]
+            elif model_name == "inn_affine":
+                # Build batch of z and beta to sample in one call
+                input_size = model.coupling_layers[0].input_size
+                z_size = input_size - model.output_size
+                z = torch.randn(num_samples, z_size, device=X.device, dtype=beta.dtype)
+                beta_rep = beta.expand(num_samples, -1)
+                alpha_samples = model.inverse(beta=beta_rep, z=z)  # [S, A]
+            else:  # cinn_affine or cinn_additive
+                # Sample z with alpha dimensionality
+                alpha_dim = model.coupling_layers[0].input_size
+                z = torch.randn(num_samples, alpha_dim, device=X.device, dtype=beta.dtype)
+                beta_rep = beta.expand(num_samples, -1)
+                alpha_samples = model.inverse(z, beta_rep)  # [S, A]
+
+            # Decode all alpha samples on X grid
+            X_rep = X.unsqueeze(0).repeat(num_samples, 1, 1)  # [S, N, d]
+            u_pred_samples = input_function_encoder(X_rep, alpha_samples)  # [S, N, 1]
+            sampled_predictions_np = u_pred_samples.squeeze(-1).cpu().numpy()  # [S, N]
+            # Mean prediction across samples
+            u_pred = u_pred_samples.mean(dim=0)  # [N, 1]
+        else:
+            u_pred = evaluate_fn(
+                model, point, input_function_encoder, output_function_encoder
+            )
+            u_pred = u_pred.squeeze(0)
 
     # Convert to numpy
     u_true_np = u_true.squeeze(-1).cpu().numpy()
@@ -194,9 +250,24 @@ def plot_elastic_sample(
     # Extract y-coordinates for force points
     force_y = X_np[:, 1]
 
-    # Plot both true and predicted forces
+    # Plot true and predicted forces
     ax2.plot(u_true_np, force_y, 'b-', linewidth=3, label='True Force', alpha=0.8)
-    ax2.plot(u_pred_np, force_y, 'r--', linewidth=3, label='Predicted Force', alpha=0.8)
+
+    if sampled_predictions_np is not None:
+        # Plot individual sampled predictions (thin, transparent)
+        for i in range(sampled_predictions_np.shape[0]):
+            ax2.plot(
+                sampled_predictions_np[i],
+                force_y,
+                color='r',
+                linewidth=1,
+                alpha=0.25,
+                label='Samples' if i == 0 else None,
+            )
+        # Plot the mean prediction prominently
+        ax2.plot(u_pred_np, force_y, 'r--', linewidth=3, label='Mean', alpha=0.9)
+    else:
+        ax2.plot(u_pred_np, force_y, 'r--', linewidth=3, label='Predicted Force', alpha=0.8)
 
     # Formatting
     ax2.set_ylim(force_y.min(), force_y.max())

@@ -505,21 +505,27 @@ class IFNO(nn.Module):
         # Detect if this is a symmetric vs asymmetric problem
         self.is_symmetric = (input_spatial_dims == output_spatial_dims)
 
+        # Spatial structure dimension (for operations, based on structure not coordinates)
+        self.spatial_ndim = len(input_spatial_dims)
+
         print(f"iFNO Configuration:")
         print(f"  Input spatial dims: {self.input_spatial_dims}")
         print(f"  Output spatial dims: {self.output_spatial_dims}")
         print(f"  Symmetric: {self.is_symmetric}")
+        print(f"  Spatial structure: {self.spatial_ndim}D")
+        print(f"  Coordinate dimension: {self.coordinate_dim}D")
         print(f"  Resolution: {self.resolution}, Output size: {self.mm}")
 
-        # Choose appropriate MLP class based on coordinate dimensions
-        if coordinate_dim == 1:
+        # Choose appropriate MLP class based on spatial structure (not coordinate dim)
+        # This ensures MLP matches the actual data layout after reshaping
+        if len(input_spatial_dims) == 1:
             self.MLP = MLP1D
-        elif coordinate_dim == 2:
+        elif len(input_spatial_dims) == 2:
             self.MLP = MLP2D
-        elif coordinate_dim == 3:
+        elif len(input_spatial_dims) == 3:
             self.MLP = MLP3D
         else:
-            raise ValueError(f"Unsupported coordinate dimension: {coordinate_dim}")
+            raise ValueError(f"Unsupported spatial dimensions: {input_spatial_dims}")
 
         # Adaptive projection layers based on problem symmetry
         if self.is_symmetric:
@@ -550,58 +556,59 @@ class IFNO(nn.Module):
         self.ws = nn.ModuleList()
 
         for _ in range(2 * self.n_layers):
-            # Use dimension-adaptive FNO blocks
-            if coordinate_dim == 1:
+            # Use dimension-adaptive FNO blocks based on spatial structure
+            if len(input_spatial_dims) == 1:
                 self.convs.append(
                     SimpleFourierLayer1D(self.half_width, self.half_width, self.modes1)
                 )
-            elif coordinate_dim == 2:
+            elif len(input_spatial_dims) == 2:
                 self.convs.append(
                     FNOBlocks(self.half_width, self.half_width,
                               (self.modes1, self.modes2))
                 )
-            elif coordinate_dim == 3:
+            elif len(input_spatial_dims) == 3:
                 # For 3D, we might need a different approach, but let's use 2D for now
                 self.convs.append(
                     FNOBlocks(self.half_width, self.half_width,
                               (self.modes1, self.modes2))
                 )
             else:
-                raise ValueError(f"Unsupported coordinate dimension: {coordinate_dim}")
+                raise ValueError(f"Unsupported spatial dimensions: {input_spatial_dims}")
             self.mlps.append(
                 self.MLP(self.half_width, self.half_width, self.half_width))
-            # Use appropriate conv layer for dimension
-            if coordinate_dim == 1:
+            # Use appropriate conv layer for dimension based on spatial structure
+            if len(input_spatial_dims) == 1:
                 self.ws.append(nn.Conv1d(self.half_width, self.half_width, 1))
-            elif coordinate_dim == 2:
+            elif len(input_spatial_dims) == 2:
                 self.ws.append(nn.Conv2d(self.half_width, self.half_width, 1))
-            elif coordinate_dim == 3:
+            elif len(input_spatial_dims) == 3:
                 self.ws.append(nn.Conv3d(self.half_width, self.half_width, 1))
 
-        # VAE for reconstruction (dimension-adaptive)
-        if coordinate_dim == 1:
-            # For 1D data, use primary spatial dimension as length
+        # VAE for reconstruction (adaptive based on spatial structure, not coordinate dim)
+        # Use spatial_dims length to determine VAE type (supports unstructured meshes)
+        if len(self.input_spatial_dims) == 1:
+            # 1D spatial structure (including flattened unstructured meshes)
             vae_input_size = self.input_spatial_dims[0]
             self.vae_net = VAE1D(
-                in_channels=1, latent_dim=vae_latent_dim, 
+                in_channels=1, latent_dim=vae_latent_dim,
                 input_length=vae_input_size, hidden_dims=vae_hidden_dims
             )
-        elif coordinate_dim == 2:
-            # For 2D data, use spatial dimensions as (H, W)
+        elif len(self.input_spatial_dims) == 2:
+            # 2D structured grid
             vae_input_size = self.input_spatial_dims
             self.vae_net = VAE2D(
                 in_channels=1, latent_dim=vae_latent_dim,
                 input_size=vae_input_size, hidden_dims=vae_hidden_dims
             )
-        elif coordinate_dim == 3:
-            # For 3D data, use spatial dimensions as (D, H, W)
+        elif len(self.input_spatial_dims) == 3:
+            # 3D structured grid
             vae_input_size = self.input_spatial_dims
             self.vae_net = VAE3D(
                 in_channels=1, latent_dim=vae_latent_dim,
                 input_size=vae_input_size, hidden_dims=vae_hidden_dims
             )
         else:
-            raise ValueError(f"Unsupported coordinate dimension: {coordinate_dim}")
+            raise ValueError(f"Unsupported spatial dimensions: {self.input_spatial_dims}")
 
     def _get_primary_resolution(self):
         """Get primary spatial resolution for FNO operations"""
@@ -621,38 +628,42 @@ class IFNO(nn.Module):
         """Reshape data to appropriate format for dimension-adaptive FNO operations"""
         batch_size = x.shape[0]
 
-        if self.coordinate_dim == 1:
-            # 1D data -> keep as 1D but reshape for processing
+        # Use spatial structure (len of spatial_dims), not coordinate_dim
+        if len(spatial_dims) == 1:
+            # 1D spatial structure (including flattened unstructured meshes)
             size = spatial_dims[0]
             return x.view(batch_size, size, -1)
-        elif self.coordinate_dim == 2:
-            # 2D data -> direct reshape
+        elif len(spatial_dims) == 2:
+            # 2D structured grid
             h, w = spatial_dims
             return x.view(batch_size, h, w, -1)
-        elif self.coordinate_dim == 3:
-            # 3D data -> direct reshape
+        elif len(spatial_dims) == 3:
+            # 3D structured grid
             d, h, w = spatial_dims
             return x.view(batch_size, d, h, w, -1)
         else:
-            raise ValueError(f"Unsupported coordinate dimension: {self.coordinate_dim}")
+            raise ValueError(f"Unsupported spatial dimensions: {spatial_dims}")
     
     def _get_vae_input_shape(self, data):
-        """Get proper shape for VAE input based on coordinate dimension"""
+        """Get proper shape for VAE input based on spatial structure (not coordinate dim)"""
         batch_size = data.shape[0]
-        
-        if self.coordinate_dim == 1:
+
+        if len(self.input_spatial_dims) == 1:
+            # 1D spatial structure (including flattened unstructured meshes)
             # Shape: (batch, channels, length)
             return data.reshape(batch_size, 1, self.input_spatial_dims[0])
-        elif self.coordinate_dim == 2:
+        elif len(self.input_spatial_dims) == 2:
+            # 2D structured grid
             # Shape: (batch, channels, height, width)
             h, w = self.input_spatial_dims
             return data.reshape(batch_size, 1, h, w)
-        elif self.coordinate_dim == 3:
+        elif len(self.input_spatial_dims) == 3:
+            # 3D structured grid
             # Shape: (batch, channels, depth, height, width)
             d, h, w = self.input_spatial_dims
             return data.reshape(batch_size, 1, d, h, w)
         else:
-            raise ValueError(f"Unsupported coordinate dimension: {self.coordinate_dim}")
+            raise ValueError(f"Unsupported spatial dimensions: {self.input_spatial_dims}")
 
     def _softplus(self, x):
         """Softplus activation with beta parameter"""
@@ -672,19 +683,19 @@ class IFNO(nn.Module):
             x = self.p1(x)
             
             # Dimension-adaptive permutation
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 x = x.permute(0, 2, 1)  # (batch, length, channels) -> (batch, channels, length)
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 x = x.permute(0, 3, 1, 2)  # (batch, h, w, channels) -> (batch, channels, h, w)
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 x = x.permute(0, 4, 1, 2, 3)  # (batch, d, h, w, channels) -> (batch, channels, d, h, w)
 
             # Compute reconstruction loss
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 x_recon = self.q2(x).permute(0, 2, 1)
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 x_recon = self.q2(x).permute(0, 2, 3, 1)
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 x_recon = self.q2(x).permute(0, 2, 3, 4, 1)
             
             reconstruction_loss = ((x_recon - input_x) **
@@ -693,22 +704,20 @@ class IFNO(nn.Module):
             # Asymmetric problem (like Wave-Equation)
             x = self.p0(x)
 
-            # Dimension-adaptive reshape for asymmetric case 
-            if self.coordinate_dim == 1:
+            # Dimension-adaptive reshape for asymmetric case
+            if self.spatial_ndim == 1:
                 s = self.resolution
-                mm = self.mm
-                x = x.reshape(batch_size, s, 1).repeat(1, 1, mm)
-                x = x.permute(0, 2, 1)
+                x = x.reshape(batch_size, s, 1).repeat(1, 1, self.intermediate_dim)
                 x = self.p1(x)
                 x = x.permute(0, 2, 1)
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 s = self.resolution
                 mm = self.mm
                 x = x.reshape(batch_size, s, s, 1).repeat(1, 1, 1, mm)
                 x = x.permute(0, 3, 2, 1)
                 x = self.p1(x)
                 x = x.permute(0, 3, 1, 2)
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 # For 3D asymmetric (like FWI), handle appropriately
                 d, h, w = self.input_spatial_dims
                 mm = self.mm
@@ -720,24 +729,24 @@ class IFNO(nn.Module):
             reconstruction_loss = 0.0
 
         # Split for coupling layers (dimension-adaptive)
-        if self.coordinate_dim == 1:
+        if self.spatial_ndim == 1:
             u1 = x[:, :awidth, :]
             u2 = x[:, awidth:, :]
-        elif self.coordinate_dim == 2:
+        elif self.spatial_ndim == 2:
             u1 = x[:, :awidth, :, :]
             u2 = x[:, awidth:, :, :]
-        elif self.coordinate_dim == 3:
+        elif self.spatial_ndim == 3:
             u1 = x[:, :awidth, :, :, :]
             u2 = x[:, awidth:, :, :, :]
 
         # Coupling layers (dimension-adaptive)
         for i in range(self.n_layers):
             # Dimension-adaptive padding
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 u2_pad = F.pad(u2, [0, self.padding])
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 u2_pad = F.pad(u2, [0, self.padding, 0, self.padding, 0, self.padding])
                 
             x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
@@ -745,12 +754,12 @@ class IFNO(nn.Module):
             s2 = F.gelu(x1 + x2)
             
             # Dimension-adaptive cropping
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 s2 = s2[..., : (s2.size(-1) - self.padding)]
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 s2 = s2[..., : (s2.size(-2) - self.padding),
                         : (s2.size(-1) - self.padding)]
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 s2 = s2[..., : (s2.size(-3) - self.padding),
                         : (s2.size(-2) - self.padding),
                         : (s2.size(-1) - self.padding)]
@@ -758,11 +767,11 @@ class IFNO(nn.Module):
             v1 = u1 * self._softplus(s2)
 
             # Dimension-adaptive padding for v1
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 v1_pad = F.pad(v1, [0, self.padding])
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 v1_pad = F.pad(v1, [0, self.padding, 0, self.padding, 0, self.padding])
                 
             x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
@@ -770,12 +779,12 @@ class IFNO(nn.Module):
             s1 = F.gelu(x1 + x2)
             
             # Dimension-adaptive cropping for s1
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 s1 = s1[..., : (s1.size(-1) - self.padding)]
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 s1 = s1[..., : (s1.size(-2) - self.padding),
                         : (s1.size(-1) - self.padding)]
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 s1 = s1[..., : (s1.size(-3) - self.padding),
                         : (s1.size(-2) - self.padding),
                         : (s1.size(-1) - self.padding)]
@@ -788,19 +797,29 @@ class IFNO(nn.Module):
         # Output processing
         x = torch.cat((u1, u2), axis=1)
         y_pred = self.q1(x)
-        
-        # Dimension-adaptive permutation back
-        if self.coordinate_dim == 1:
-            y_pred = y_pred.permute(0, 2, 1)
-        elif self.coordinate_dim == 2:
-            y_pred = y_pred.permute(0, 2, 3, 1)
-        elif self.coordinate_dim == 3:
-            y_pred = y_pred.permute(0, 2, 3, 4, 1)
 
-        # Return appropriate format based on problem type
+        # Dimension-adaptive permutation back and resizing for asymmetric problems
         if self.is_symmetric:
+            # Symmetric: just permute back
+            if self.spatial_ndim == 1:
+                y_pred = y_pred.permute(0, 2, 1)
+            elif self.spatial_ndim == 2:
+                y_pred = y_pred.permute(0, 2, 3, 1)
+            elif self.spatial_ndim == 3:
+                y_pred = y_pred.permute(0, 2, 3, 4, 1)
             return y_pred, reconstruction_loss
         else:
+            # Asymmetric: need to resize from input resolution to output resolution
+            if self.spatial_ndim == 1:
+                # y_pred: (batch, width, s) -> interpolate to (batch, width, mm)
+                y_pred = F.interpolate(y_pred, size=self.mm, mode='linear', align_corners=False)
+                y_pred = y_pred.permute(0, 2, 1)  # (batch, mm, width)
+            elif self.spatial_ndim == 2:
+                # For 2D, would need 2D interpolation (not implemented yet)
+                y_pred = y_pred.permute(0, 2, 3, 1)
+            elif self.spatial_ndim == 3:
+                # For 3D, would need 3D interpolation (not implemented yet)
+                y_pred = y_pred.permute(0, 2, 3, 4, 1)
             return y_pred
 
     def inverse(self, y):
@@ -817,19 +836,19 @@ class IFNO(nn.Module):
             v = self.p2(y)
             
             # Dimension-adaptive permutation
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 v = v.permute(0, 2, 1)
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 v = v.permute(0, 3, 1, 2)
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 v = v.permute(0, 4, 1, 2, 3)
 
             # Compute reconstruction loss
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 y_recon = self.q1(v).permute(0, 2, 1)
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 y_recon = self.q1(v).permute(0, 2, 3, 1)
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 y_recon = self.q1(v).permute(0, 2, 3, 4, 1)
                 
             reconstruction_loss = ((y_recon - input_y) **
@@ -839,46 +858,52 @@ class IFNO(nn.Module):
             y = self.p4(y)
 
             # Dimension-adaptive reshape for asymmetric case
-            if self.coordinate_dim == 1:
+            # Need to resize from output resolution (mm) to input resolution (s)
+            if self.spatial_ndim == 1:
+                s = self.resolution
+                mm = self.mm
+                # y: (batch, mm, 1) -> reshape and interpolate to (batch, s, intermediate_dim)
+                y = y.reshape(batch_size, mm, 1)
+                y = y.permute(0, 2, 1)  # (batch, 1, mm)
+                y = F.interpolate(y, size=s, mode='linear', align_corners=False)  # (batch, 1, s)
+                y = y.permute(0, 2, 1)  # (batch, s, 1)
+                y = y.repeat(1, 1, self.intermediate_dim)  # (batch, s, intermediate_dim)
+                v = self.p2(y)
+                v = v.permute(0, 2, 1)  # (batch, intermediate_dim, s)
+            elif self.spatial_ndim == 2:
                 s = self.resolution
                 mm = self.mm
                 y = y.reshape(batch_size, mm, s, 1).repeat(1, 1, 1, self.intermediate_dim)
                 v = self.p2(y)
                 v = v.permute(0, 3, 1, 2)
-            elif self.coordinate_dim == 2:
-                s = self.resolution
-                mm = self.mm
-                y = y.reshape(batch_size, mm, s, 1).repeat(1, 1, 1, self.intermediate_dim)
-                v = self.p2(y)
-                v = v.permute(0, 3, 1, 2)
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 # For 3D asymmetric (like FWI)
                 h, w = self.output_spatial_dims
                 y = y.reshape(batch_size, h, w, 1).repeat(1, 1, 1, self.intermediate_dim)
                 v = self.p2(y)
                 v = v.permute(0, 3, 1, 2)
-                
+
             reconstruction_loss = 0.0
 
         # Split for inverse coupling layers (dimension-adaptive)
-        if self.coordinate_dim == 1:
+        if self.spatial_ndim == 1:
             v1 = v[:, :awidth, :]
             v2 = v[:, awidth:, :]
-        elif self.coordinate_dim == 2:
+        elif self.spatial_ndim == 2:
             v1 = v[:, :awidth, :, :]
             v2 = v[:, awidth:, :, :]
-        elif self.coordinate_dim == 3:
+        elif self.spatial_ndim == 3:
             v1 = v[:, :awidth, :, :, :]
             v2 = v[:, awidth:, :, :, :]
 
         # Inverse coupling layers (reverse order, dimension-adaptive)
         for i in range(self.n_layers - 1, -1, -1):
             # Dimension-adaptive padding for v1
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 v1_pad = F.pad(v1, [0, self.padding])
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 v1_pad = F.pad(v1, [0, self.padding, 0, self.padding])
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 v1_pad = F.pad(v1, [0, self.padding, 0, self.padding, 0, self.padding])
                 
             x1 = self.mlps[2 * i + 1](self.convs[2 * i + 1](v1_pad))
@@ -886,12 +911,12 @@ class IFNO(nn.Module):
             s1 = F.gelu(x1 + x2)
             
             # Dimension-adaptive cropping for s1
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 s1 = s1[..., : (s1.size(-1) - self.padding)]
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 s1 = s1[..., : (s1.size(-2) - self.padding),
                         : (s1.size(-1) - self.padding)]
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 s1 = s1[..., : (s1.size(-3) - self.padding),
                         : (s1.size(-2) - self.padding),
                         : (s1.size(-1) - self.padding)]
@@ -899,11 +924,11 @@ class IFNO(nn.Module):
             u2 = v2 * self._softplus(s1) ** (-1)
 
             # Dimension-adaptive padding for u2
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 u2_pad = F.pad(u2, [0, self.padding])
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 u2_pad = F.pad(u2, [0, self.padding, 0, self.padding])
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 u2_pad = F.pad(u2, [0, self.padding, 0, self.padding, 0, self.padding])
                 
             x1 = self.mlps[2 * i](self.convs[2 * i](u2_pad))
@@ -911,12 +936,12 @@ class IFNO(nn.Module):
             s2 = F.gelu(x1 + x2)
             
             # Dimension-adaptive cropping for s2
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 s2 = s2[..., : (s2.size(-1) - self.padding)]
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 s2 = s2[..., : (s2.size(-2) - self.padding),
                         : (s2.size(-1) - self.padding)]
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 s2 = s2[..., : (s2.size(-3) - self.padding),
                         : (s2.size(-2) - self.padding),
                         : (s2.size(-1) - self.padding)]
@@ -934,27 +959,25 @@ class IFNO(nn.Module):
             x_preds = self.q2(x)
             
             # Dimension-adaptive permutation back
-            if self.coordinate_dim == 1:
+            if self.spatial_ndim == 1:
                 x_preds = x_preds.permute(0, 2, 1)
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 x_preds = x_preds.permute(0, 2, 3, 1)
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 x_preds = x_preds.permute(0, 2, 3, 4, 1)
                 
             return x_preds, reconstruction_loss
         else:
-            # Asymmetric case - use q3 projection
-            x = self.q2(x)
-            
-            if self.coordinate_dim == 1:
-                x = x.permute(0, 2, 1)
-                x_preds = self.q3(x)
+            # Asymmetric case - use q2 projection only
+            x_preds = self.q2(x)
+
+            if self.spatial_ndim == 1:
                 x_preds = x_preds.permute(0, 2, 1)
-            elif self.coordinate_dim == 2:
+            elif self.spatial_ndim == 2:
                 x = x.permute(0, 2, 1, 3)
                 x_preds = self.q3(x)
                 x_preds = x_preds.permute(0, 2, 3, 1)
-            elif self.coordinate_dim == 3:
+            elif self.spatial_ndim == 3:
                 x = x.permute(0, 2, 1, 3)
                 x_preds = self.q3(x)
                 x_preds = x_preds.permute(0, 2, 3, 1)
@@ -1405,9 +1428,9 @@ def train(
                 u_for_vae.reshape(batch_size, -1)
             )
 
-            # Grid coordinate loss (dimension-adaptive)
-            if pred_u.shape[-1] > u.shape[-1]:
-                # Only compute grid loss if pred_u has more channels (i.e., includes coordinates)
+            # Grid coordinate loss (only for symmetric problems)
+            if model.is_symmetric and pred_u.shape[-1] > u.shape[-1]:
+                # Only compute grid loss for symmetric problems with coordinate prediction
                 if len(pred_u.shape) == 3:  # 1D case (batch, s, channels)
                     grid_loss = relative_l2_loss(
                         pred_u[:, :, :-u.shape[-1]], X
