@@ -218,10 +218,11 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
         batch_size, alpha_dim, device=beta_gt.device, dtype=beta_gt.dtype
     )
     alpha_pred = model.inverse(z_zero, beta_gt)
+    inverse_loss = torch.nn.functional.mse_loss(alpha_pred, alpha_gt, reduction="mean")
 
-    # Function-space reconstruction
-    u_pred = input_function_encoder(X, alpha_pred)
-    inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+    # # Function-space reconstruction
+    # u_pred = input_function_encoder(X, alpha_pred)
+    # inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     # Optional weak regularization: encourage forward z to be small
     z_fwd = model.forward(alpha_gt, beta_gt)

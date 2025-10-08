@@ -6,62 +6,44 @@ import tqdm
 import os
 
 
-class LinearB2BOperator(torch.nn.Module):
+class LinearB2BOperatorDeterministic(torch.nn.Module):
     """
-    Linear operator for the inverse problem of parameter estimation.
-    Maps from input coefficients (alpha) to output coefficients (beta) using a linear transformation.
+    Deterministic linear operator for the inverse problem of parameter estimation.
+    Directly maps from output coefficients (beta) to input coefficients (alpha) using a linear transformation.
+    Unlike the standard b2b_linear model which learns alpha->beta and inverts, this model directly learns beta->alpha.
     """
 
     def __init__(self, input_size, output_size):
-        super(LinearB2BOperator, self).__init__()
-        self.linear = torch.nn.Linear(input_size, output_size, bias=False)
+        """
+        Args:
+            input_size: Size of the input coefficients (alpha)
+            output_size: Size of the output coefficients (beta)
+        """
+        super(LinearB2BOperatorDeterministic, self).__init__()
+        # Note: linear layer maps from beta (output_size) to alpha (input_size)
+        self.linear = torch.nn.Linear(output_size, input_size, bias=False)
         self.linear.weight.requires_grad = False
 
-    def forward(self, alpha):
+    def forward(self, beta):
         """
-        Forward pass: beta = W * alpha
-        Maps from input coefficients to output coefficients.
+        Forward pass: alpha = W * beta
+        Directly maps from output coefficients to input coefficients.
         """
-        return self.linear(alpha)
-
-    def inverse(self, beta):
-        """
-        Inverse pass: alpha = W^(-1) * beta
-        Maps from output coefficients back to input coefficients using a least-squares solve.
-        """
-        # For batched inputs, we solve for each sample in the batch
-        weight = self.linear.weight
-
-        # Check if beta is a batch or single sample
-        if beta.dim() == 1:
-            # Single sample case
-            return torch.linalg.lstsq(weight, beta.unsqueeze(1)).solution.squeeze(1)
-        else:
-            # Batched case
-            solutions = []
-            for b in beta:
-                sol = torch.linalg.lstsq(weight, b.unsqueeze(1)).solution.squeeze(1)
-                solutions.append(sol)
-            return torch.stack(solutions)
-
-        # weight = self.linear.weight.unsqueeze(0).expand(beta.shape[0], -1, -1)
-        # solutions = torch.linalg.lstsq(weight, beta).solution
-
-        # return solutions
+        return self.linear(beta)
 
 
 def create_model(input_size, output_size):
     """
-    Create a linear B2B operator model.
+    Create a deterministic linear B2B operator model.
 
     Args:
         input_size: Size of the input coefficients (alpha)
         output_size: Size of the output coefficients (beta)
 
     Returns:
-        LinearB2BOperator instance
+        LinearB2BOperatorDeterministic instance
     """
-    return LinearB2BOperator(
+    return LinearB2BOperatorDeterministic(
         input_size=input_size,
         output_size=output_size,
     )
@@ -122,9 +104,11 @@ def loss_function(
     alpha, _ = input_function_encoder.compute_coefficients(X, u)
     beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
-    alpha_pred = model.inverse(beta)
+    # Direct prediction: beta -> alpha
+    alpha_pred = model(beta)
     pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
 
+    # # Reconstruct u from predicted alpha
     # u_pred = input_function_encoder(X, alpha_pred)
     # pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
@@ -149,11 +133,11 @@ def train(
     device=None,
 ):
 
-    n = 100
-    m = 100
+    n = 100  # alpha size
+    m = 100  # beta size
 
-    SXX = torch.zeros((n, n), device=device)
-    SXY = torch.zeros((n, m), device=device)
+    SYY = torch.zeros((m, m), device=device)
+    SYX = torch.zeros((m, n), device=device)
 
     with torch.no_grad():
         tqdm_bar = tqdm.tqdm(len(train_dataloader))
@@ -165,19 +149,22 @@ def train(
             alpha, _ = input_function_encoder.compute_coefficients(X, u)
             beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
-            # Compute the normal equations in chunks
-            SXX += torch.einsum("ij,ik->jk", alpha, alpha)
-            SXY += torch.einsum("ij,ik->jk", alpha, beta)
+            # Compute the normal equations: we want to solve beta @ W = alpha
+            # This gives us W^T = (beta^T @ beta)^(-1) @ (beta^T @ alpha)
+            # Or equivalently: (beta^T @ beta) @ W^T = (beta^T @ alpha)
+            SYY += torch.einsum("ij,ik->jk", beta, beta)
+            SYX += torch.einsum("ij,ik->jk", beta, alpha)
 
             tqdm_bar.update(1)
 
-        # Add small regularization term to SXX
-        SXX += 1e-6 * torch.eye(n, device=device)
+        # Add small regularization term to SYY
+        SYY += 1e-6 * torch.eye(m, device=device)
 
-        # Compute the linear operator
-        W = torch.linalg.solve(SXX, SXY)
+        # Solve for W^T: SYY @ W^T = SYX
+        W_T = torch.linalg.solve(SYY, SYX)
 
-        model.linear.weight.copy_(W.T)
+        # Set the linear layer weight (which expects W, not W^T)
+        model.linear.weight.copy_(W_T.T)
 
         avg_test_loss = test_model(
             model=model,
@@ -216,9 +203,10 @@ def resimulation_loss(
     n_samples=5,
 ):
     """
-    Compute re-simulation loss for B2B linear operator model.
+    Compute re-simulation loss for deterministic linear operator model.
 
-    For B2B linear: Apply inverse operator to get alpha, then forward operator to get beta, measure MSE.
+    For deterministic linear: Apply forward operator (beta->alpha) to get alpha,
+    then forward model (alpha->beta) to get predicted beta, measure MSE.
     """
 
     X, u, Y, s = batch
@@ -229,10 +217,10 @@ def resimulation_loss(
     model.eval()
     forward_model.eval()
     with torch.no_grad():
-        # Apply inverse operator to get alpha
-        alpha_pred = model.inverse(beta_target)
+        # Apply direct operator to get alpha
+        alpha_pred = model(beta_target)
 
-        # Apply forward operator to get predicted beta
+        # Apply forward model to get predicted beta
         beta_predicted = forward_model(alpha_pred)
 
         # Compute MSE between predicted and target beta
@@ -249,7 +237,8 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
 
         beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
-        alpha_pred = model.inverse(beta)
+        # Direct prediction: beta -> alpha
+        alpha_pred = model(beta)
         pred = input_function_encoder(X, alpha_pred)
 
         return pred

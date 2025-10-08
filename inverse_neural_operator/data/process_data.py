@@ -57,11 +57,11 @@ class ModelDataset(Dataset):
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
         }
-        
+
         # Note: For iFNO support, datasets should implement custom Dataset classes
         # with hardcoded spatial dimensions in their get_info() methods
         # This generic ModelDataset is kept for backward compatibility
-        
+
         return info
 
 
@@ -97,6 +97,9 @@ class InputFunctionEncoderDataset(Dataset):
         # X = self.X[idx]
         # u = self.u[idx]
         X, u, Y, s = self.dataset[idx]
+
+        X = X.to(self.device)
+        u = u.to(self.device)
 
         # Do a randperm split
         B = X.shape[0]
@@ -145,6 +148,9 @@ class OutputFunctionEncoderDataset(Dataset):
         # Y = self.Y[idx]
         # s = self.s[idx]
         X, u, Y, s = self.dataset[idx]
+
+        Y = Y.to(self.device)
+        s = s.to(self.device)
 
         # Do a randperm split
         B = Y.shape[0]
@@ -198,7 +204,9 @@ class IterableInputFunctionEncoderDataset(torch.utils.data.IterableDataset):
                 remaining_indices = torch.arange(total_points, device=self.device)
             else:
                 # Randomly select example indices
-                example_indices = torch.randperm(total_points, device=self.device)[:n_examples]
+                example_indices = torch.randperm(total_points, device=self.device)[
+                    :n_examples
+                ]
                 remaining_indices = torch.arange(total_points, device=self.device)
 
             example_xs = X[example_indices]
@@ -246,7 +254,9 @@ class IterableOutputFunctionEncoderDataset(torch.utils.data.IterableDataset):
                 remaining_indices = torch.arange(total_points, device=self.device)
             else:
                 # Randomly select example indices
-                example_indices = torch.randperm(total_points, device=self.device)[:n_examples]
+                example_indices = torch.randperm(total_points, device=self.device)[
+                    :n_examples
+                ]
                 remaining_indices = torch.arange(total_points, device=self.device)
 
             example_xs = Y[example_indices]

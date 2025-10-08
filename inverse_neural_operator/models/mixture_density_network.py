@@ -66,10 +66,10 @@ class MixtureDensityNetwork(torch.nn.Module):
             y: Observation tensor of shape (batch_size, input_size)
 
         Returns:
-            tuple: (pi, mu, covariance_matrices)
+            tuple: (pi, mu, cholesky_factors)
                 - pi: mixture weights (batch_size, n_components)
                 - mu: component means (batch_size, n_components, output_size)
-                - covariance_matrices: covariance matrices (batch_size, n_components, output_size, output_size)
+                - cholesky_factors: Cholesky factors L (batch_size, n_components, output_size, output_size)
         """
         batch_size = y.shape[0]
 
@@ -95,24 +95,29 @@ class MixtureDensityNetwork(torch.nn.Module):
             batch_size, self.n_components, n_cholesky_params
         )
 
-        # Build covariance matrices from Cholesky factors
-        covariance_matrices = self._build_covariance_matrices(cholesky_params)
+        # Build Cholesky factors from parameters
+        cholesky_factors = self._build_cholesky_factors(cholesky_params)
 
-        return pi, mu, covariance_matrices
+        return pi, mu, cholesky_factors
 
-    def _build_covariance_matrices(self, cholesky_params):
+    def _build_cholesky_factors(self, cholesky_params):
         """
-        Build full covariance matrices from Cholesky factor parameters.
-        This approach guarantees positive definiteness without needing matrix inversion.
+        Build Cholesky factors (lower triangular matrices L such that Σ = L @ L^T).
+        Returns L directly instead of computing covariance matrices.
+
+        Uses the canonical approach: diagonal elements are transformed via ELU+1
+        to ensure strict positivity (values >= 1), which is numerically stable.
 
         Args:
             cholesky_params: (batch_size, n_components, n_cholesky_params)
 
         Returns:
-            covariance_matrices: (batch_size, n_components, output_size, output_size)
+            cholesky_factors: (batch_size, n_components, output_size, output_size)
         """
         batch_size, n_components, _ = cholesky_params.shape
-        covariance_matrices = torch.zeros(
+
+        # Pre-allocate output tensor
+        tril = torch.zeros(
             batch_size,
             n_components,
             self.output_size,
@@ -121,33 +126,17 @@ class MixtureDensityNetwork(torch.nn.Module):
             dtype=cholesky_params.dtype,
         )
 
-        # Fill lower triangular part
+        # Fill lower triangular part (including diagonal)
         tril_indices = torch.tril_indices(self.output_size, self.output_size, offset=0)
+        tril[:, :, tril_indices[0], tril_indices[1]] = cholesky_params
 
-        for k in range(n_components):
-            # For each component, build the lower triangular Cholesky factor
-            L = torch.zeros(
-                batch_size,
-                self.output_size,
-                self.output_size,
-                device=cholesky_params.device,
-                dtype=cholesky_params.dtype,
-            )
+        # Apply ELU+1 to diagonal elements for numerical stability
+        # This ensures diagonal values >= 1, which is more stable than exp or softplus
+        # Canonical approach from Bishop (1994) and standard implementations
+        diagonal = torch.diagonal(tril, dim1=-2, dim2=-1)
+        tril = tril - torch.diag_embed(diagonal) + torch.diag_embed(F.elu(diagonal) + 1.0)
 
-            # Fill lower triangular part
-            L[:, tril_indices[0], tril_indices[1]] = cholesky_params[:, k, :]
-
-            # Ensure positive diagonal elements for valid Cholesky factor
-            diag_indices = torch.arange(self.output_size)
-            # Use softplus to ensure positivity with a reasonable minimum
-            L[:, diag_indices, diag_indices] = (
-                F.softplus(L[:, diag_indices, diag_indices]) + 1e-3
-            )
-
-            # Covariance matrix is L @ L^T (guaranteed positive definite)
-            covariance_matrices[:, k, :, :] = torch.bmm(L, L.transpose(-2, -1))
-
-        return covariance_matrices
+        return tril
 
     def inverse(self, beta):
         """
@@ -160,7 +149,7 @@ class MixtureDensityNetwork(torch.nn.Module):
             alpha: Sampled alpha coefficients of shape (batch_size, output_size)
         """
         with torch.no_grad():
-            pi, mu, covariance_matrices = self.forward(beta)
+            pi, mu, cholesky_factors = self.forward(beta)
             batch_size = beta.shape[0]
 
             # Sample component indices based on mixture weights
@@ -171,14 +160,14 @@ class MixtureDensityNetwork(torch.nn.Module):
             selected_mu = mu[
                 torch.arange(batch_size), component_indices
             ]  # (batch_size, output_size)
-            selected_covariance = covariance_matrices[
+            selected_cholesky = cholesky_factors[
                 torch.arange(batch_size), component_indices
             ]  # (batch_size, output_size, output_size)
 
-            # Sample directly from multivariate normal using covariance matrix
-            # No need for matrix inversion since we already have covariance
+            # Sample from multivariate normal using Cholesky factor
+            # This is guaranteed to be numerically stable and positive definite
             dist = torch.distributions.MultivariateNormal(
-                selected_mu, covariance_matrix=selected_covariance
+                selected_mu, scale_tril=selected_cholesky
             )
             alpha = dist.sample()
 
@@ -195,7 +184,7 @@ class MixtureDensityNetwork(torch.nn.Module):
         Returns:
             log_prob: Log probabilities (batch_size,)
         """
-        pi, mu, covariance_matrices = self.forward(beta)
+        pi, mu, cholesky_factors = self.forward(beta)
         batch_size = alpha.shape[0]
 
         # Use mixture weights from forward pass for consistency
@@ -210,11 +199,11 @@ class MixtureDensityNetwork(torch.nn.Module):
         for k in range(self.n_components):
             # Extract component parameters
             mu_k = mu[:, k, :]  # (batch_size, output_size)
-            cov_k = covariance_matrices[:, k, :, :]  # (batch_size, output_size, output_size)
+            cholesky_k = cholesky_factors[:, k, :, :]  # (batch_size, output_size, output_size)
 
-            # Use torch.distributions for robust log probability computation
+            # Use torch.distributions with Cholesky factor for numerically stable log probability
             dist = torch.distributions.MultivariateNormal(
-                mu_k, covariance_matrix=cov_k
+                mu_k, scale_tril=cholesky_k
             )
             log_probs_components[:, k] = dist.log_prob(alpha)
 

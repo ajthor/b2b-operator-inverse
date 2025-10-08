@@ -69,16 +69,28 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
     match model_name:
         case "b2b_linear":
             from models.b2b_operator_linear import create_model
-            
+
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for b2b models")
-            
+
             model = create_model(
                 input_size=input_size,
                 output_size=output_size,
             ).to(device)
             optimizer = None
-            
+
+        case "b2b_linear_deterministic":
+            from models.b2b_operator_linear_deterministic import create_model
+
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for b2b models")
+
+            model = create_model(
+                input_size=input_size,
+                output_size=output_size,
+            ).to(device)
+            optimizer = None
+
         case "b2b_nonlinear":
             from models.b2b_operator_nonlinear import create_model
             

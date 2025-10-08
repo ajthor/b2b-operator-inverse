@@ -23,7 +23,7 @@ parser.add_argument("--dataset", type=str, default="burgers_1d")
 
 # Model args
 parser.add_argument("--model", type=str, default="b2b_nonlinear")
-parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256])
+parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
 
 # DeepONet specific args
 parser.add_argument("--branch_hidden_sizes", type=int, nargs="+", default=[256, 256])
@@ -34,8 +34,8 @@ parser.add_argument("--output_channels", type=int, default=1)
 
 # Training args
 parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=1000)
-parser.add_argument("--learning_rate", type=float, default=1e-3)
+parser.add_argument("--epochs", type=int, default=10000)
+parser.add_argument("--learning_rate", type=float, default=1e-4)
 parser.add_argument("--lambda_u", type=float, default=0.0)
 
 # SummaryWriter args
@@ -102,6 +102,11 @@ from models.create_model import create_model
 match params.model:
     case "b2b_linear":
         from models.b2b_operator_linear import (
+            train as train_model,
+            save as save_model,
+        )
+    case "b2b_linear_deterministic":
+        from models.b2b_operator_linear_deterministic import (
             train as train_model,
             save as save_model,
         )

@@ -120,11 +120,10 @@ def loss_function(
     beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
     alpha_pred = model.inverse(beta)
+    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
 
-    u_pred = input_function_encoder(X, alpha_pred)
-
-    # pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
-    pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+    # u_pred = input_function_encoder(X, alpha_pred)
+    # pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     return pred_loss
 

@@ -199,7 +199,7 @@ def loss_function(
     z, mu, logvar = model(alpha, beta)
     alpha_pred = model.inverse(beta, z)
 
-    u_pred = input_function_encoder(X, alpha_pred)
+    pred_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
 
     # # Reconstruction loss: negative log probability assuming unit variance Gaussian
     # reconstruction_loss = 0.5 * torch.sum((alpha_pred - alpha) ** 2, dim=-1).mean()
@@ -211,7 +211,8 @@ def loss_function(
     # )
 
     # Function space loss (u-loss)
-    pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+    # u_pred = input_function_encoder(X, alpha_pred)
+    # pred_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     # # KL divergence loss
     # kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) -
@@ -236,9 +237,9 @@ def loss_function(
             forward_model.eval()
         # Forward consistency: alpha_pred -> beta_pred should match beta
         beta_pred = forward_model.forward(alpha_pred)
-        s_pred = output_function_encoder(Y, beta_pred)
-        # forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
-        forward_loss = torch.nn.functional.mse_loss(s_pred, s, reduction="mean")
+        forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
+        # s_pred = output_function_encoder(Y, beta_pred)
+        # forward_loss = torch.nn.functional.mse_loss(s_pred, s, reduction="mean")
         total_loss = total_loss + forward_loss
 
     return total_loss

@@ -186,14 +186,15 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
 
     # Inverse loss: beta -> alpha -> u_pred vs u_gt
     alpha_pred = model.inverse(beta)
-    u_pred = input_function_encoder(X, alpha_pred)
-    inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+    inverse_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
+    # u_pred = input_function_encoder(X, alpha_pred)
+    # inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     # Forward prediction loss: alpha_gt -> beta_pred vs beta_gt
     beta_pred = model.forward(alpha)
-    s_pred = output_function_encoder(Y, beta_pred)
-    # forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
-    forward_loss = torch.nn.functional.mse_loss(s_pred, s, reduction="mean")
+    forward_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
+    # s_pred = output_function_encoder(Y, beta_pred)
+    # forward_loss = torch.nn.functional.mse_loss(s_pred, s, reduction="mean")
 
     return inverse_loss + forward_loss
 
