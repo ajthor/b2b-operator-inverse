@@ -5,7 +5,7 @@ set -euo pipefail
 
 
 # List of GPUs to use
-GPUS=(5 6)
+GPUS=(3 4 5 6)
 ALL_GPUS=("${GPUS[@]}")
 if [ ${#ALL_GPUS[@]} -eq 0 ]; then
   echo "Error: No GPUs specified" >&2
@@ -22,16 +22,12 @@ STATUS_DIR=/tmp/gpu_status
 # LOG_BASE_DIR="/geoelements/Stepan/b2b-operator-inverse/logs"
 LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
 
-# DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d elastic_plate)
-# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
-DATASETS=(fwi)
-# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
-FORWARD_MODELS=(b2b_nonlinear_fwd)  # Currently only b2b_nonlinear_fwd is supported
+# DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d elastic_plate)
+DATASETS=(wave_scattering)
+# MODELS=(linear linear_inverse nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
+MODELS=(linear linear_inverse nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
+FORWARD_MODELS=(b2b_linear b2b_nonlinear)  # Supported: b2b_nonlinear, b2b_linear
 SEEDS=(1)   # add more seeds if you like
-
-# Resume training from checkpoint (set to false to start fresh)
-RESUME=false
 
 #── INITIALIZE GPU STATUS ─────────────────────────────────
 mkdir -p "$STATUS_DIR"
@@ -39,17 +35,18 @@ for gpu in "${ALL_GPUS[@]}"; do
   echo 0 > "$STATUS_DIR/gpu_$gpu"
 done
 
-#── FUNCTION ENCODER WORKERS ──────────────────────────────
-train_input_function_encoder() {
-  local dataset seed gpu count encoder_type="input"
+#── FUNCTION ENCODER WORKER ──────────────────────────────
+train_function_encoder() {
+  local dataset seed gpu count encoder_type
 
   # parse named args
   while (( $# )); do
     case "$1" in
-      --dataset)     dataset="$2";   shift 2;;
-      --seed)        seed="$2";      shift 2;;
-      --gpu)         gpu="$2";       shift 2;;
-      --count)       count="$2";     shift 2;;
+      --dataset)       dataset="$2";       shift 2;;
+      --seed)          seed="$2";          shift 2;;
+      --gpu)           gpu="$2";           shift 2;;
+      --count)         count="$2";         shift 2;;
+      --encoder_type)  encoder_type="$2";  shift 2;;
       *) echo "Unknown option: $1" >&2; exit 1;;
     esac
   done
@@ -57,76 +54,30 @@ train_input_function_encoder() {
   # prepare shared logdir for this dataset-seed combination
   local shared_logdir="$LOG_BASE_DIR/$dataset/shared/seed_$seed"
   mkdir -p "$shared_logdir"
-  local logfile="$shared_logdir/input_function_encoder_log.txt"
+  local logfile="$shared_logdir/${encoder_type}_function_encoder_log.txt"
 
   # clear the log file
   : > "$logfile"
 
-  echo "[$count] Training INPUT function encoder for $dataset | seed=$seed → cuda:$gpu"
-  
-  # Train input function encoder
+  echo "[$count] Training ${encoder_type^^} function encoder for $dataset | seed=$seed → cuda:$gpu"
+
+  # Train function encoder
   python inverse_neural_operator/train_function_encoder.py \
-    --encoder_type "input" \
+    --encoder_type "$encoder_type" \
     --dataset "$dataset" \
     --model "shared" \
     --seed "$seed" \
     --device "cuda:$gpu" \
     --log_dir "$shared_logdir" \
-    --resume "$RESUME" \
     >>"$logfile" 2>&1 \
-    || echo "[$count] Training input function encoder failed with exit code $?"
+    || echo "[$count] Training $encoder_type function encoder failed with exit code $?"
 
   # free the GPU slot
   flock "$LOCK_FILE" bash -c "
     c=\$(< $STATUS_DIR/gpu_$gpu)
     echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
   "
-    
-  return 0
-}
 
-train_output_function_encoder() {
-  local dataset seed gpu count encoder_type="output"
-
-  # parse named args
-  while (( $# )); do
-    case "$1" in
-      --dataset)     dataset="$2";   shift 2;;
-      --seed)        seed="$2";      shift 2;;
-      --gpu)         gpu="$2";       shift 2;;
-      --count)       count="$2";     shift 2;;
-      *) echo "Unknown option: $1" >&2; exit 1;;
-    esac
-  done
-
-  # prepare shared logdir for this dataset-seed combination
-  local shared_logdir="$LOG_BASE_DIR/$dataset/shared/seed_$seed"
-  mkdir -p "$shared_logdir"
-  local logfile="$shared_logdir/output_function_encoder_log.txt"
-
-  # clear the log file
-  : > "$logfile"
-
-  echo "[$count] Training OUTPUT function encoder for $dataset | seed=$seed → cuda:$gpu"
-  
-  # Train output function encoder
-  python inverse_neural_operator/train_function_encoder.py \
-    --encoder_type "output" \
-    --dataset "$dataset" \
-    --model "shared" \
-    --seed "$seed" \
-    --device "cuda:$gpu" \
-    --log_dir "$shared_logdir" \
-    --resume "$RESUME" \
-    >>"$logfile" 2>&1 \
-    || echo "[$count] Training output function encoder failed with exit code $?"
-
-  # free the GPU slot
-  flock "$LOCK_FILE" bash -c "
-    c=\$(< $STATUS_DIR/gpu_$gpu)
-    echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
-  "
-    
   return 0
 }
 
@@ -164,7 +115,6 @@ train_forward_model() {
     --seed "$seed" \
     --device "cuda:$gpu" \
     --log_dir "$shared_logdir" \
-    --resume "$RESUME" \
     >>"$logfile" 2>&1 \
     || echo "[$count] Training forward model $model failed with exit code $?"
 
@@ -255,8 +205,7 @@ train_model() {
   return 0
 }
 
-export -f train_input_function_encoder
-export -f train_output_function_encoder
+export -f train_function_encoder
 export -f train_forward_model
 export -f train_model
 export LOCK_FILE
@@ -265,67 +214,46 @@ export LOCK_FILE
 count=0
 
 # Phase 1: Train function encoders for each dataset-seed combination
-echo "=== Phase 1: Training function encoders in parallel ==="
-for dataset in "${DATASETS[@]}"; do
-  for seed in "${SEEDS[@]}"; do
-    count=$((count+1))
-    
-    # We need 2 GPUs for parallel training (input and output encoders)
-    input_gpu=""
-    output_gpu=""
-    
-    # Wait until we have 2 free GPU slots
-    while [[ -z "$input_gpu" || -z "$output_gpu" ]]; do
-      for gpu_idx in "${!ALL_GPUS[@]}"; do
-        gpu="${ALL_GPUS[$gpu_idx]}"
-        if flock $LOCK_FILE bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
-          if [[ -z "$input_gpu" ]]; then
-            input_gpu="$gpu"
-            # claim it for input encoder
+echo "=== Phase 1: Training function encoders ==="
+for encoder_type in input output; do
+  for dataset in "${DATASETS[@]}"; do
+    for seed in "${SEEDS[@]}"; do
+      count=$((count+1))
+
+      # wait for a free GPU slot
+      while :; do
+        for gpu_idx in "${!ALL_GPUS[@]}"; do
+          gpu="${ALL_GPUS[$gpu_idx]}"
+          if flock $LOCK_FILE bash -c "[ \$(< $STATUS_DIR/gpu_$gpu) -lt $PROCS_PER_GPU ]"; then
+
+            # claim it
             flock $LOCK_FILE bash -c "
               c=\$(< $STATUS_DIR/gpu_$gpu)
               echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
             "
-          elif [[ -z "$output_gpu" && "$gpu" != "$input_gpu" ]]; then
-            output_gpu="$gpu"
-            # claim it for output encoder
-            flock $LOCK_FILE bash -c "
-              c=\$(< $STATUS_DIR/gpu_$gpu)
-              echo \$((c+1)) > $STATUS_DIR/gpu_$gpu
-            "
+
+            train_function_encoder \
+              --dataset      "$dataset" \
+              --seed         "$seed"  \
+              --gpu          "$gpu"  \
+              --count        "$count" \
+              --encoder_type "$encoder_type" &
+
+            sleep 1
+
+            # break out so we move on to the next (encoder_type, dataset, seed)
+            break 2
           fi
-        fi
-      done
-      
-      # If we don't have 2 different GPUs, wait and try again
-      if [[ -z "$input_gpu" || -z "$output_gpu" ]]; then
+        done
         sleep 2
-      fi
+      done
+
     done
-
-    echo "=== [$count] Training function encoders for $dataset | seed=$seed → input:cuda:$input_gpu, output:cuda:$output_gpu ==="
-
-    # Launch both encoders in parallel
-    train_input_function_encoder \
-      --dataset "$dataset" \
-      --seed    "$seed"  \
-      --gpu     "$input_gpu"  \
-      --count   "${count}a" &
-    
-    train_output_function_encoder \
-      --dataset "$dataset" \
-      --seed    "$seed"  \
-      --gpu     "$output_gpu"  \
-      --count   "${count}b" &
-
-    # Wait for both encoders to complete before moving to next dataset-seed
-    wait
-
-    sleep 1
-
   done
 done
 
+# Wait for all function encoder training to complete
+wait
 echo "=== Phase 1 completed: All function encoders trained ==="
 
 # Reset count for Phase 2

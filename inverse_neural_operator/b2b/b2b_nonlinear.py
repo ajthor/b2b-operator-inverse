@@ -1,7 +1,4 @@
 import torch
-import numpy as np
-from torch.utils.data import Subset, DataLoader
-
 import tqdm
 import os
 
@@ -35,16 +32,6 @@ class NonlinearB2BOperatorFwd(torch.nn.Module):
         beta = self.layers[-1](alpha)
 
         return beta
-
-    def inverse(self, beta):
-        # Note: This is a placeholder inverse method
-        # In practice, the true inverse would require a separate inverse network
-        # or an iterative optimization procedure
-        # For now, returning the input as this model focuses on the forward direction
-        raise NotImplementedError(
-            "Inverse method not implemented for forward model. "
-            "Use b2b_operator_nonlinear.py for inverse operations."
-        )
 
 
 def create_model(input_size, hidden_sizes, output_size):
@@ -115,9 +102,8 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
     beta_pred = model.forward(alpha)
-    # pred_loss = torch.nn.functional.mse_loss(beta_pred, beta, reduction="mean")
 
-    # Use coefficient loss for more direct supervision
+    # Use reconstruction loss for more direct supervision
     s_pred = output_function_encoder(Y, beta_pred)
     pred_loss = torch.nn.functional.mse_loss(s_pred, s, reduction="mean")
 
@@ -133,8 +119,8 @@ def train(
     output_function_encoder,
     n_epochs,
     summary_writer,
-    params,
     model_name,
+    params,
     resume_from_checkpoint=False,
     checkpoint_dir=None,
     checkpoint_interval=100,
@@ -193,7 +179,6 @@ def test_model(
     output_function_encoder,
 ):
     model.eval()
-    # total_test_loss = 0.0
     with torch.no_grad():
         batch = next(iter(test_dataloader))
         loss = loss_function(
@@ -202,16 +187,7 @@ def test_model(
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
         )
-        # for batch in test_dataloader:
-        #     loss = loss_function(
-        #         model=model,
-        #         batch=batch,
-        #         input_function_encoder=input_function_encoder,
-        #         output_function_encoder=output_function_encoder,
-        #     )
-        #     total_test_loss += loss.item()
 
-    # avg_test_loss = total_test_loss / len(test_dataloader.dataset)
     return loss.item()
 
 

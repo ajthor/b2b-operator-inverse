@@ -130,13 +130,11 @@ class MixtureDensityNetwork(torch.nn.Module):
         tril_indices = torch.tril_indices(self.output_size, self.output_size, offset=0)
         tril[:, :, tril_indices[0], tril_indices[1]] = cholesky_params
 
-        # Apply ELU+1 to diagonal elements for numerical stability
-        # This ensures diagonal values >= 1, which is more stable than exp or softplus
-        # Canonical approach from Bishop (1994) and standard implementations
-        diagonal = torch.diagonal(tril, dim1=-2, dim2=-1)
-        tril = (
-            tril - torch.diag_embed(diagonal) + torch.diag_embed(F.elu(diagonal) + 1.0)
-        )
+        # Stabilise the diagonal while letting the network shrink variances when needed
+        diag_idx = torch.arange(self.output_size, device=tril.device)
+        diagonal = tril[:, :, diag_idx, diag_idx]
+        # Use softplus so the network can shrink variances while keeping them positive
+        tril[:, :, diag_idx, diag_idx] = F.softplus(diagonal) + 1e-6
 
         return tril
 

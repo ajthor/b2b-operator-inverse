@@ -3,9 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Subset, DataLoader
 
-from function_encoder.model.mlp import MultiHeadedMLP
+from function_encoder.model.mlp import MultiHeadedMLP, MLP
 from function_encoder.function_encoder import FunctionEncoder, least_squares
-from function_encoder.losses import basis_normalization_loss
+from function_encoder.losses import basis_normalization_loss, residual_loss
 import functools
 
 import tqdm

@@ -9,12 +9,16 @@ from data.process_data import (
     OutputFunctionEncoderDataset,
 )
 
-from models.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     train as train_function_encoder,
     save as save_function_encoder,
     memory_efficient_inner_product,
 )
+from utils.device import get_device, set_seed
+from utils.params import save_params
+from utils.checkpoints import setup_checkpoint_dir
+from utils.args import load_defaults_from_yaml
 
 torch.set_float32_matmul_precision("high")
 
@@ -22,59 +26,51 @@ torch.set_float32_matmul_precision("high")
 parser = argparse.ArgumentParser()
 
 # Encoder type arg
-parser.add_argument(
-    "--encoder_type", type=str, choices=["input", "output"], default="input"
-)
+parser.add_argument("--encoder_type", type=str, choices=["input", "output"])
 
 # Dataset args
-parser.add_argument("--dataset", type=str, default="fwi")
-
-parser.add_argument("--model", type=str, default="b2b_nonlinear")
+parser.add_argument("--dataset", type=str)
+parser.add_argument("--model", type=str)
 
 # Function encoder args
-parser.add_argument("--n_basis", type=int, default=100)
-parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
-parser.add_argument("--regularization", type=float, default=1e-3)  # 1e-4 for chladni_2d
+parser.add_argument("--n_basis", type=int)
+parser.add_argument("--hidden_sizes", type=int, nargs="+")
+parser.add_argument("--regularization", type=float)
 
 # Training args
-parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=10000)
-parser.add_argument("--learning_rate", type=float, default=1e-4)  # 1e-3 for chladni_2d
+parser.add_argument("--batch_size", type=int)
+parser.add_argument("--epochs", type=int)
+parser.add_argument("--learning_rate", type=float)
 
 # SummaryWriter args
-parser.add_argument("--log_dir", type=str, default=None)
-parser.add_argument("--comment", type=str, default="")
+parser.add_argument("--log_dir", type=str)
 
 # Device args
-parser.add_argument("--device", type=str, default=None)
+parser.add_argument("--device", type=str)
 
 # Seed args
-parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--seed", type=int)
 
 # Checkpoint args
-parser.add_argument("--checkpoint_interval", type=int, default=100)
-parser.add_argument("--checkpoint_dir", type=str, default=None)
-parser.add_argument("--resume", type=bool, default=True)
+parser.add_argument("--checkpoint_interval", type=int)
+parser.add_argument("--checkpoint_dir", type=str)
+parser.add_argument("--resume", type=bool)
+
+# Load defaults from YAML
+defaults_path = os.path.join(
+    os.path.dirname(__file__), "train_function_encoder_defaults.yaml"
+)
+defaults = load_defaults_from_yaml(defaults_path)
+parser.set_defaults(**defaults)
 
 params = parser.parse_args()
 
 if params.encoder_type not in ["input", "output"]:
     raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
-
-# Set device
-if params.device is None:
-    if torch.cuda.is_available():
-        device = "cuda"
-    elif torch.backends.mps.is_available():
-        device = "mps"
-    else:
-        device = "cpu"
-else:
-    device = params.device
-
+device = get_device(params.device)
 print(f"Using device: {device}")
-torch.manual_seed(params.seed)
+set_seed(params.seed)
 
 match params.encoder_type:
     case "input":
@@ -85,19 +81,14 @@ match params.encoder_type:
         raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
 # Create SummaryWriter
-writer = SummaryWriter(log_dir=params.log_dir, comment=params.comment)
+writer = SummaryWriter(log_dir=params.log_dir)
 log_dir = writer.log_dir
 
 # Save args
-with open(f"{log_dir}/{model_name}_params.txt", "w") as f:
-    f.write(str(params))
-
-torch.save(params, f"{log_dir}/{model_name}_params.pth")
+save_params(params, log_dir, filename_prefix=f"{model_name}_params")
 
 # Create checkpoint directories
-if params.checkpoint_dir is None:
-    params.checkpoint_dir = os.path.join(log_dir, "checkpoints")
-os.makedirs(params.checkpoint_dir, exist_ok=True)
+params.checkpoint_dir = setup_checkpoint_dir(params.checkpoint_dir, log_dir)
 
 # Load dataset using utility
 from data.load_dataset import load_dataset

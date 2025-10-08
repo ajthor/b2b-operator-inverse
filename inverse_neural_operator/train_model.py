@@ -6,87 +6,69 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import os
 
-from models.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
+from utils.device import get_device, set_seed
+from utils.params import save_params
+from utils.checkpoints import setup_checkpoint_dir
+from utils.args import load_defaults_from_yaml
+from utils.imports import import_model_functions
 
 torch.set_float32_matmul_precision("high")
 
 # Parse command line args
-
 parser = argparse.ArgumentParser()
 
 # Dataset args
-parser.add_argument("--dataset", type=str, default="burgers_1d")
+parser.add_argument("--dataset", type=str)
 
 # Model args
-parser.add_argument("--model", type=str, default="b2b_nonlinear")
-parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
-
-# DeepONet specific args
-parser.add_argument("--branch_hidden_sizes", type=int, nargs="+", default=[256, 256])
-parser.add_argument("--trunk_hidden_sizes", type=int, nargs="+", default=[256, 256])
-parser.add_argument("--trunk_input_size", type=int, default=1)
-parser.add_argument("--output_channels", type=int, default=1)
-
+parser.add_argument("--model", type=str)
+parser.add_argument("--hidden_sizes", type=int, nargs="+")
 
 # Training args
-parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=10000)
-parser.add_argument("--learning_rate", type=float, default=1e-4)
-parser.add_argument("--lambda_u", type=float, default=0.0)
+parser.add_argument("--batch_size", type=int)
+parser.add_argument("--epochs", type=int)
+parser.add_argument("--learning_rate", type=float)
+parser.add_argument("--lambda_u", type=float)
 
 # SummaryWriter args
-parser.add_argument(
-    "--log_dir",
-    type=str,
-    default="/store/at46867/b2b_operator_inverse/burgers_1d/b2b_nonlinear/seed_1/",
-)
-parser.add_argument("--comment", type=str, default="")
+parser.add_argument("--log_dir", type=str)
 
 # Device args
-parser.add_argument("--device", type=str, default=None)
+parser.add_argument("--device", type=str)
 
 # Seed args
-parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--seed", type=int)
 
 # Checkpoint args
-parser.add_argument("--checkpoint_interval", type=int, default=100)
-parser.add_argument("--checkpoint_dir", type=str, default=None)
-parser.add_argument("--resume", type=bool, default=False)
+parser.add_argument("--checkpoint_interval", type=int)
+parser.add_argument("--checkpoint_dir", type=str)
+parser.add_argument("--resume", type=bool)
+
+# Load defaults from YAML
+defaults_path = os.path.join(os.path.dirname(__file__), "train_model_defaults.yaml")
+defaults = load_defaults_from_yaml(defaults_path)
+parser.set_defaults(**defaults)
 
 params = parser.parse_args()
 
-
-if params.device is None:
-    if torch.cuda.is_available():
-        device = "cuda"
-    elif torch.backends.mps.is_available():
-        device = "mps"
-    else:
-        device = "cpu"
-else:
-    device = params.device
-
+device = get_device(params.device)
 print(f"Using device: {device}")
-torch.manual_seed(params.seed)
+set_seed(params.seed)
 
 # Create SummaryWriter
-writer = SummaryWriter(log_dir=params.log_dir, comment=params.comment)
+writer = SummaryWriter(log_dir=params.log_dir)
 log_dir = writer.log_dir
 
 # Save args
-with open(f"{log_dir}/params.txt", "w") as f:
-    f.write(str(params))
-
-torch.save(params, f"{log_dir}/params.pth")
+save_params(params, log_dir)
 
 # Create checkpoint directories
-if params.checkpoint_dir is None:
-    params.checkpoint_dir = os.path.join(log_dir, "checkpoints")
-os.makedirs(params.checkpoint_dir, exist_ok=True)
+params.checkpoint_dir = setup_checkpoint_dir(params.checkpoint_dir, log_dir)
 
 # Load dataset using utility
 from data.load_dataset import load_dataset
@@ -99,74 +81,7 @@ dataset_info = train_dataset.get_info()
 from models.create_model import create_model
 
 # Get the appropriate train/save functions for the model
-match params.model:
-    case "b2b_linear":
-        from models.b2b_operator_linear import (
-            train as train_model,
-            save as save_model,
-        )
-    case "b2b_linear_deterministic":
-        from models.b2b_operator_linear_deterministic import (
-            train as train_model,
-            save as save_model,
-        )
-    case "b2b_nonlinear":
-        from models.b2b_operator_nonlinear import (
-            train as train_model,
-            save as save_model,
-        )
-    case "deeponet":
-        from models.deeponet import (
-            train as train_model,
-            save as save_model,
-        )
-    case "variational_autoencoder":
-        from models.variational_autoencoder import (
-            train as train_model,
-            save as save_model,
-        )
-    case "inn_additive":
-        from models.inn_additive import (
-            train as train_model,
-            save as save_model,
-        )
-    case "cinn_additive":
-        from models.cinn_additive import (
-            train as train_model,
-            save as save_model,
-        )
-    case "inn_affine":
-        from models.inn_affine import (
-            train as train_model,
-            save as save_model,
-        )
-    case "cinn_affine":
-        from models.cinn_affine import (
-            train as train_model,
-            save as save_model,
-        )
-    case "cinn_additive_probabilistic":
-        from models.cinn_additive_probabilistic import (
-            train as train_model,
-            save as save_model,
-        )
-    case "cinn_affine_probabilistic":
-        from models.cinn_affine_probabilistic import (
-            train as train_model,
-            save as save_model,
-        )
-    case "ifno":
-        from models.ifno import (
-            train as train_model,
-            save as save_model,
-        )
-    case "mixture_density_network":
-        from models.mixture_density_network import (
-            train as train_model,
-            save as save_model,
-        )
-    case _:
-        raise ValueError(f"Unknown model: {params.model}")
+train_model, save_model = import_model_functions(params.model, "train", "save")
 
 # Always load function encoders and forward model for consistency
 from models.load_model import (

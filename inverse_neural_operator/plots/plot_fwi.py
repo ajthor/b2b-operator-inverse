@@ -14,12 +14,6 @@ from inverse_neural_operator.models.function_encoder import (
 from data.load_dataset import load_dataset
 from models.load_model import load_models
 
-from inverse_neural_operator.models.model_evaluation import (
-    evaluate_random,
-    find_best_case,
-    find_worst_case,
-)
-
 device = "cpu"
 
 torch.manual_seed(1)

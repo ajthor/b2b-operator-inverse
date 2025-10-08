@@ -5,79 +5,66 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import os
 
+from utils.device import get_device, set_seed
+from utils.params import save_params
+from utils.checkpoints import setup_checkpoint_dir
+from utils.args import load_defaults_from_yaml
+from utils.imports import import_model_functions
 
 torch.set_float32_matmul_precision("high")
 
 # Parse command line args
-
 parser = argparse.ArgumentParser()
 
 # Dataset args
-parser.add_argument("--dataset", type=str, default="burgers_1d")
+parser.add_argument("--dataset", type=str)
 
 # Model args
-parser.add_argument(
-    "--model",
-    type=str,
-    default="b2b_nonlinear_fwd",
-    help="Forward model type (currently only b2b_nonlinear_fwd is supported)",
-)
-parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[256, 256, 256])
+parser.add_argument("--model", type=str)
+parser.add_argument("--hidden_sizes", type=int, nargs="+")
 
 # Training args
-parser.add_argument("--batch_size", type=int, default=50)
-parser.add_argument("--epochs", type=int, default=10000)
-parser.add_argument("--learning_rate", type=float, default=1e-4)
-parser.add_argument("--lambda_u", type=float, default=0.0)
+parser.add_argument("--batch_size", type=int)
+parser.add_argument("--epochs", type=int)
+parser.add_argument("--learning_rate", type=float)
+parser.add_argument("--lambda_u", type=float)
 
 # SummaryWriter args
-parser.add_argument(
-    "--log_dir",
-    type=str,
-    default="/store/at46867/b2b_operator_inverse/burgers_1d/shared/seed_1/",
-)
-parser.add_argument("--comment", type=str, default="")
+parser.add_argument("--log_dir", type=str)
 
 # Device args
-parser.add_argument("--device", type=str, default=None)
+parser.add_argument("--device", type=str)
 
 # Seed args
-parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--seed", type=int)
 
 # Checkpoint args
-parser.add_argument("--checkpoint_interval", type=int, default=100)
-parser.add_argument("--checkpoint_dir", type=str, default=None)
-parser.add_argument("--resume", type=bool, default=True)
+parser.add_argument("--checkpoint_interval", type=int)
+parser.add_argument("--checkpoint_dir", type=str)
+parser.add_argument("--resume", type=bool)
+
+# Load defaults from YAML
+defaults_path = os.path.join(
+    os.path.dirname(__file__), "train_forward_model_defaults.yaml"
+)
+defaults = load_defaults_from_yaml(defaults_path)
+parser.set_defaults(**defaults)
 
 params = parser.parse_args()
 
-if params.device is None:
-    if torch.cuda.is_available():
-        device = "cuda"
-    elif torch.backends.mps.is_available():
-        device = "mps"
-    else:
-        device = "cpu"
-else:
-    device = params.device
-
+device = get_device(params.device)
 print(f"Using device: {device}")
-torch.manual_seed(params.seed)
+set_seed(params.seed)
 
 # Create SummaryWriter
-writer = SummaryWriter(log_dir=params.log_dir, comment=params.comment)
+writer = SummaryWriter(log_dir=params.log_dir)
 log_dir = writer.log_dir
 
 # Save args
-with open(f"{log_dir}/params.txt", "w") as f:
-    f.write(str(params))
-
-torch.save(params, f"{log_dir}/params.pth")
+save_params(params, log_dir)
 
 # Create checkpoint directories
-if params.checkpoint_dir is None:
-    params.checkpoint_dir = os.path.join(log_dir, "checkpoints")
-os.makedirs(params.checkpoint_dir, exist_ok=True)
+params.checkpoint_dir = setup_checkpoint_dir(params.checkpoint_dir, log_dir)
 
 # Load dataset using utility
 from data.load_dataset import load_dataset
@@ -87,23 +74,15 @@ test_dataset = load_dataset(params.dataset, params, device, split="test")
 dataset_info = train_dataset.get_info()
 
 # Load function encoder parameters to get sizes for model creation
-from models.load_model import load_function_encoder_params, load_function_encoders
+from b2b.load_model import load_function_encoder_params, load_function_encoders
+from b2b.create_model import create_forward_model
 
 input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
 
-# Import forward model components
-from models.create_model import create_forward_model
-
 # Get the appropriate train/save functions based on model type
-if params.model == "b2b_nonlinear_fwd":
-    from models.b2b_operator_nonlinear_fwd import (
-        train as train_model,
-        save as save_model,
-    )
-else:
-    raise ValueError(
-        f"Unknown forward model: {params.model}. Currently supported: b2b_nonlinear_fwd"
-    )
+from utils.imports import import_model_functions
+
+train_model, save_model = import_model_functions(params.model, "train", "save")
 
 # Create forward model and optimizer
 model, optimizer = create_forward_model(

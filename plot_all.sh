@@ -5,9 +5,9 @@ set -euo pipefail
 # Same datasets and models as in run_all.sh
 
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d)
-# MODELS=(b2b_linear b2b_nonlinear variational_autoencoder deeponet inn_additive cinn_additive inn_affine cinn_affine mixture_density_network)
-DATASETS=(fwi)
-MODELS=(b2b_linear b2b_nonlinear variational_autoencoder)
+# MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
+DATASETS=(wave_scattering)
+MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine)
 
 # Base directory for experiment logs - same as in run_all.sh
 LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
@@ -82,18 +82,18 @@ for dataset in "${DATASETS[@]}"; do
       --log_dir "$LOG_BASE_DIR" \
       --results_dir "$RESULTS_DIR/probabilistic"
       
-      # Generate publication-quality plots
-      python inverse_neural_operator/plots/plot_burgers_publication.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR/publication"
+      # # Generate publication-quality plots
+      # python inverse_neural_operator/plots/plot_burgers_publication.py \
+      # --model "$model" \
+      # --log_dir "$LOG_BASE_DIR" \
+      # --results_dir "$RESULTS_DIR/publication"
       
-      # Generate comparison plot (only for first model to avoid duplicates)
-      if [ "$model" = "${MODELS[0]}" ]; then
-        python inverse_neural_operator/plots/plot_burgers_comparison.py \
-        --log_dir "$LOG_BASE_DIR" \
-        --results_dir "$RESULTS_DIR/comparison"
-      fi
+      # # Generate comparison plot (only for first model to avoid duplicates)
+      # if [ "$model" = "${MODELS[0]}" ]; then
+      #   python inverse_neural_operator/plots/plot_burgers_comparison.py \
+      #   --log_dir "$LOG_BASE_DIR" \
+      #   --results_dir "$RESULTS_DIR/comparison"
+      # fi
       ;;
       chladni)
       python inverse_neural_operator/plots/plot_chladni.py \
@@ -113,11 +113,11 @@ for dataset in "${DATASETS[@]}"; do
       --log_dir "$LOG_BASE_DIR" \
       --results_dir "$RESULTS_DIR/probabilistic"
       
-      # Generate publication-quality plots
-      python inverse_neural_operator/plots/plot_darcy_publication.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR/publication"
+      # # Generate publication-quality plots
+      # python inverse_neural_operator/plots/plot_darcy_publication.py \
+      # --model "$model" \
+      # --log_dir "$LOG_BASE_DIR" \
+      # --results_dir "$RESULTS_DIR/publication"
       ;;
       fwi)
       python inverse_neural_operator/plots/plot_fwi.py \
@@ -143,11 +143,11 @@ for dataset in "${DATASETS[@]}"; do
       --log_dir "$LOG_BASE_DIR" \
       --results_dir "$RESULTS_DIR/probabilistic"
       
-      # Generate publication-quality plots
-      python inverse_neural_operator/plots/plot_wave_scattering_publication.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR/publication"
+      # # Generate publication-quality plots
+      # python inverse_neural_operator/plots/plot_wave_scattering_publication.py \
+      # --model "$model" \
+      # --log_dir "$LOG_BASE_DIR" \
+      # --results_dir "$RESULTS_DIR/publication"
       ;;
       *)
       echo "Unknown dataset: $dataset"

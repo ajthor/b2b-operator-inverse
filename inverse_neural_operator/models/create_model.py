@@ -1,48 +1,10 @@
 """
-Model creation utility for centralized model management.
+Model creation utility for inverse models.
 
-This module provides a unified interface for creating all supported models
+This module provides a unified interface for creating all supported inverse models
 with their appropriate configurations and optimizers.
 """
 import torch
-
-
-def create_forward_model(model_name, params, input_size, output_size, device):
-    """
-    Create a forward model based on the model name and parameters.
-    Forward models learn the mapping from input coefficients (alpha) to output coefficients (beta).
-    
-    Args:
-        model_name (str): Name of the forward model to create
-        params: Parameters object containing model configuration
-        input_size (int): Size of input (alpha coefficients)
-        output_size (int): Size of output (beta coefficients)  
-        device (str): Device to create model on
-        
-    Returns:
-        tuple: (model, optimizer) - Created forward model and optimizer
-        
-    Raises:
-        ValueError: If model_name is not supported for forward models
-    """
-    model = None
-    optimizer = None
-    
-    match model_name:
-        case "b2b_nonlinear_fwd":
-            from models.b2b_operator_nonlinear_fwd import create_model
-            
-            model = create_model(
-                input_size=input_size,
-                output_size=output_size,
-                hidden_sizes=params.hidden_sizes,
-            ).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
-            
-        case _:
-            raise ValueError(f"Unknown forward model: {model_name}. Supported forward models: b2b_nonlinear_fwd")
-    
-    return model, optimizer
 
 
 def create_model(model_name, params, dataset_info, device, input_size=None, output_size=None):
@@ -67,11 +29,11 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
     optimizer = None
     
     match model_name:
-        case "b2b_linear":
-            from models.b2b_operator_linear import create_model
+        case "linear_inverse":
+            from models.linear_inverse import create_model
 
             if input_size is None or output_size is None:
-                raise ValueError("input_size and output_size are required for b2b models")
+                raise ValueError("input_size and output_size are required for linear_inverse model")
 
             model = create_model(
                 input_size=input_size,
@@ -79,11 +41,11 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             ).to(device)
             optimizer = None
 
-        case "b2b_linear_deterministic":
-            from models.b2b_operator_linear_deterministic import create_model
+        case "linear":
+            from models.linear import create_model
 
             if input_size is None or output_size is None:
-                raise ValueError("input_size and output_size are required for b2b models")
+                raise ValueError("input_size and output_size are required for linear model")
 
             model = create_model(
                 input_size=input_size,
@@ -91,12 +53,12 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             ).to(device)
             optimizer = None
 
-        case "b2b_nonlinear":
-            from models.b2b_operator_nonlinear import create_model
-            
+        case "nonlinear":
+            from models.nonlinear import create_model
+
             if input_size is None or output_size is None:
-                raise ValueError("input_size and output_size are required for b2b models")
-            
+                raise ValueError("input_size and output_size are required for nonlinear model")
+
             model = create_model(
                 input_size=input_size,
                 output_size=output_size,
@@ -104,16 +66,6 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
-        case "deeponet":
-            from models.deeponet import create_model
-            
-            model = create_model(
-                branch_input_size=dataset_info["Y_size"] * dataset_info["Y_len"],
-                trunk_input_size=dataset_info["X_size"],
-                output_size=dataset_info["u_size"],
-                hidden_sizes=params.hidden_sizes,
-            ).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
         case "variational_autoencoder":
             from models.variational_autoencoder import create_model

@@ -222,9 +222,8 @@ def train(
     output_function_encoder,  # Not used but kept for API compatibility
     n_epochs,
     summary_writer,
-    params,
     model_name,
-    forward_model,  # Not used but kept for API compatibility
+    params,
     resume_from_checkpoint=False,
     checkpoint_dir=None,
     checkpoint_interval=100,
