@@ -103,7 +103,7 @@ def plot_fwi_sample(
             Y.unsqueeze(0),
             s_observed.unsqueeze(0),
         )
-        u_pred = evaluate_fn(
+        u_pred, _ = evaluate_fn(
             model, point, input_function_encoder, output_function_encoder
         )
         u_pred = u_pred.squeeze(0)

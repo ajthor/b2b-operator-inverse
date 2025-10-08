@@ -210,7 +210,7 @@ def plot_elastic_sample(
             # Mean prediction across samples
             u_pred = u_pred_samples.mean(dim=0)  # [N, 1]
         else:
-            u_pred = evaluate_fn(
+            u_pred, _ = evaluate_fn(
                 model, point, input_function_encoder, output_function_encoder
             )
             u_pred = u_pred.squeeze(0)

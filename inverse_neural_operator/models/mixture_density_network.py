@@ -134,13 +134,16 @@ class MixtureDensityNetwork(torch.nn.Module):
         # This ensures diagonal values >= 1, which is more stable than exp or softplus
         # Canonical approach from Bishop (1994) and standard implementations
         diagonal = torch.diagonal(tril, dim1=-2, dim2=-1)
-        tril = tril - torch.diag_embed(diagonal) + torch.diag_embed(F.elu(diagonal) + 1.0)
+        tril = (
+            tril - torch.diag_embed(diagonal) + torch.diag_embed(F.elu(diagonal) + 1.0)
+        )
 
         return tril
 
     def inverse(self, beta):
         """
         Sample from the mixture distribution p(x|y) given observation y=beta.
+        Non-differentiable sampling for inference.
 
         Args:
             beta: Observation tensor of shape (batch_size, input_size)
@@ -173,6 +176,60 @@ class MixtureDensityNetwork(torch.nn.Module):
 
             return alpha
 
+    def rsample(self, beta, num_samples=1, gumbel_temp=0.5):
+        """
+        Reparameterized sampling from mixture distribution p(alpha|beta).
+        Uses Gumbel-Softmax for differentiable component selection.
+
+        Args:
+            beta: Observation tensor of shape (batch_size, input_size)
+            num_samples: Number of samples to draw per batch element
+            gumbel_temp: Temperature for Gumbel-Softmax (lower = more discrete)
+
+        Returns:
+            alpha_samples: (num_samples, batch_size, output_size)
+        """
+        pi, mu, cholesky_factors = self.forward(beta)  # No torch.no_grad()
+        batch_size = beta.shape[0]
+        K = self.n_components
+        D = self.output_size
+
+        # Expand to samples: (num_samples, batch_size, ...)
+        pi = pi.unsqueeze(0).expand(num_samples, -1, -1)  # (S, B, K)
+        mu = mu.unsqueeze(0).expand(num_samples, -1, -1, -1)  # (S, B, K, D)
+        cholesky_factors = cholesky_factors.unsqueeze(0).expand(
+            num_samples, -1, -1, -1, -1
+        )  # (S, B, K, D, D)
+
+        # Gumbel-Softmax for differentiable component selection
+        # Sample Gumbel noise
+        gumbel = -torch.log(-torch.log(torch.rand_like(pi).clamp(min=1e-8)))
+        logits = torch.log(pi.clamp(min=1e-8))
+
+        # Soft (differentiable) component weights
+        y_soft = F.softmax((logits + gumbel) / gumbel_temp, dim=-1)  # (S, B, K)
+
+        # Hard (discrete) component selection
+        y_hard = torch.zeros_like(y_soft).scatter_(
+            -1, y_soft.argmax(-1, keepdim=True), 1.0
+        )
+
+        # Straight-through estimator: use hard in forward, soft for backward
+        y = (y_hard - y_soft).detach() + y_soft  # (S, B, K)
+
+        # Reparameterized Gaussian sampling per component
+        eps = torch.randn(num_samples, batch_size, K, D, device=mu.device, dtype=mu.dtype)
+        # z_k = mu_k + L_k @ eps for each component k
+        z = mu + torch.matmul(
+            cholesky_factors, eps.unsqueeze(-1)
+        ).squeeze(-1)  # (S, B, K, D)
+
+        # Select the sampled component using y (soft weights with straight-through)
+        y_expanded = y.unsqueeze(-1)  # (S, B, K, 1)
+        alpha_samples = (y_expanded * z).sum(dim=2)  # (S, B, D)
+
+        return alpha_samples
+
     def log_prob(self, alpha, beta):
         """
         Compute log probability of alpha given beta under the mixture model.
@@ -199,12 +256,12 @@ class MixtureDensityNetwork(torch.nn.Module):
         for k in range(self.n_components):
             # Extract component parameters
             mu_k = mu[:, k, :]  # (batch_size, output_size)
-            cholesky_k = cholesky_factors[:, k, :, :]  # (batch_size, output_size, output_size)
+            cholesky_k = cholesky_factors[
+                :, k, :, :
+            ]  # (batch_size, output_size, output_size)
 
             # Use torch.distributions with Cholesky factor for numerically stable log probability
-            dist = torch.distributions.MultivariateNormal(
-                mu_k, scale_tril=cholesky_k
-            )
+            dist = torch.distributions.MultivariateNormal(mu_k, scale_tril=cholesky_k)
             log_probs_components[:, k] = dist.log_prob(alpha)
 
         # Add mixture weights and compute log-sum-exp with better numerical stability
@@ -295,11 +352,12 @@ def loss_function(
     input_function_encoder,
     output_function_encoder,
     forward_model=None,
-    lambda_forward=0.0,
 ):
     """
     Loss function for Mixture Density Network.
     Computes negative log-likelihood: -log p(alpha|beta)
+    Optionally adds forward consistency loss: sample alpha from p(alpha|beta) using
+    reparameterization trick, then measure MSE between forward_model(alpha) and beta.
     """
     X, u, Y, s = batch
 
@@ -313,7 +371,37 @@ def loss_function(
     # Return negative log-likelihood (loss to minimize)
     nll_loss = -log_likelihood.mean()
 
-    return nll_loss
+    total_loss = nll_loss
+
+    # Add forward consistency loss if forward_model is provided
+    if forward_model is not None:
+        with torch.no_grad():
+            forward_model.eval()
+
+        # Reparameterized sampling: alpha ~ p(alpha|beta) with gradients
+        # Shape: (num_samples, batch_size, alpha_dim)
+        alpha_samples = model.rsample(beta, num_samples=4)
+
+        # Reshape for forward model: (num_samples * batch_size, alpha_dim)
+        num_samples, batch_size, alpha_dim = alpha_samples.shape
+        alpha_flat = alpha_samples.reshape(num_samples * batch_size, alpha_dim)
+
+        # Re-simulate forward through the forward operator
+        beta_pred_flat = forward_model(alpha_flat)  # (num_samples * batch_size, beta_dim)
+
+        # Reshape back: (num_samples, batch_size, beta_dim)
+        beta_pred = beta_pred_flat.reshape(num_samples, batch_size, -1)
+
+        # Measure consistency: predicted beta should match observed beta
+        # Expand beta to match samples dimension and compute MSE across all samples
+        beta_expanded = beta.unsqueeze(0).expand(num_samples, -1, -1)
+        forward_consistency_loss = torch.nn.functional.mse_loss(
+            beta_pred, beta_expanded, reduction="mean"
+        )
+
+        total_loss = total_loss + forward_consistency_loss
+
+    return total_loss
 
 
 def train(
@@ -358,7 +446,6 @@ def train(
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
             forward_model=forward_model,
-            lambda_forward=getattr(params, "lambda_forward", 0.0),
         )
         loss.backward()
         optimizer.step()
@@ -371,28 +458,25 @@ def train(
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
             forward_model=forward_model,
-            lambda_forward=getattr(params, "lambda_forward", 0.0),
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
-        # Compute and log re-simulation loss (average over batches)
-        total_resim_loss = 0.0
-        n_resim_batches = 0
+        # Compute and log re-simulation loss on single batch
         with torch.no_grad():
-            for batch in test_dataloader:
-                batch_resim_loss = resimulation_loss(
-                    model=model,
-                    batch=batch,
-                    input_function_encoder=input_function_encoder,
-                    output_function_encoder=output_function_encoder,
-                    forward_model=forward_model,
-                    n_samples=5,  # MDN uses sampling, keep n_samples=5
-                )
-                total_resim_loss += batch_resim_loss
-                n_resim_batches += 1
-        avg_resim_loss = total_resim_loss / max(n_resim_batches, 1)
+            test_batch = next(iter(test_dataloader))
+            resim_coeff_loss, resim_pred_loss = resimulation_loss(
+                model=model,
+                batch=test_batch,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+                forward_model=forward_model,
+                n_samples=5,  # MDN uses sampling, keep n_samples=5
+            )
         summary_writer.add_scalars(
-            "loss/resimulation", {model_name: avg_resim_loss}, epoch
+            "loss/resimulation_coeff", {model_name: resim_coeff_loss}, epoch
+        )
+        summary_writer.add_scalars(
+            "loss/resimulation_pred", {model_name: resim_pred_loss}, epoch
         )
 
         # Save checkpoint
@@ -409,7 +493,6 @@ def test_model(
     input_function_encoder,
     output_function_encoder,
     forward_model=None,
-    lambda_forward=0.0,
 ):
     model.eval()
     # total_test_loss = 0.0
@@ -421,7 +504,6 @@ def test_model(
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
             forward_model=forward_model,
-            lambda_forward=lambda_forward,
         )
         # for batch in test_dataloader:
         #     loss = loss_function(
@@ -450,6 +532,10 @@ def resimulation_loss(
     Compute re-simulation loss for Mixture Density Network.
 
     For MDN: Sample from the mixture given beta*, apply forward operator, measure MSE to beta*
+
+    Returns:
+        resim_coeff_loss: MSE between re-simulated and target coefficients
+        resim_pred_loss: MSE between predictions from re-simulated coefficients and ground truth
     """
 
     X, u, Y, s = batch
@@ -478,24 +564,33 @@ def resimulation_loss(
         alpha_samples_flat = alpha_samples.view(-1, alpha_dim)
 
         # Apply forward operator to generated samples
-        beta_predicted_flat = forward_model(
+        beta_resim_flat = forward_model(
             alpha_samples_flat
         )  # [n_samples * batch_size, beta_dim]
 
         # Reshape back: [n_samples, batch_size, beta_dim]
-        beta_predicted = beta_predicted_flat.view(n_samples, batch_size, -1)
+        beta_resim = beta_resim_flat.view(n_samples, batch_size, -1)
 
-        # Compute MSE between predicted and target beta for each sample, then average
+        # Coefficient error: re-simulated beta vs target beta (average over samples)
         beta_target_expanded = beta_target.unsqueeze(0).expand(
             n_samples, -1, -1
         )  # [n_samples, batch_size, beta_dim]
         mse_per_sample = torch.mean(
-            (beta_predicted - beta_target_expanded) ** 2, dim=(1, 2)
+            (beta_resim - beta_target_expanded) ** 2, dim=(1, 2)
         )  # [n_samples]
-        resim_loss = torch.mean(mse_per_sample)
+        resim_coeff_loss = torch.mean(mse_per_sample)
+
+        # Prediction error: function predictions using re-simulated beta (average over samples)
+        # For each sample, compute predictions and compare to ground truth
+        pred_errors = []
+        for i in range(n_samples):
+            s_pred = output_function_encoder(Y, beta_resim[i])
+            pred_error = torch.nn.functional.mse_loss(s_pred, s)
+            pred_errors.append(pred_error)
+        resim_pred_loss = torch.mean(torch.stack(pred_errors))
 
     model.train()
-    return resim_loss.item()
+    return resim_coeff_loss.item(), resim_pred_loss.item()
 
 
 def evaluate(model, point, input_function_encoder, output_function_encoder):
@@ -508,4 +603,4 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)
 
-        return pred
+        return pred, alpha_pred

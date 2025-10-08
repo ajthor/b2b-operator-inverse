@@ -186,9 +186,9 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
 
     # Inverse loss: beta -> alpha -> u_pred vs u_gt
     alpha_pred = model.inverse(beta)
-    inverse_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
-    # u_pred = input_function_encoder(X, alpha_pred)
-    # inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
+    # inverse_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
+    u_pred = input_function_encoder(X, alpha_pred)
+    inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
     # Forward prediction loss: alpha_gt -> beta_pred vs beta_gt
     beta_pred = model.forward(alpha)
@@ -254,24 +254,22 @@ def train(
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
-        # Compute and log re-simulation loss (average over batches)
-        total_resim_loss = 0.0
-        n_resim_batches = 0
+        # Compute and log re-simulation loss on single batch
         with torch.no_grad():
-            for batch in test_dataloader:
-                batch_resim_loss = resimulation_loss(
-                    model=model,
-                    batch=batch,
-                    input_function_encoder=input_function_encoder,
-                    output_function_encoder=output_function_encoder,
-                    forward_model=forward_model,
-                    n_samples=1,  # Use deterministic evaluation
-                )
-                total_resim_loss += batch_resim_loss
-                n_resim_batches += 1
-        avg_resim_loss = total_resim_loss / max(n_resim_batches, 1)
+            test_batch = next(iter(test_dataloader))
+            resim_coeff_loss, resim_pred_loss = resimulation_loss(
+                model=model,
+                batch=test_batch,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+                forward_model=forward_model,
+                n_samples=1,  # Use deterministic evaluation
+            )
         summary_writer.add_scalars(
-            "loss/resimulation", {model_name: avg_resim_loss}, epoch
+            "loss/resimulation_coeff", {model_name: resim_coeff_loss}, epoch
+        )
+        summary_writer.add_scalars(
+            "loss/resimulation_pred", {model_name: resim_pred_loss}, epoch
         )
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
 
@@ -329,6 +327,10 @@ def resimulation_loss(
     Since additive INN is deterministic, n_samples parameter is ignored.
 
     Re-simulation flow: beta_measured -> alpha_pred -> beta_resim -> loss(beta_resim, beta_measured)
+
+    Returns:
+        resim_coeff_loss: MSE between re-simulated and target coefficients
+        resim_pred_loss: MSE between predictions from re-simulated coefficients and ground truth
     """
     X, u, Y, s = batch
 
@@ -344,11 +346,15 @@ def resimulation_loss(
         # Forward re-simulation: alpha -> beta
         beta_resim = forward_model(alpha_pred)  # [batch_size, beta_dim]
 
-        # Compare re-simulated beta with measured beta
-        resim_loss = torch.nn.functional.mse_loss(beta_resim, beta_target)
+        # Coefficient error: re-simulated beta vs target beta
+        resim_coeff_loss = torch.nn.functional.mse_loss(beta_resim, beta_target)
+
+        # Prediction error: function predictions using re-simulated beta
+        s_pred = output_function_encoder(Y, beta_resim)
+        resim_pred_loss = torch.nn.functional.mse_loss(s_pred, s)
 
     model.train()
-    return resim_loss.item()
+    return resim_coeff_loss.item(), resim_pred_loss.item()
 
 
 def evaluate(model, point, input_function_encoder, output_function_encoder):
@@ -361,4 +367,4 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)
 
-        return pred
+        return pred, alpha_pred

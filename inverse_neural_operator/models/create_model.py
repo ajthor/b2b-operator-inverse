@@ -173,10 +173,10 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             
         case "cinn_affine":
             from models.cinn_affine import create_model
-            
+
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for cinn_affine")
-            
+
             model = create_model(
                 input_size=input_size,
                 condition_size=output_size,  # Condition on output coefficients (beta)
@@ -184,7 +184,35 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
                 n_coupling_layers=2,
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
-            
+
+        case "cinn_additive_probabilistic":
+            from models.cinn_additive_probabilistic import create_model
+
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for cinn_additive_probabilistic")
+
+            model = create_model(
+                input_size=input_size,
+                condition_size=output_size,  # Condition on output coefficients (beta)
+                hidden_sizes=params.hidden_sizes,
+                n_coupling_layers=2,
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+
+        case "cinn_affine_probabilistic":
+            from models.cinn_affine_probabilistic import create_model
+
+            if input_size is None or output_size is None:
+                raise ValueError("input_size and output_size are required for cinn_affine_probabilistic")
+
+            model = create_model(
+                input_size=input_size,
+                condition_size=output_size,  # Condition on output coefficients (beta)
+                hidden_sizes=params.hidden_sizes,
+                n_coupling_layers=2,
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
+
         case "ifno":
             from models.ifno import create_model
             

@@ -3,6 +3,7 @@ Model loading utility for loading pre-trained models and function encoders.
 
 This module provides functionality to load trained models from disk for evaluation and plotting.
 """
+
 import os
 import torch
 
@@ -17,25 +18,23 @@ from models.create_model import create_model, create_forward_model
 def load_function_encoder_params(log_dir: str):
     """
     Load function encoder parameters from disk.
-    
+
     Args:
         log_dir (str): Directory containing saved function encoder parameter files
-        
+
     Returns:
         tuple: (input_function_encoder_params, output_function_encoder_params)
     """
     # Load input function encoder parameters
     input_function_encoder_params = torch.load(
-        os.path.join(log_dir, "input_function_encoder_params.pth"), 
-        weights_only=False
+        os.path.join(log_dir, "input_function_encoder_params.pth"), weights_only=False
     )
-    
+
     # Load output function encoder parameters
     output_function_encoder_params = torch.load(
-        os.path.join(log_dir, "output_function_encoder_params.pth"), 
-        weights_only=False
+        os.path.join(log_dir, "output_function_encoder_params.pth"), weights_only=False
     )
-    
+
     return input_function_encoder_params, output_function_encoder_params
 
 
@@ -58,7 +57,9 @@ def load_forward_model(log_dir: str, device: str = "cpu"):
     # Load saved forward model parameters from disk
     forward_params_path = os.path.join(log_dir, "params.pth")
     if not os.path.exists(forward_params_path):
-        raise FileNotFoundError(f"Forward model params not found at {forward_params_path}")
+        raise FileNotFoundError(
+            f"Forward model params not found at {forward_params_path}"
+        )
 
     forward_params = torch.load(forward_params_path, weights_only=False)
 
@@ -74,24 +75,30 @@ def load_forward_model(log_dir: str, device: str = "cpu"):
     # Load forward model weights
     forward_model_path = os.path.join(log_dir, "forward_b2b_nonlinear_fwd.pth")
     if os.path.exists(forward_model_path):
-        forward_model.load_state_dict(torch.load(forward_model_path, map_location=device))
+        forward_model.load_state_dict(
+            torch.load(forward_model_path, map_location=device)
+        )
         forward_model.eval()
     else:
-        raise FileNotFoundError(f"Forward model weights not found at {forward_model_path}")
+        raise FileNotFoundError(
+            f"Forward model weights not found at {forward_model_path}"
+        )
 
     return forward_model
 
 
-def load_function_encoders(log_dir: str, dataset_info: dict, params: dict, device: str = "cpu"):
+def load_function_encoders(
+    log_dir: str, dataset_info: dict, params: dict, device: str = "cpu"
+):
     """
     Load pre-trained function encoders from disk.
-    
+
     Args:
         log_dir (str): Directory containing saved function encoder files
         dataset_info (dict): Dataset information from dataset.get_info()
         params: Parameters object containing dataset information
         device (str): Device to load encoders on
-        
+
     Returns:
         tuple: (input_function_encoder, output_function_encoder)
     """
@@ -105,9 +112,7 @@ def load_function_encoders(log_dir: str, dataset_info: dict, params: dict, devic
         output_size=dataset_info["u_size"],
         n_basis=input_function_encoder_params.n_basis,
         inner_product=(
-            memory_efficient_inner_product
-            if params.dataset in ["fwi"]
-            else None
+            memory_efficient_inner_product if params.dataset in ["fwi"] else None
         ),
     )
     input_function_encoder.to(device)
@@ -127,9 +132,7 @@ def load_function_encoders(log_dir: str, dataset_info: dict, params: dict, devic
         output_size=dataset_info["s_size"],
         n_basis=output_function_encoder_params.n_basis,
         inner_product=(
-            memory_efficient_inner_product
-            if params.dataset in ["fwi"]
-            else None
+            memory_efficient_inner_product if params.dataset in ["fwi"] else None
         ),
     )
     output_function_encoder.to(device)
@@ -150,13 +153,13 @@ def load_forward_models(
 ):
     """
     Load pre-trained forward models and function encoders from disk.
-    
+
     Args:
         log_dir (str): Directory containing saved model files
         dataset_info (dict): Dataset information from dataset.get_info()
         params: Parameters object containing model configuration
         device (str): Device to load models on
-        
+
     Returns:
         tuple: (input_function_encoder, output_function_encoder, model, evaluate_function)
     """
@@ -170,16 +173,16 @@ def load_forward_models(
 
     # Create forward model using the create_forward_model utility
     model, _ = create_forward_model(
-        params.model, 
-        params, 
+        params.model,
+        params,
         input_params.n_basis,  # input size (alpha coefficients)
         output_params.n_basis,  # output size (beta coefficients)
-        device
+        device,
     )
 
     # Load the trained forward model weights and get the appropriate load/evaluate functions
     forward_model_path = os.path.join(log_dir, f"forward_{params.model}.pth")
-    
+
     # Get the appropriate load and evaluate functions for the forward model type
     match params.model:
         case "b2b_nonlinear_fwd":
@@ -201,13 +204,13 @@ def load_models(
 ):
     """
     Load pre-trained models and function encoders from disk.
-    
+
     Args:
         log_dir (str): Directory containing saved model files
         dataset_info (dict): Dataset information from dataset.get_info()
         params: Parameters object containing model configuration
         device (str): Device to load models on
-        
+
     Returns:
         tuple: (input_function_encoder, output_function_encoder, model, evaluate_function)
     """
@@ -219,17 +222,30 @@ def load_models(
     # For b2b models, we need to get the parameter sizes
     input_size = None
     output_size = None
-    if params.model.startswith("b2b") or params.model in ["variational_autoencoder", "inn_additive", "cinn_additive", "inn_affine", "cinn_affine", "ifno", "mixture_density_network", "b2b_linear_deterministic"]:
+    if params.model.startswith("b2b") or params.model in [
+        "variational_autoencoder",
+        "inn_additive",
+        "cinn_additive",
+        "inn_affine",
+        "cinn_affine",
+        "cinn_additive_probabilistic",
+        "cinn_affine_probabilistic",
+        "ifno",
+        "mixture_density_network",
+        "b2b_linear_deterministic",
+    ]:
         input_params, output_params = load_function_encoder_params(log_dir)
         input_size = input_params.n_basis
         output_size = output_params.n_basis
 
     # Create model using the create_model utility (without optimizer since we're loading)
-    model, _ = create_model(params.model, params, dataset_info, device, input_size, output_size)
+    model, _ = create_model(
+        params.model, params, dataset_info, device, input_size, output_size
+    )
 
     # Load the trained model weights and get the appropriate load/evaluate functions
     model_path = os.path.join(log_dir, "model.pth")
-    
+
     # Get the appropriate load and evaluate functions for the model type
     match params.model:
         case "b2b_linear":
@@ -248,9 +264,13 @@ def load_models(
             from models.inn_additive import load, evaluate
         case "cinn_additive":
             from models.cinn_additive import load, evaluate
-            
+
         case "cinn_affine":
             from models.cinn_affine import load, evaluate
+        case "cinn_additive_probabilistic":
+            from models.cinn_additive_probabilistic import load, evaluate
+        case "cinn_affine_probabilistic":
+            from models.cinn_affine_probabilistic import load, evaluate
         case "ifno":
             from models.ifno import load, evaluate
         case "mixture_density_network":

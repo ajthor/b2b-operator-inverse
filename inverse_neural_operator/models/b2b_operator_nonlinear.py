@@ -183,25 +183,23 @@ def train(
         )
         summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
 
-        # Compute and log re-simulation loss (average over batches)
+        # Compute and log re-simulation loss on single batch
         if forward_model is not None:
-            total_resim_loss = 0.0
-            n_resim_batches = 0
             with torch.no_grad():
-                for batch in test_dataloader:
-                    batch_resim_loss = resimulation_loss(
-                        model=model,
-                        batch=batch,
-                        input_function_encoder=input_function_encoder,
-                        output_function_encoder=output_function_encoder,
-                        forward_model=forward_model,
-                        n_samples=1,
-                    )
-                    total_resim_loss += batch_resim_loss
-                    n_resim_batches += 1
-            avg_resim_loss = total_resim_loss / max(n_resim_batches, 1)
+                test_batch = next(iter(test_dataloader))
+                resim_coeff_loss, resim_pred_loss = resimulation_loss(
+                    model=model,
+                    batch=test_batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                    forward_model=forward_model,
+                    n_samples=1,
+                )
             summary_writer.add_scalars(
-                "loss/resimulation", {model_name: avg_resim_loss}, epoch
+                "loss/resimulation_coeff", {model_name: resim_coeff_loss}, epoch
+            )
+            summary_writer.add_scalars(
+                "loss/resimulation_pred", {model_name: resim_pred_loss}, epoch
             )
 
         # Save checkpoint
@@ -253,6 +251,10 @@ def resimulation_loss(
     Compute re-simulation loss for B2B nonlinear operator model.
 
     For B2B nonlinear: Apply inverse operator to get alpha, then forward operator to get beta, measure MSE.
+
+    Returns:
+        resim_coeff_loss: MSE between re-simulated and target coefficients
+        resim_pred_loss: MSE between predictions from re-simulated coefficients and ground truth
     """
 
     X, u, Y, s = batch
@@ -267,13 +269,17 @@ def resimulation_loss(
         alpha_pred = model.inverse(beta_target)
 
         # Apply forward operator to get predicted beta
-        beta_predicted = forward_model(alpha_pred)
+        beta_resim = forward_model(alpha_pred)
 
-        # Compute MSE between predicted and target beta
-        resim_loss = torch.nn.functional.mse_loss(beta_predicted, beta_target)
+        # Coefficient error: re-simulated beta vs target beta
+        resim_coeff_loss = torch.nn.functional.mse_loss(beta_resim, beta_target)
+
+        # Prediction error: function predictions using re-simulated beta
+        s_pred = output_function_encoder(Y, beta_resim)
+        resim_pred_loss = torch.nn.functional.mse_loss(s_pred, s)
 
     model.train()
-    return resim_loss.item()
+    return resim_coeff_loss.item(), resim_pred_loss.item()
 
 
 def evaluate(model, point, input_function_encoder, output_function_encoder):
@@ -286,4 +292,4 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)
 
-        return pred
+        return pred, alpha_pred

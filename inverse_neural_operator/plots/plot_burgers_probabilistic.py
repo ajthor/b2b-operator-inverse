@@ -1,7 +1,7 @@
 """
 Plot probabilistic results for the Burgers 1D dataset with multiple realizations.
 
-For probabilistic models, samples 10 realizations from the posterior and plots all 
+For probabilistic models, samples 10 realizations from the posterior and plots all
 forward resimulations. For 1D datasets, all realizations are plotted as lines.
 
 To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator.plots.plot_burgers_probabilistic
@@ -57,85 +57,38 @@ def plot_burgers_probabilistic_sample(
     Y = Y.to(device)
     s_observed = s_observed.to(device)
 
-    # Check if model supports probabilistic sampling
-    is_probabilistic = hasattr(model, 'sample_posterior') or hasattr(model, 'sample_prior') or \
-                      (hasattr(model, 'inverse') and hasattr(model, 'forward') and 
-                       'mixture' in model.__class__.__name__.lower())
-    
-    if is_probabilistic:
-        # Probabilistic model - sample multiple realizations
-        with torch.no_grad():
-            # Add batch dimension
-            X_batch = X.unsqueeze(0)
-            Y_batch = Y.unsqueeze(0)
-            s_observed_batch = s_observed.unsqueeze(0)
+    # Generate multiple realizations by calling evaluate multiple times
+    # For probabilistic models (VAE, MDN, cINN_probabilistic), each call gives different samples
+    # For deterministic models (b2b, cINN deterministic, INN), each call gives the same result
+    u_samples = []
+    s_resim_samples = []
 
-            # Compute beta coefficients from observed output
-            beta_observed, _ = output_function_encoder.compute_coefficients(Y_batch, s_observed_batch)
-            
-            # Sample based on model type
-            alpha_samples_list = []
-            
-            if hasattr(model, 'sample_posterior'):
-                # INN models
-                alpha_samples = model.sample_posterior(beta_observed, n_realizations)
-                alpha_samples_list = [alpha_samples[i] for i in range(n_realizations)]
-            elif hasattr(model, 'sample_prior'):
-                # VAE model
-                batch_size = beta_observed.shape[0]
-                for _ in range(n_realizations):
-                    z = model.sample_prior(batch_size, device=beta_observed.device)
-                    alpha_sample = model.inverse(beta_observed, z)
-                    alpha_samples_list.append(alpha_sample)
-            else:
-                # MDN model - call inverse multiple times
-                for _ in range(n_realizations):
-                    alpha_sample = model.inverse(beta_observed)
-                    alpha_samples_list.append(alpha_sample)
-            
-            # Generate input functions from alpha samples
-            u_samples = []
-            s_resim_samples = []
-            
-            for alpha_sample in alpha_samples_list:
-                # Reconstruct input function from alpha
-                u_sample = input_function_encoder(X_batch, alpha_sample)
-                u_samples.append(u_sample.squeeze(0))
-                
-                # Forward simulate to get output
-                beta_resim = forward_model.forward(alpha_sample)
-                s_resim = output_function_encoder(Y_batch, beta_resim)
-                s_resim_samples.append(s_resim.squeeze(0))
-    else:
-        # Deterministic model - use single prediction
-        with torch.no_grad():
-            point = (
-                X.unsqueeze(0),
-                u_true.unsqueeze(0),
-                Y.unsqueeze(0),
-                s_observed.unsqueeze(0),
-            )
-            u_pred = evaluate_fn(
+    with torch.no_grad():
+        point = (
+            X.unsqueeze(0),
+            u_true.unsqueeze(0),
+            Y.unsqueeze(0),
+            s_observed.unsqueeze(0),
+        )
+
+        for _ in range(n_realizations):
+            # Call evaluate to get one realization
+            u_pred, alpha_pred = evaluate_fn(
                 model, point, input_function_encoder, output_function_encoder
             )
-            u_samples = [u_pred.squeeze(0)]
-            
-            # Re-simulate for deterministic model
-            X_batch = X.unsqueeze(0)
-            u_pred_batch = u_pred
-            Y_batch = Y.unsqueeze(0)
-            
-            alpha, _ = input_function_encoder.compute_coefficients(X_batch, u_pred_batch)
-            beta_pred = forward_model.forward(alpha)
-            s_resim = output_function_encoder(Y_batch, beta_pred)
-            s_resim_samples = [s_resim.squeeze(0)]
+            u_samples.append(u_pred.squeeze(0))
+
+            # Forward simulate this realization using alpha_pred
+            beta_resim = forward_model.forward(alpha_pred)
+            s_resim = output_function_encoder(Y.unsqueeze(0), beta_resim)
+            s_resim_samples.append(s_resim.squeeze(0))
 
     # Convert to numpy for plotting
     u_true_np = u_true.squeeze(-1).cpu().numpy()
     s_observed_np = s_observed.squeeze(-1).cpu().numpy()
     X_np = X.squeeze(-1).cpu().numpy()
     Y_np = Y.squeeze(-1).cpu().numpy()
-    
+
     u_samples_np = [u.squeeze(-1).cpu().numpy() for u in u_samples]
     s_resim_samples_np = [s.squeeze(-1).cpu().numpy() for s in s_resim_samples]
 
@@ -164,7 +117,7 @@ def plot_burgers_probabilistic_sample(
     axes[1].plot(
         x_coords, u_true_np, "b-", label="True Input u(x)", linewidth=3, alpha=0.8
     )
-    
+
     # Plot all realizations
     for i, u_sample_np in enumerate(u_samples_np):
         alpha = 0.6 if len(u_samples_np) > 1 else 0.8
@@ -175,7 +128,7 @@ def plot_burgers_probabilistic_sample(
         axes[1].plot(
             x_coords, u_sample_np, "--", color=color, linewidth=2, alpha=alpha, label=label
         )
-    
+
     axes[1].set_title(f"Input Function: True vs {len(u_samples_np)} Realizations", fontsize=12)
     axes[1].set_xlabel("x")
     axes[1].set_ylabel("u(x)")
@@ -186,7 +139,7 @@ def plot_burgers_probabilistic_sample(
     axes[2].plot(
         y_coords, s_observed_np, "g-", label="True Observed s(y)", linewidth=3, alpha=0.8
     )
-    
+
     # Plot all re-simulation realizations
     mse_values = []
     for i, s_resim_np in enumerate(s_resim_samples_np):
@@ -198,14 +151,14 @@ def plot_burgers_probabilistic_sample(
         axes[2].plot(
             y_coords, s_resim_np, "--", color=color, linewidth=2, alpha=alpha, label=label
         )
-        
+
         # Calculate error metrics
         mse = np.mean((s_observed_np - s_resim_np) ** 2)
         mse_values.append(mse)
-    
+
     mean_mse = np.mean(mse_values)
     std_mse = np.std(mse_values) if len(mse_values) > 1 else 0
-    
+
     title = f"Re-simulation vs Observed\nMean MSE: {mean_mse:.6f}"
     if len(mse_values) > 1:
         title += f" ± {std_mse:.6f}"
@@ -215,10 +168,11 @@ def plot_burgers_probabilistic_sample(
     axes[2].legend()
     axes[2].grid(True, alpha=0.3)
 
-    # Add model type info to main title
+    # Detect if model is probabilistic by checking for variation in samples
+    is_probabilistic = len(set([tuple(u.flatten().tolist()) for u in u_samples_np[:2]])) > 1 if len(u_samples_np) > 1 else False
     model_type = "Probabilistic" if is_probabilistic else "Deterministic"
     fig.suptitle(f"{model_name} ({model_type}) - Sample {sample_idx}", fontsize=14)
-    
+
     plt.tight_layout()
 
     # Save plot if directory provided
@@ -243,7 +197,7 @@ def plot_multiple_samples(
     save_dir=None,
 ):
     """Plot multiple random samples from the test set."""
-    
+
     # Select random samples
     test_indices = random.sample(
         range(len(test_dataset)), min(n_samples, len(test_dataset))

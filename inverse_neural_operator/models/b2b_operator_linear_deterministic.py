@@ -207,6 +207,10 @@ def resimulation_loss(
 
     For deterministic linear: Apply forward operator (beta->alpha) to get alpha,
     then forward model (alpha->beta) to get predicted beta, measure MSE.
+
+    Returns:
+        resim_coeff_loss: MSE between re-simulated and target coefficients
+        resim_pred_loss: MSE between predictions from re-simulated coefficients and ground truth
     """
 
     X, u, Y, s = batch
@@ -221,13 +225,17 @@ def resimulation_loss(
         alpha_pred = model(beta_target)
 
         # Apply forward model to get predicted beta
-        beta_predicted = forward_model(alpha_pred)
+        beta_resim = forward_model(alpha_pred)
 
-        # Compute MSE between predicted and target beta
-        resim_loss = torch.nn.functional.mse_loss(beta_predicted, beta_target)
+        # Coefficient error: re-simulated beta vs target beta
+        resim_coeff_loss = torch.nn.functional.mse_loss(beta_resim, beta_target)
+
+        # Prediction error: function predictions using re-simulated beta
+        s_pred = output_function_encoder(Y, beta_resim)
+        resim_pred_loss = torch.nn.functional.mse_loss(s_pred, s)
 
     model.train()
-    return resim_loss.item()
+    return resim_coeff_loss.item(), resim_pred_loss.item()
 
 
 def evaluate(model, point, input_function_encoder, output_function_encoder):
@@ -241,4 +249,4 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         alpha_pred = model(beta)
         pred = input_function_encoder(X, alpha_pred)
 
-        return pred
+        return pred, alpha_pred

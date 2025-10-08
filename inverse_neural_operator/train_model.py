@@ -145,6 +145,16 @@ match params.model:
             train as train_model,
             save as save_model,
         )
+    case "cinn_additive_probabilistic":
+        from models.cinn_additive_probabilistic import (
+            train as train_model,
+            save as save_model,
+        )
+    case "cinn_affine_probabilistic":
+        from models.cinn_affine_probabilistic import (
+            train as train_model,
+            save as save_model,
+        )
     case "ifno":
         from models.ifno import (
             train as train_model,
