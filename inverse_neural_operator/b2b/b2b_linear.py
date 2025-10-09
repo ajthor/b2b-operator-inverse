@@ -128,8 +128,8 @@ def train(
     Train the linear forward model using closed-form least squares solution.
     Solves: alpha @ W = beta for W using normal equations.
     """
-    n = input_function_encoder.n_basis  # alpha size
-    m = output_function_encoder.n_basis  # beta size
+    n = model.input_size  # alpha size
+    m = model.output_size  # beta size
 
     SXX = torch.zeros((n, n), device=device)
     SXY = torch.zeros((n, m), device=device)

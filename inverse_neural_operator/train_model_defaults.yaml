@@ -2,6 +2,7 @@
 dataset: burgers_1d
 model: nonlinear
 hidden_sizes: [256, 256, 256]
+forward_model: b2b_nonlinear
 lambda_u: 0.0
 
 batch_size: 50

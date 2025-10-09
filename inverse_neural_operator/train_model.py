@@ -28,6 +28,7 @@ parser.add_argument("--dataset", type=str)
 # Model args
 parser.add_argument("--model", type=str)
 parser.add_argument("--hidden_sizes", type=int, nargs="+")
+parser.add_argument("--forward_model", type=str, help="Forward model name for re-simulation loss (e.g., b2b_nonlinear, b2b_linear)")
 
 # Training args
 parser.add_argument("--batch_size", type=int)
@@ -110,8 +111,8 @@ input_function_encoder, output_function_encoder = load_function_encoders(
 
 # Load forward model (all models will receive it, some may not use it)
 try:
-    forward_model = load_forward_model(log_dir, device=device)
-    print(f"Loaded forward model for re-simulation loss")
+    forward_model = load_forward_model(log_dir, device=device, forward_model_name=params.forward_model)
+    print(f"Loaded forward model '{params.forward_model}' for re-simulation loss")
 except Exception as e:
     print(f"Warning: Could not load forward model for re-simulation loss: {e}")
     forward_model = None
