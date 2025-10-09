@@ -23,10 +23,11 @@ STATUS_DIR=/tmp/gpu_status
 LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
 
 # DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d elastic_plate)
-DATASETS=(wave_scattering)
 # MODELS=(linear linear_inverse nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
+# FORWARD_MODELS=(b2b_linear b2b_nonlinear)
+DATASETS=(fwi chladni_2d)
 MODELS=(linear linear_inverse nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
-FORWARD_MODELS=(b2b_linear b2b_nonlinear)  # Supported: b2b_nonlinear, b2b_linear
+FORWARD_MODELS=(b2b_linear b2b_nonlinear)
 SEEDS=(1)   # add more seeds if you like
 
 #── INITIALIZE GPU STATUS ─────────────────────────────────
@@ -59,7 +60,7 @@ train_function_encoder() {
   # clear the log file
   : > "$logfile"
 
-  echo "[$count] Training ${encoder_type^^} function encoder for $dataset | seed=$seed → cuda:$gpu"
+  echo "  → [$count/$TOTAL_ENCODER_JOBS] Training ${encoder_type^^} function encoder: $dataset | seed=$seed → cuda:$gpu"
 
   # Train function encoder
   python inverse_neural_operator/train_function_encoder.py \
@@ -70,7 +71,7 @@ train_function_encoder() {
     --device "cuda:$gpu" \
     --log_dir "$shared_logdir" \
     >>"$logfile" 2>&1 \
-    || echo "[$count] Training $encoder_type function encoder failed with exit code $?"
+    || echo "  ✗ [$count/$TOTAL_ENCODER_JOBS] Training $encoder_type function encoder failed with exit code $?"
 
   # free the GPU slot
   flock "$LOCK_FILE" bash -c "
@@ -106,7 +107,7 @@ train_forward_model() {
   # clear the log file
   : > "$logfile"
 
-  echo "[$count] Training forward model: $dataset | $model | seed=$seed → cuda:$gpu"
+  echo "  → [$count/$TOTAL_FORWARD_JOBS] Training forward model: $dataset | $model | seed=$seed → cuda:$gpu"
   
   # Train the forward model using pre-trained function encoders (save to shared dir)
   python inverse_neural_operator/train_forward_model.py \
@@ -116,7 +117,7 @@ train_forward_model() {
     --device "cuda:$gpu" \
     --log_dir "$shared_logdir" \
     >>"$logfile" 2>&1 \
-    || echo "[$count] Training forward model $model failed with exit code $?"
+    || echo "  ✗ [$count/$TOTAL_FORWARD_JOBS] Training forward model $model failed with exit code $?"
 
   sleep 1
 
@@ -157,19 +158,19 @@ train_model() {
 
   # Copy the pre-trained function encoders to the model directory
   cp "$shared_logdir/input_function_encoder.pth" "$model_logdir/" || {
-    echo "[$count] Failed to copy input function encoder for $dataset | $model | seed=$seed"
+    echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Failed to copy input function encoder for $dataset | $model | seed=$seed"
     return 1
   }
   cp "$shared_logdir/output_function_encoder.pth" "$model_logdir/" || {
-    echo "[$count] Failed to copy output function encoder for $dataset | $model | seed=$seed"
+    echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Failed to copy output function encoder for $dataset | $model | seed=$seed"
     return 1
   }
   cp "$shared_logdir/input_function_encoder_params.pth" "$model_logdir/" || {
-    echo "[$count] Failed to copy input function encoder params for $dataset | $model | seed=$seed"
+    echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Failed to copy input function encoder params for $dataset | $model | seed=$seed"
     return 1
   }
   cp "$shared_logdir/output_function_encoder_params.pth" "$model_logdir/" || {
-    echo "[$count] Failed to copy output function encoder params for $dataset | $model | seed=$seed"
+    echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Failed to copy output function encoder params for $dataset | $model | seed=$seed"
     return 1
   }
 
@@ -177,12 +178,12 @@ train_model() {
   for forward_model_file in "$shared_logdir"/forward_*.pth; do
     if [ -f "$forward_model_file" ]; then
       cp "$forward_model_file" "$model_logdir/" || {
-        echo "[$count] Warning: Failed to copy forward model $(basename "$forward_model_file") for $dataset | $model | seed=$seed"
+        echo "  ⚠ [$count/$TOTAL_INVERSE_JOBS] Warning: Failed to copy forward model $(basename "$forward_model_file") for $dataset | $model | seed=$seed"
       }
     fi
   done
 
-  echo "[$count] Training model: $dataset | $model | seed=$seed → cuda:$gpu"
+  echo "  → [$count/$TOTAL_INVERSE_JOBS] Training inverse model: $dataset | $model | seed=$seed → cuda:$gpu"
   
   # Train the model using pre-trained function encoders
   python inverse_neural_operator/train_model.py \
@@ -192,7 +193,7 @@ train_model() {
     --device "cuda:$gpu" \
     --log_dir "$model_logdir" \
     >>"$logfile" 2>&1 \
-    || echo "[$count] Training model $model failed with exit code $?"
+    || echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Training inverse model $model failed with exit code $?"
 
   sleep 1
 
@@ -211,10 +212,30 @@ export -f train_model
 export LOCK_FILE
 
 #── MAIN SCHEDULER ────────────────────────────────────────
+
+# Calculate total jobs
+TOTAL_ENCODER_JOBS=$((2 * ${#DATASETS[@]} * ${#SEEDS[@]}))  # input + output
+TOTAL_FORWARD_JOBS=$((${#FORWARD_MODELS[@]} * ${#DATASETS[@]} * ${#SEEDS[@]}))
+TOTAL_INVERSE_JOBS=$((${#MODELS[@]} * ${#DATASETS[@]} * ${#SEEDS[@]}))
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Starting training pipeline"
+echo "  Datasets: ${DATASETS[*]}"
+echo "  Forward models: ${FORWARD_MODELS[*]}"
+echo "  Inverse models: ${MODELS[*]}"
+echo "  Seeds: ${SEEDS[*]}"
+echo "  Phase 1 jobs: $TOTAL_ENCODER_JOBS function encoders"
+echo "  Phase 2 jobs: $TOTAL_FORWARD_JOBS forward models"
+echo "  Phase 3 jobs: $TOTAL_INVERSE_JOBS inverse models"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
 count=0
 
 # Phase 1: Train function encoders for each dataset-seed combination
-echo "=== Phase 1: Training function encoders ==="
+echo "───────────────────────────────────────────────────────────────"
+echo "  Phase 1: Training function encoders"
+echo "───────────────────────────────────────────────────────────────"
 for encoder_type in input output; do
   for dataset in "${DATASETS[@]}"; do
     for seed in "${SEEDS[@]}"; do
@@ -254,13 +275,17 @@ done
 
 # Wait for all function encoder training to complete
 wait
-echo "=== Phase 1 completed: All function encoders trained ==="
+echo ""
+echo "  ✓ Phase 1 completed: All function encoders trained"
+echo ""
 
 # Reset count for Phase 2
 count=0
 
 # Phase 2: Train forward models using the pre-trained function encoders
-echo "=== Phase 2: Training forward models ==="
+echo "───────────────────────────────────────────────────────────────"
+echo "  Phase 2: Training forward models"
+echo "───────────────────────────────────────────────────────────────"
 if [ ${#FORWARD_MODELS[@]} -gt 0 ]; then
   for dataset in "${DATASETS[@]}"; do
     for model in "${FORWARD_MODELS[@]}"; do
@@ -301,16 +326,21 @@ if [ ${#FORWARD_MODELS[@]} -gt 0 ]; then
 
   # Wait for all forward model training to complete
   wait
-  echo "=== Phase 2 completed: All forward models trained ==="
+  echo ""
+  echo "  ✓ Phase 2 completed: All forward models trained"
+  echo ""
 else
-  echo "=== Phase 2 skipped: No forward models specified ==="
+  echo "  ⚠ Phase 2 skipped: No forward models specified"
+  echo ""
 fi
 
 # Reset count for Phase 3
 count=0
 
 # Phase 3: Train inverse models using the pre-trained function encoders
-echo "=== Phase 3: Training inverse models ==="
+echo "───────────────────────────────────────────────────────────────"
+echo "  Phase 3: Training inverse models"
+echo "───────────────────────────────────────────────────────────────"
 for dataset in "${DATASETS[@]}"; do
   for model in "${MODELS[@]}"; do
     for seed in "${SEEDS[@]}"; do
@@ -350,4 +380,10 @@ done
 
 # Wait for all inverse model training to complete
 wait
-echo "=== Phase 3 completed: All inverse models trained ==="
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  ✓ Training pipeline completed"
+echo "  Phase 1: $TOTAL_ENCODER_JOBS function encoders trained"
+echo "  Phase 2: $TOTAL_FORWARD_JOBS forward models trained"
+echo "  Phase 3: $TOTAL_INVERSE_JOBS inverse models trained"
+echo "═══════════════════════════════════════════════════════════════"

@@ -11,14 +11,15 @@ import random
 
 import torch
 
-from inverse_neural_operator.models.function_encoder import (
+from inverse_neural_operator.b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
 
 from data.load_dataset import load_dataset
-from models.load_model import load_models, load_forward_model
+from models.load_model import load_models
+from b2b.load_model import load_forward_model
 
 device = "cpu"
 
@@ -200,9 +201,19 @@ def plot_multiple_samples(
 def plot_model_results(
     model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3
 ):
-    """Plot results for a single model."""
+    """Plot results for a single model.
 
-    model_log_dir = os.path.join(log_dir, model_name, "seed_1")
+    Args:
+        model_name: Name of the model
+        log_dir: Complete path to the model directory (e.g., /path/to/logs/dataset/model/seed_1)
+        results_dir: Directory to save results
+        test_dataset: Test dataset
+        dataset_info: Dataset information
+        n_samples: Number of samples to plot
+    """
+
+    # log_dir is now the complete path to the model directory
+    model_log_dir = log_dir
 
     # Load model parameters
     params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
@@ -216,7 +227,7 @@ def plot_model_results(
     )
 
     # Load forward model for re-simulation
-    forward_model = load_forward_model(log_dir=model_log_dir, device=device)
+    forward_model = load_forward_model(log_dir=model_log_dir, forward_model_name='b2b_nonlinear', device=device)
 
     # Plot results
     plot_multiple_samples(
@@ -240,7 +251,7 @@ parser.add_argument(
     "--log_dir",
     type=str,
     default="/workspaces/b2b-operator-inverse/logs",
-    help="Base log directory",
+    help="Complete path to model directory (e.g., /path/to/logs/dataset/model/seed_1)",
 )
 parser.add_argument(
     "--results_dir",
@@ -268,23 +279,29 @@ torch.manual_seed(args.seed)
 random.seed(args.seed)
 np.random.seed(args.seed)
 
-# Hardcoded dataset
-dataset = "wave_scattering"
-
-# Construct paths
-log_dir = os.path.join(args.log_dir, dataset)
+# log_dir is now the complete path to the model directory
+log_dir = args.log_dir
 results_dir = args.results_dir
-
 model_name = args.model
 
-# Load dataset using the specified model's parameters
-temp_log_dir = os.path.join(log_dir, model_name, f"seed_{args.seed}")
-temp_params = torch.load(os.path.join(temp_log_dir, "params.pth"), weights_only=False)
+# Check if model directory exists
+if not os.path.exists(os.path.join(log_dir, "params.pth")):
+    print(f"✗ Model not found at {log_dir}")
+    exit(1)
 
+print(f"Loading model parameters and dataset...")
+# Load dataset using the model's parameters
+params = torch.load(os.path.join(log_dir, "params.pth"), weights_only=False)
 test_dataset, dataset_info = load_dataset(
-    temp_params.dataset, temp_params, device, split="test", return_info=True
+    params.dataset, params, device, split="test", return_info=True
 )
 
+print(f"✓ Loaded {len(test_dataset)} test samples")
+
+# Create results directory
+os.makedirs(results_dir, exist_ok=True)
+
+print(f"Generating {args.n_samples} sample plots...")
 # Plot results for the specified model
 plot_model_results(
     model_name=model_name,
@@ -295,4 +312,4 @@ plot_model_results(
     n_samples=args.n_samples,
 )
 
-print(f"SUCCESS: Plotted {model_name}, {args.n_samples} total plots")
+print(f"✓ Generated {args.n_samples} plots → {results_dir}")

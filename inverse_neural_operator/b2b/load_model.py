@@ -116,18 +116,12 @@ def load_forward_model(log_dir: str, forward_model_name: str, device: str = "cpu
 
     # Load params for model configuration
     params_path = os.path.join(log_dir, "params.pth")
-    if os.path.exists(params_path):
-        params = torch.load(params_path, weights_only=False)
-        # Override the model name with the forward model name
-        params.model = forward_model_name
-    else:
-        # Fallback: create minimal params if params.pth doesn't exist
-        class MinimalParams:
-            def __init__(self, model_name):
-                self.model = model_name
-                self.hidden_sizes = [256, 256, 256]  # Default
-                self.learning_rate = 0.001
-        params = MinimalParams(forward_model_name)
+    if not os.path.exists(params_path):
+        raise FileNotFoundError(f"Model parameters not found at {params_path}")
+
+    params = torch.load(params_path, weights_only=False)
+    # Override the model name with the forward model name
+    params.model = forward_model_name
 
     # The forward model checkpoint is named forward_{model_name}.pth
     forward_model_path = os.path.join(log_dir, f"forward_{forward_model_name}.pth")

@@ -11,14 +11,15 @@ import random
 
 import torch
 
-from inverse_neural_operator.models.function_encoder import (
+from inverse_neural_operator.b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
 
 from data.load_dataset import load_dataset
-from models.load_model import load_models, load_forward_model
+from models.load_model import load_models
+from b2b.load_model import load_forward_model
 
 device = "cpu"
 
@@ -353,9 +354,20 @@ def plot_multiple_samples(
 def plot_model_results(
     model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3, seed=1
 ):
-    """Plot results for a single model."""
+    """Plot results for a single model.
 
-    model_log_dir = os.path.join(log_dir, model_name, f"seed_{seed}")
+    Args:
+        model_name: Name of the model
+        log_dir: Complete path to the model directory (e.g., /path/to/logs/dataset/model/seed_1)
+        results_dir: Directory to save results
+        test_dataset: Test dataset
+        dataset_info: Dataset information
+        n_samples: Number of samples to plot
+        seed: Random seed (unused, kept for compatibility)
+    """
+
+    # log_dir is now the complete path to the model directory
+    model_log_dir = log_dir
 
     # Check if model exists
     if not os.path.exists(os.path.join(model_log_dir, "params.pth")):
@@ -373,7 +385,7 @@ def plot_model_results(
     )
 
     # Load forward model for re-simulation
-    forward_model = load_forward_model(log_dir=model_log_dir, device=device)
+    forward_model = load_forward_model(log_dir=model_log_dir, forward_model_name='b2b_nonlinear', device=device)
 
     # Use results_dir directly (already includes dataset/model path from plot_all.sh)
     # model_results_dir = os.path.join(results_dir, model_name)
@@ -419,7 +431,7 @@ parser.add_argument(
     "--log_dir",
     type=str,
     default="/workspaces/b2b-operator-inverse/logs",
-    help="Base log directory",
+    help="Complete path to model directory (e.g., /path/to/logs/dataset/model/seed_1)",
 )
 parser.add_argument(
     "--results_dir",
@@ -439,9 +451,8 @@ parser.add_argument(
 parser.add_argument(
     "--model",
     type=str,
-    required=False,
-    default=None,
-    help="Model name to plot results for. If not specified, plots all available models.",
+    required=True,
+    help="Model name to plot results for",
 )
 
 args = parser.parse_args()
@@ -451,88 +462,41 @@ torch.manual_seed(args.seed)
 random.seed(args.seed)
 np.random.seed(args.seed)
 
-# Hardcoded dataset
-dataset = "burgers_1d"
+# log_dir is now the complete path to the model directory
+log_dir = args.log_dir
+results_dir = args.results_dir
+model_name = args.model
 
-# Construct paths
-log_dir = os.path.join(args.log_dir, dataset)
-results_dir = os.path.join(args.results_dir)
+# Check if model directory exists
+if not os.path.exists(os.path.join(log_dir, "params.pth")):
+    print(f"✗ Model not found at {log_dir}")
+    exit(1)
 
-# Determine which models to plot
-if args.model is not None:
-    # Single model specified
-    models_to_plot = [args.model]
-else:
-    # Auto-detect available models
-    models_to_plot = []
-    if os.path.exists(log_dir):
-        for model_name in MODELS:
-            model_path = os.path.join(
-                log_dir, model_name, f"seed_{args.seed}", "params.pth"
-            )
-            if os.path.exists(model_path):
-                models_to_plot.append(model_name)
-
-    if not models_to_plot:
-        print(f"ERROR: No trained models found in {log_dir}")
-        exit(1)
-    else:
-        print(
-            f"Found {len(models_to_plot)} models to plot: {', '.join(models_to_plot)}"
-        )
-
-# Load dataset using the first available model's parameters
-first_model = models_to_plot[0]
-temp_log_dir = os.path.join(log_dir, first_model, f"seed_{args.seed}")
-temp_params = torch.load(os.path.join(temp_log_dir, "params.pth"), weights_only=False)
-
+print(f"Loading model parameters and dataset...")
+# Load dataset using model's parameters
+params = torch.load(os.path.join(log_dir, "params.pth"), weights_only=False)
 test_dataset, dataset_info = load_dataset(
-    temp_params.dataset, temp_params, device, split="test", return_info=True
+    params.dataset, params, device, split="test", return_info=True
+)
+print(f"✓ Loaded {len(test_dataset)} test samples")
+
+# Create results directory
+os.makedirs(results_dir, exist_ok=True)
+
+print(f"Generating {args.n_samples} sample plots...")
+# Plot results for this model
+success = plot_model_results(
+    model_name=model_name,
+    log_dir=log_dir,
+    results_dir=results_dir,
+    test_dataset=test_dataset,
+    dataset_info=dataset_info,
+    n_samples=args.n_samples,
+    seed=args.seed,
 )
 
-# Plot results for all selected models
-total_success = 0
-total_failed = []
-
-for model_name in models_to_plot:
-    # Check if the model exists
-    model_path = os.path.join(log_dir, model_name, f"seed_{args.seed}", "params.pth")
-    if not os.path.exists(model_path):
-        print(f"WARNING: Skipping {model_name} - model not found at {model_path}")
-        total_failed.append(model_name)
-        continue
-
-    # Use results_dir directly (already includes model path from plot_all.sh)
-    os.makedirs(results_dir, exist_ok=True)
-
-    # Plot results for this model
-    success = plot_model_results(
-        model_name=model_name,
-        log_dir=log_dir,
-        results_dir=results_dir,  # Use directory passed from plot_all.sh
-        test_dataset=test_dataset,
-        dataset_info=dataset_info,
-        n_samples=args.n_samples,
-        seed=args.seed,
-    )
-
-    if success:
-        print(
-            f"✓ Plotted {model_name} ({args.n_samples} samples) → {results_dir}"
-        )
-        total_success += 1
-    else:
-        print(f"✗ Failed to plot {model_name}")
-        total_failed.append(model_name)
-
-# Print summary
-print(f"\n{'='*50}")
-if total_success > 0:
-    print(f"SUCCESS: Plotted {total_success} model(s)")
-if total_failed:
-    print(
-        f"FAILED: Could not plot {len(total_failed)} model(s): {', '.join(total_failed)}"
-    )
-
-if total_success == 0:
+if success:
+    print(f"✓ Generated {args.n_samples} plots → {results_dir}")
+else:
+    print(f"✗ Plot generation failed")
     exit(1)

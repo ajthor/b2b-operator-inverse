@@ -5,7 +5,7 @@ import numpy as np
 
 import torch
 
-from inverse_neural_operator.models.function_encoder import (
+from inverse_neural_operator.b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
@@ -21,37 +21,46 @@ torch.manual_seed(1)
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Plot results.")
-parser.add_argument("--model", type=str, default="variational_autoencoder")
+parser.add_argument("--model", type=str, required=True, help="Model name to plot results for")
 parser.add_argument(
-    "--log_dir", type=str, default="/store/at46867/b2b_operator_inverse"
+    "--log_dir",
+    type=str,
+    default="/store/at46867/b2b_operator_inverse",
+    help="Complete path to model directory (e.g., /path/to/logs/dataset/model/seed_1)"
 )
 parser.add_argument(
-    "--results_dir", type=str, default="results/burgers_1d/variational_autoencoder"
+    "--results_dir", type=str, default="results/fwi/variational_autoencoder"
 )
 
 args = parser.parse_args()
 
+# log_dir is now the complete path to the model directory
 log_dir = args.log_dir
 model_name = args.model
-dataset = "fwi"
 results_dir = args.results_dir
 
-# Construct path to dataset directory
-log_dir = os.path.join(log_dir, dataset)
+# Check if model directory exists
+if not os.path.exists(os.path.join(log_dir, "params.pth")):
+    print(f"✗ Model not found at {log_dir}")
+    exit(1)
 
-# Load params from specific model/seed
-model_log_dir = os.path.join(log_dir, model_name, "seed_1")
-params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
-
+print(f"Loading model parameters and dataset...")
+# Load params
+params = torch.load(os.path.join(log_dir, "params.pth"), weights_only=False)
 
 # Load dataset
 test_dataset, dataset_info = load_dataset(
     params.dataset, params, device, split="test", return_info=True
 )
+print(f"✓ Loaded {len(test_dataset)} test samples")
 
+# Create results directory
+os.makedirs(results_dir, exist_ok=True)
+
+print(f"Loading models and generating plots...")
 # Load models
 input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
-    model_log_dir,
+    log_dir,
     dataset_info,
     params,
     device=device,
@@ -244,9 +253,9 @@ def plot_multiple_samples(
 # Try to load forward model for re-simulation (may not exist)
 forward_model = None
 try:
-    from models.load_model import load_forward_model
+    from b2b.load_model import load_forward_model
 
-    forward_model = load_forward_model(log_dir=model_log_dir, device=device)
+    forward_model = load_forward_model(log_dir=log_dir, forward_model_name='b2b_nonlinear', device=device)
     print("Loaded forward model for re-simulation")
 except (FileNotFoundError, ImportError) as e:
     print(f"Forward model not available: {e}")
@@ -264,4 +273,4 @@ plot_multiple_samples(
     save_dir=results_dir,
 )
 
-print(f"SUCCESS: Plotted {model_name} FWI results")
+print(f"✓ Generated FWI plots → {results_dir}")

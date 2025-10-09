@@ -216,11 +216,13 @@ class MixtureDensityNetwork(torch.nn.Module):
         y = (y_hard - y_soft).detach() + y_soft  # (S, B, K)
 
         # Reparameterized Gaussian sampling per component
-        eps = torch.randn(num_samples, batch_size, K, D, device=mu.device, dtype=mu.dtype)
+        eps = torch.randn(
+            num_samples, batch_size, K, D, device=mu.device, dtype=mu.dtype
+        )
         # z_k = mu_k + L_k @ eps for each component k
-        z = mu + torch.matmul(
-            cholesky_factors, eps.unsqueeze(-1)
-        ).squeeze(-1)  # (S, B, K, D)
+        z = mu + torch.matmul(cholesky_factors, eps.unsqueeze(-1)).squeeze(
+            -1
+        )  # (S, B, K, D)
 
         # Select the sampled component using y (soft weights with straight-through)
         y_expanded = y.unsqueeze(-1)  # (S, B, K, 1)
@@ -371,33 +373,35 @@ def loss_function(
 
     total_loss = nll_loss
 
-    # Add forward consistency loss if forward_model is provided
-    if forward_model is not None:
-        with torch.no_grad():
-            forward_model.eval()
+    # # Add forward consistency loss if forward_model is provided
+    # if forward_model is not None:
+    #     with torch.no_grad():
+    #         forward_model.eval()
 
-        # Reparameterized sampling: alpha ~ p(alpha|beta) with gradients
-        # Shape: (num_samples, batch_size, alpha_dim)
-        alpha_samples = model.rsample(beta, num_samples=4)
+    #     # Reparameterized sampling: alpha ~ p(alpha|beta) with gradients
+    #     # Shape: (num_samples, batch_size, alpha_dim)
+    #     alpha_samples = model.rsample(beta, num_samples=4)
 
-        # Reshape for forward model: (num_samples * batch_size, alpha_dim)
-        num_samples, batch_size, alpha_dim = alpha_samples.shape
-        alpha_flat = alpha_samples.reshape(num_samples * batch_size, alpha_dim)
+    #     # Reshape for forward model: (num_samples * batch_size, alpha_dim)
+    #     num_samples, batch_size, alpha_dim = alpha_samples.shape
+    #     alpha_flat = alpha_samples.reshape(num_samples * batch_size, alpha_dim)
 
-        # Re-simulate forward through the forward operator
-        beta_pred_flat = forward_model(alpha_flat)  # (num_samples * batch_size, beta_dim)
+    #     # Re-simulate forward through the forward operator
+    #     beta_pred_flat = forward_model(
+    #         alpha_flat
+    #     )  # (num_samples * batch_size, beta_dim)
 
-        # Reshape back: (num_samples, batch_size, beta_dim)
-        beta_pred = beta_pred_flat.reshape(num_samples, batch_size, -1)
+    #     # Reshape back: (num_samples, batch_size, beta_dim)
+    #     beta_pred = beta_pred_flat.reshape(num_samples, batch_size, -1)
 
-        # Measure consistency: predicted beta should match observed beta
-        # Expand beta to match samples dimension and compute MSE across all samples
-        beta_expanded = beta.unsqueeze(0).expand(num_samples, -1, -1)
-        forward_consistency_loss = torch.nn.functional.mse_loss(
-            beta_pred, beta_expanded, reduction="mean"
-        )
+    #     # Measure consistency: predicted beta should match observed beta
+    #     # Expand beta to match samples dimension and compute MSE across all samples
+    #     beta_expanded = beta.unsqueeze(0).expand(num_samples, -1, -1)
+    #     forward_consistency_loss = torch.nn.functional.mse_loss(
+    #         beta_pred, beta_expanded, reduction="mean"
+    #     )
 
-        total_loss = total_loss + forward_consistency_loss
+    #     total_loss = total_loss + forward_consistency_loss
 
     return total_loss
 
@@ -524,7 +528,7 @@ def resimulation_loss(
     input_function_encoder,
     output_function_encoder,
     forward_model,
-    n_samples=5,
+    n_samples=10,
 ):
     """
     Compute re-simulation loss for Mixture Density Network.

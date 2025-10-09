@@ -7,7 +7,7 @@ set -euo pipefail
 # DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d)
 # MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
 DATASETS=(wave_scattering)
-MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine)
+MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic)
 
 # Base directory for experiment logs - same as in run_all.sh
 LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
@@ -55,37 +55,72 @@ if [[ -n "$MODEL" ]]; then
   MODELS=("$MODEL")
 fi
 
-echo "Starting plots generation for datasets: ${DATASETS[*]} and models: ${MODELS[*]}..."
+# Calculate total number of plot jobs
+TOTAL_JOBS=$((${#DATASETS[@]} * ${#MODELS[@]}))
+CURRENT_JOB=0
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Starting plot generation"
+echo "  Datasets: ${DATASETS[*]}"
+echo "  Models: ${MODELS[*]}"
+echo "  Total jobs: $TOTAL_JOBS"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
 
 #── MAIN LOOP ────────────────────────────────────────────
 for dataset in "${DATASETS[@]}"; do
   for model in "${MODELS[@]}"; do
-    echo "Plotting results for dataset: $dataset, model: $model"
-    
-    # Create results directory if it doesn't exist
+    CURRENT_JOB=$((CURRENT_JOB + 1))
+
+    echo "───────────────────────────────────────────────────────────────"
+    echo "[$CURRENT_JOB/$TOTAL_JOBS] Processing: $dataset/$model"
+    echo "───────────────────────────────────────────────────────────────"
+
+    # Construct complete paths for model logs and results
+    MODEL_LOG_DIR="$LOG_BASE_DIR/$dataset/$model/seed_1"
     RESULTS_DIR="$RESULTS_BASE_DIR/$dataset/$model"
+
+    # Create results directory if it doesn't exist
     if [ ! -d "$RESULTS_DIR" ]; then
-      echo "Creating results directory: $RESULTS_DIR"
       mkdir -p "$RESULTS_DIR"
+      echo "  ✓ Created results directory: $RESULTS_DIR"
     fi
+
+    # Check if model exists
+    if [ ! -f "$MODEL_LOG_DIR/params.pth" ]; then
+      echo "  ⚠ Skipping: Model not found at $MODEL_LOG_DIR"
+      echo ""
+      continue
+    fi
+
     # Select plotting function based on dataset
     case "$dataset" in
       burgers_1d)
-      python inverse_neural_operator/plots/plot_burgers.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR"
-      
+      echo "  → Generating standard plots..."
+      if python inverse_neural_operator/plots/plot_burgers.py \
+        --model "$model" \
+        --log_dir "$MODEL_LOG_DIR" \
+        --results_dir "$RESULTS_DIR" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Standard plots completed"
+      else
+        echo "  ✗ Standard plots failed"
+      fi
+
       # Also generate probabilistic plots
-      python inverse_neural_operator/plots/plot_burgers_probabilistic.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR/probabilistic"
+      echo "  → Generating probabilistic plots..."
+      if python inverse_neural_operator/plots/plot_burgers_probabilistic.py \
+        --model "$model" \
+        --log_dir "$MODEL_LOG_DIR" \
+        --results_dir "$RESULTS_DIR/probabilistic" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Probabilistic plots completed"
+      else
+        echo "  ✗ Probabilistic plots failed"
+      fi
       
       # # Generate publication-quality plots
       # python inverse_neural_operator/plots/plot_burgers_publication.py \
       # --model "$model" \
-      # --log_dir "$LOG_BASE_DIR" \
+      # --log_dir "$MODEL_LOG_DIR" \
       # --results_dir "$RESULTS_DIR/publication"
       
       # # Generate comparison plot (only for first model to avoid duplicates)
@@ -96,68 +131,107 @@ for dataset in "${DATASETS[@]}"; do
       # fi
       ;;
       chladni)
-      python inverse_neural_operator/plots/plot_chladni.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR"
+      echo "  → Generating standard plots..."
+      if python inverse_neural_operator/plots/plot_chladni.py \
+        --model "$model" \
+        --log_dir "$MODEL_LOG_DIR" \
+        --results_dir "$RESULTS_DIR" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Standard plots completed"
+      else
+        echo "  ✗ Standard plots failed"
+      fi
       ;;
       darcy_1d)
-      python inverse_neural_operator/plots/plot_darcy.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR"
-      
+      echo "  → Generating standard plots..."
+      if python inverse_neural_operator/plots/plot_darcy.py \
+        --model "$model" \
+        --log_dir "$MODEL_LOG_DIR" \
+        --results_dir "$RESULTS_DIR" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Standard plots completed"
+      else
+        echo "  ✗ Standard plots failed"
+      fi
+
       # Also generate probabilistic plots
-      python inverse_neural_operator/plots/plot_darcy_probabilistic.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR/probabilistic"
-      
+      echo "  → Generating probabilistic plots..."
+      if python inverse_neural_operator/plots/plot_darcy_probabilistic.py \
+        --model "$model" \
+        --log_dir "$MODEL_LOG_DIR" \
+        --results_dir "$RESULTS_DIR/probabilistic" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Probabilistic plots completed"
+      else
+        echo "  ✗ Probabilistic plots failed"
+      fi
+
       # # Generate publication-quality plots
       # python inverse_neural_operator/plots/plot_darcy_publication.py \
       # --model "$model" \
-      # --log_dir "$LOG_BASE_DIR" \
+      # --log_dir "$MODEL_LOG_DIR" \
       # --results_dir "$RESULTS_DIR/publication"
       ;;
       fwi)
-      python inverse_neural_operator/plots/plot_fwi.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR"
+      echo "  → Generating standard plots..."
+      if python inverse_neural_operator/plots/plot_fwi.py \
+        --model "$model" \
+        --log_dir "$MODEL_LOG_DIR" \
+        --results_dir "$RESULTS_DIR" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Standard plots completed"
+      else
+        echo "  ✗ Standard plots failed"
+      fi
       ;;
       parametric_heat)
-      python inverse_neural_operator/plots/plot_parametric_heat.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR"
+      echo "  → Generating standard plots..."
+      if python inverse_neural_operator/plots/plot_parametric_heat.py \
+        --model "$model" \
+        --log_dir "$MODEL_LOG_DIR" \
+        --results_dir "$RESULTS_DIR" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Standard plots completed"
+      else
+        echo "  ✗ Standard plots failed"
+      fi
       ;;
       wave_scattering)
-      python inverse_neural_operator/plots/plot_wave_scattering.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR"
-      
+      echo "  → Generating standard plots..."
+      if python inverse_neural_operator/plots/plot_wave_scattering.py \
+        --model "$model" \
+        --log_dir "$MODEL_LOG_DIR" \
+        --results_dir "$RESULTS_DIR" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Standard plots completed"
+      else
+        echo "  ✗ Standard plots failed"
+      fi
+
       # Also generate probabilistic plots
-      python inverse_neural_operator/plots/plot_wave_scattering_probabilistic.py \
-      --model "$model" \
-      --log_dir "$LOG_BASE_DIR" \
-      --results_dir "$RESULTS_DIR/probabilistic"
-      
+      echo "  → Generating probabilistic plots..."
+      if python inverse_neural_operator/plots/plot_wave_scattering_probabilistic.py \
+        --model "$model" \
+        --log_dir "$MODEL_LOG_DIR" \
+        --results_dir "$RESULTS_DIR/probabilistic" 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Probabilistic plots completed"
+      else
+        echo "  ✗ Probabilistic plots failed"
+      fi
+
       # # Generate publication-quality plots
       # python inverse_neural_operator/plots/plot_wave_scattering_publication.py \
       # --model "$model" \
-      # --log_dir "$LOG_BASE_DIR" \
+      # --log_dir "$MODEL_LOG_DIR" \
       # --results_dir "$RESULTS_DIR/publication"
       ;;
       *)
-      echo "Unknown dataset: $dataset"
+      echo "  ✗ Unknown dataset: $dataset"
       exit 1
       ;;
     esac
 
-    
-    echo "Completed plots for $dataset/$model"
+    echo ""
   done
 done
 
-echo "done"
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Plot generation completed"
+echo "  Processed $CURRENT_JOB/$TOTAL_JOBS jobs"
+echo "  Results saved to: $RESULTS_BASE_DIR"
+echo "═══════════════════════════════════════════════════════════════"
