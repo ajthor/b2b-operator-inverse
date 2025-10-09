@@ -202,7 +202,7 @@ def load_checkpoint(
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
     """
     Train primarily on beta -> alpha via inverse, measured in function space.
-    Keep cINN forward latent regularization minimal (additive: log-det = 0).
+    No latent regularizer is applied to avoid conflicting objectives with the deterministic inverse.
     """
     X, u, Y, s = batch
 
@@ -210,8 +210,7 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     alpha_gt, _ = input_function_encoder.compute_coefficients(X, u)
     beta_gt, _ = output_function_encoder.compute_coefficients(Y, s)
 
-    # Inverse loss: beta -> alpha -> u_pred vs u_gt
-    # Deterministic inverse using z = 0
+    # Inverse loss: beta -> alpha with deterministic z = 0
     batch_size = beta_gt.shape[0]
     alpha_dim = model.coupling_layers[0].input_size
     z_zero = torch.zeros(
@@ -224,10 +223,6 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     # u_pred = input_function_encoder(X, alpha_pred)
     # inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
-    # Optional weak regularization: encourage forward z to be small
-    z_fwd = model.forward(alpha_gt, beta_gt)
-    latent_reg = 0.5 * torch.mean(z_fwd**2)
-
     # # Forward prediction loss: alpha_gt -> z -> alpha_reconstructed vs alpha_gt
     # # Since cINN maps alpha to latent z conditioned on beta, we test round-trip consistency
     # z_pred = model.forward(alpha_gt, beta_gt)
@@ -237,7 +232,7 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     # )
 
     # Combine all losses
-    return inverse_loss + latent_reg
+    return inverse_loss
 
 
 def train(

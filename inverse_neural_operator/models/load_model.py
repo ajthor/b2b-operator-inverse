@@ -15,58 +15,12 @@ from b2b.function_encoder import (
 from b2b.load_model import (
     load_function_encoder_params,
     load_function_encoders,
-    load_forward_model,
 )
-from b2b.create_model import create_forward_model
 from models.create_model import create_model
 from utils.imports import import_model_functions
 
-
-def load_forward_models(
-    log_dir: str,
-    dataset_info: dict,
-    params: dict,
-    device: str = "cpu",
-):
-    """
-    Load pre-trained forward models and function encoders from disk.
-
-    Args:
-        log_dir (str): Directory containing saved model files
-        dataset_info (dict): Dataset information from dataset.get_info()
-        params: Parameters object containing model configuration
-        device (str): Device to load models on
-
-    Returns:
-        tuple: (input_function_encoder, output_function_encoder, model, evaluate_function)
-    """
-    # Load function encoders using shared utility
-    input_function_encoder, output_function_encoder = load_function_encoders(
-        log_dir, dataset_info, params, device
-    )
-
-    # Load function encoder parameters to get sizes for model creation
-    input_params, output_params = load_function_encoder_params(log_dir)
-
-    # Create forward model using the create_forward_model utility
-    model, _ = create_forward_model(
-        params.model,
-        params,
-        input_params.n_basis,  # input size (alpha coefficients)
-        output_params.n_basis,  # output size (beta coefficients)
-        device,
-    )
-
-    # Load the trained forward model weights and get the appropriate load/evaluate functions
-    forward_model_path = os.path.join(log_dir, f"forward_{params.model}.pth")
-
-    # Get the appropriate load and evaluate functions for the forward model type
-    load, evaluate = import_model_functions(params.model, "load", "evaluate")
-
-    # Load the trained weights into the model
-    model = load(model=model, path=forward_model_path, device=device)
-
-    return input_function_encoder, output_function_encoder, model, evaluate
+# Note: Forward model loading (load_forward_model) should be imported directly from b2b.load_model
+# This keeps the responsibility clear - all B2B-specific loading logic lives in b2b.load_model
 
 
 def load_models(

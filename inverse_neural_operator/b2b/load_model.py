@@ -96,49 +96,38 @@ def load_function_encoders(
     return input_function_encoder, output_function_encoder
 
 
-def load_forward_model(log_dir: str, device: str = "cpu", forward_model_name: str = None):
+def load_forward_model(log_dir: str, forward_model_name: str, device: str = "cpu"):
     """
     Load the pre-trained forward B2B operator from the specified directory.
 
     Args:
         log_dir (str): Directory containing the forward model checkpoint and params
+        forward_model_name (str): Forward model name (e.g., 'b2b_nonlinear', 'b2b_linear')
         device (str): Device to load the model on
-        forward_model_name (str): Optional explicit forward model name (e.g., 'b2b_nonlinear', 'b2b_linear').
-                                  If not provided, will try to read from params.pth.
 
     Returns:
         torch.nn.Module: Loaded forward B2B operator
+
+    Raises:
+        FileNotFoundError: If the forward model checkpoint is not found
     """
     # Load function encoder parameters to get sizes
     input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
 
-    # Determine which forward model to load
-    if forward_model_name is None:
-        # Load params to determine which forward model to load
-        params_path = os.path.join(log_dir, "params.pth")
-        if not os.path.exists(params_path):
-            raise FileNotFoundError(
-                f"Params file not found at {params_path}"
-            )
-
+    # Load params for model configuration
+    params_path = os.path.join(log_dir, "params.pth")
+    if os.path.exists(params_path):
         params = torch.load(params_path, weights_only=False)
-        forward_model_name = params.model
+        # Override the model name with the forward model name
+        params.model = forward_model_name
     else:
-        # Create a minimal params object with the specified forward model name
-        # We need to load the actual params to get hidden_sizes and other config
-        params_path = os.path.join(log_dir, "params.pth")
-        if os.path.exists(params_path):
-            params = torch.load(params_path, weights_only=False)
-            # Override the model name with the explicit one provided
-            params.model = forward_model_name
-        else:
-            # Fallback: create minimal params if params.pth doesn't exist
-            class MinimalParams:
-                def __init__(self, model_name):
-                    self.model = model_name
-                    self.hidden_sizes = [256, 256, 256]  # Default
-                    self.learning_rate = 0.001
-            params = MinimalParams(forward_model_name)
+        # Fallback: create minimal params if params.pth doesn't exist
+        class MinimalParams:
+            def __init__(self, model_name):
+                self.model = model_name
+                self.hidden_sizes = [256, 256, 256]  # Default
+                self.learning_rate = 0.001
+        params = MinimalParams(forward_model_name)
 
     # The forward model checkpoint is named forward_{model_name}.pth
     forward_model_path = os.path.join(log_dir, f"forward_{forward_model_name}.pth")

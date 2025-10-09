@@ -222,7 +222,8 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     # log p(z) for standard normal: -0.5 * ||z||^2 - 0.5 * dim * log(2π)
     # We minimize -log p(z) = 0.5 * ||z||^2 + constant
     # For additive coupling, log|det J| = 0, so no change-of-variables term
-    nll_loss = 0.5 * torch.mean(z ** 2)
+    # Sum over latent dimensions so the prior keeps its intended scale
+    nll_loss = 0.5 * torch.mean(torch.sum(z ** 2, dim=-1))
 
     return nll_loss
 

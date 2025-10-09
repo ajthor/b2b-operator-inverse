@@ -19,6 +19,7 @@ from utils.device import get_device, set_seed
 from utils.params import save_params
 from utils.checkpoints import setup_checkpoint_dir
 from utils.args import load_defaults_from_yaml
+from data.load_dataset import load_dataset
 
 torch.set_float32_matmul_precision("high")
 
@@ -91,8 +92,6 @@ save_params(params, log_dir, filename_prefix=f"{model_name}_params")
 params.checkpoint_dir = setup_checkpoint_dir(params.checkpoint_dir, log_dir)
 
 # Load dataset using utility
-from data.load_dataset import load_dataset
-
 model_train_dataset = load_dataset(params.dataset, params, device, split="train")
 model_test_dataset = load_dataset(params.dataset, params, device, split="test")
 
@@ -135,9 +134,9 @@ function_encoder = create_function_encoder(
     hidden_sizes=params.hidden_sizes,
     output_size=output_size,
     n_basis=params.n_basis,
-    inner_product=(
-        memory_efficient_inner_product if params.dataset in ["fwi"] else None
-    ),
+    # inner_product=(
+    #     memory_efficient_inner_product if params.dataset in ["fwi"] else None
+    # ),
     regularization=params.regularization,
 )
 # function_encoder = torch.compile(function_encoder)

@@ -11,6 +11,15 @@ from b2b.function_encoder import (
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
+from b2b.load_model import load_forward_model
+from b2b.load_model import (
+    load_function_encoders,
+    load_function_encoder_params,
+)
+
+from data.load_dataset import load_dataset
+from models.create_model import create_model
+
 from utils.device import get_device, set_seed
 from utils.params import save_params
 from utils.checkpoints import setup_checkpoint_dir
@@ -28,7 +37,11 @@ parser.add_argument("--dataset", type=str)
 # Model args
 parser.add_argument("--model", type=str)
 parser.add_argument("--hidden_sizes", type=int, nargs="+")
-parser.add_argument("--forward_model", type=str, help="Forward model name for re-simulation loss (e.g., b2b_nonlinear, b2b_linear)")
+parser.add_argument(
+    "--forward_model",
+    type=str,
+    help="Forward model name for re-simulation loss (e.g., b2b_nonlinear, b2b_linear)",
+)
 
 # Training args
 parser.add_argument("--batch_size", type=int)
@@ -72,24 +85,12 @@ save_params(params, log_dir)
 params.checkpoint_dir = setup_checkpoint_dir(params.checkpoint_dir, log_dir)
 
 # Load dataset using utility
-from data.load_dataset import load_dataset
-
 train_dataset = load_dataset(params.dataset, params, device, split="train")
 test_dataset = load_dataset(params.dataset, params, device, split="test")
 dataset_info = train_dataset.get_info()
 
-# Create model using utility
-from models.create_model import create_model
-
 # Get the appropriate train/save functions for the model
 train_model, save_model = import_model_functions(params.model, "train", "save")
-
-# Always load function encoders and forward model for consistency
-from models.load_model import (
-    load_function_encoders,
-    load_function_encoder_params,
-    load_forward_model,
-)
 
 # Load function encoder parameters to get sizes for model creation
 input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
@@ -111,7 +112,9 @@ input_function_encoder, output_function_encoder = load_function_encoders(
 
 # Load forward model (all models will receive it, some may not use it)
 try:
-    forward_model = load_forward_model(log_dir, device=device, forward_model_name=params.forward_model)
+    forward_model = load_forward_model(
+        log_dir, device=device, forward_model_name=params.forward_model
+    )
     print(f"Loaded forward model '{params.forward_model}' for re-simulation loss")
 except Exception as e:
     print(f"Warning: Could not load forward model for re-simulation loss: {e}")
@@ -122,12 +125,12 @@ except Exception as e:
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=params.batch_size,
-    # shuffle=True,
+    shuffle=True,
 )
 test_dataloader = DataLoader(
     test_dataset,
     batch_size=params.batch_size,
-    # shuffle=True,
+    shuffle=True,
 )
 
 # Single consistent training function call for all models
