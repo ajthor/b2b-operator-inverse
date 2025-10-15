@@ -4,6 +4,8 @@ To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator
 """
 
 import os
+import sys
+from pathlib import Path
 import argparse
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,15 +13,29 @@ import random
 
 import torch
 
+# Ensure project root and package root are on sys.path when running as a script
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = PROJECT_ROOT / "inverse_neural_operator"
+for path in (PROJECT_ROOT, PACKAGE_ROOT):
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+
+DEFAULT_DATASET = "darcy_1d"
+DEFAULT_MODEL_NAME = "nonlinear"
+DEFAULT_SEED = 1
+DEFAULT_LOG_DIR = PROJECT_ROOT / "logs" / DEFAULT_DATASET / DEFAULT_MODEL_NAME / f"seed_{DEFAULT_SEED}"
+DEFAULT_RESULTS_DIR = PROJECT_ROOT / "results" / "darcy_plots"
+
 from inverse_neural_operator.b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
 
-from data.load_dataset import load_dataset
-from models.load_model import load_models
-from b2b.load_model import load_forward_model
+from inverse_neural_operator.data.load_dataset import load_dataset
+from inverse_neural_operator.models.load_model import load_models
+from inverse_neural_operator.b2b.load_model import load_forward_model
 
 device = "cpu"
 
@@ -27,6 +43,69 @@ torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
 
+
+def apply_inverse_noise(tensor: torch.Tensor, std: float) -> torch.Tensor:
+    """Add zero-mean Gaussian noise for inverse inference without mutating input."""
+    if std <= 0:
+        return tensor
+    return tensor + torch.randn_like(tensor) * std
+
+
+def compute_mse_errors(
+    model,
+    evaluate_fn,
+    input_function_encoder,
+    output_function_encoder,
+    forward_model,
+    dataset,
+    inverse_noise_std: float = 0.0,
+):
+    """Compute dataset-wide MSE for inverse prediction and forward re-simulation."""
+    model.eval()
+    forward_model.eval()
+
+    inverse_sq_error = 0.0
+    forward_sq_error = 0.0
+    inverse_count = 0
+    forward_count = 0
+
+    with torch.no_grad():
+        for sample in dataset:
+            X, u_true, Y, s_observed = sample
+
+            X = X.to(device)
+            u_true = u_true.to(device)
+            Y = Y.to(device)
+            s_observed = s_observed.to(device)
+
+            s_input = apply_inverse_noise(s_observed, inverse_noise_std)
+
+            point = (
+                X.unsqueeze(0),
+                u_true.unsqueeze(0),
+                Y.unsqueeze(0),
+                s_input.unsqueeze(0),
+            )
+            u_pred, _ = evaluate_fn(
+                model, point, input_function_encoder, output_function_encoder
+            )
+            u_pred = u_pred.squeeze(0)
+
+            alpha, _ = input_function_encoder.compute_coefficients(
+                X.unsqueeze(0), u_pred.unsqueeze(0)
+            )
+            beta_pred = forward_model.forward(alpha)
+            s_resim = output_function_encoder(Y.unsqueeze(0), beta_pred).squeeze(0)
+
+            inverse_sq_error += torch.sum((u_pred - u_true) ** 2).item()
+            forward_sq_error += torch.sum((s_resim - s_observed) ** 2).item()
+            inverse_count += u_true.numel()
+            forward_count += s_observed.numel()
+
+    inverse_mse = inverse_sq_error / inverse_count if inverse_count else 0.0
+    forward_mse = forward_sq_error / forward_count if forward_count else 0.0
+
+    return inverse_mse, forward_mse
 
 
 def plot_darcy_sample(
@@ -39,6 +118,7 @@ def plot_darcy_sample(
     sample_idx,
     model_name,
     save_dir=None,
+    inverse_noise_std: float = 0.0,
 ):
     """
     Plot a single Darcy sample with observed output, true vs predicted input, and re-simulation.
@@ -54,13 +134,15 @@ def plot_darcy_sample(
     Y = Y.to(device)
     s_observed = s_observed.to(device)
 
+    s_input = apply_inverse_noise(s_observed, inverse_noise_std)
+
     # Get model prediction for input
     with torch.no_grad():
         point = (
             X.unsqueeze(0),
             u_true.unsqueeze(0),
             Y.unsqueeze(0),
-            s_observed.unsqueeze(0),
+            s_input.unsqueeze(0),
         )
         u_pred, _ = evaluate_fn(
             model, point, input_function_encoder, output_function_encoder
@@ -88,6 +170,7 @@ def plot_darcy_sample(
     u_true_np = u_true.squeeze(-1).cpu().numpy()
     u_pred_np = u_pred.squeeze(-1).cpu().numpy()
     s_observed_np = s_observed.squeeze(-1).cpu().numpy()
+    s_input_np = s_input.squeeze(-1).cpu().numpy()
     s_resim_np = s_resim.squeeze(-1).cpu().numpy()
     X_np = X.squeeze(-1).cpu().numpy()
     Y_np = Y.squeeze(-1).cpu().numpy()
@@ -113,6 +196,15 @@ def plot_darcy_sample(
         axes[0].plot(
             y_coords, s_observed_np, "g-", label="Observed Output s(y)", linewidth=2
         )
+        if inverse_noise_std > 0:
+            axes[0].plot(
+                y_coords,
+                s_input_np,
+                "k--",
+                label="Noisy Measurement",
+                linewidth=1.5,
+                alpha=0.9,
+            )
         axes[0].set_title("Observed Output Function s(y)", fontsize=12)
         axes[0].set_xlabel("y")
         axes[0].set_ylabel("s(y)")
@@ -235,6 +327,7 @@ def plot_multiple_samples(
     model_name,
     n_samples=3,
     save_dir=None,
+    inverse_noise_std: float = 0.0,
 ):
     """Plot multiple random samples from the test set."""
 
@@ -255,11 +348,18 @@ def plot_multiple_samples(
             idx,
             model_name,
             save_dir,
+            inverse_noise_std=inverse_noise_std,
         )
 
 
 def plot_model_results(
-    model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3
+    model_name,
+    log_dir,
+    results_dir,
+    test_dataset,
+    dataset_info,
+    n_samples=3,
+    inverse_noise_std: float = 0.0,
 ):
     """Plot results for a single model.
 
@@ -289,6 +389,20 @@ def plot_model_results(
     # Load forward model for re-simulation
     forward_model = load_forward_model(log_dir=model_log_dir, forward_model_name='b2b_nonlinear', device=device)
 
+    inverse_mse, forward_mse = compute_mse_errors(
+        model=model,
+        evaluate_fn=evaluate_fn,
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+        forward_model=forward_model,
+        dataset=test_dataset,
+        inverse_noise_std=inverse_noise_std,
+    )
+    print(f"Inverse prediction MSE (û vs u): {inverse_mse:.6f}")
+    print(f"Forward prediction MSE (ŝ vs s): {forward_mse:.6f}")
+    if inverse_noise_std > 0:
+        print(f"Applied Gaussian noise with std={inverse_noise_std:.4f} to inverse inputs.")
+
     # Plot results
     plot_multiple_samples(
         model=model,
@@ -300,6 +414,7 @@ def plot_model_results(
         model_name=model_name,
         n_samples=n_samples,
         save_dir=results_dir,
+        inverse_noise_std=inverse_noise_std,
     )
 
 
@@ -308,13 +423,13 @@ parser = argparse.ArgumentParser(description="Plot Darcy 1D results for all mode
 parser.add_argument(
     "--log_dir",
     type=str,
-    default="/workspaces/b2b-operator-inverse/logs",
-    help="Complete path to model directory (e.g., /path/to/logs/dataset/model/seed_1)",
+    default=None,
+    help="Complete path to model directory (defaults to logs/darcy_1d/<model>/seed_1)",
 )
 parser.add_argument(
     "--results_dir",
     type=str,
-    default="results/darcy_plots",
+    default=None,
     help="Results directory for saving plots",
 )
 parser.add_argument(
@@ -327,10 +442,33 @@ parser.add_argument(
     "--seed", type=int, default=1, help="Random seed for reproducibility"
 )
 parser.add_argument(
-    "--model", type=str, required=True, help="Model name to plot results for"
+    "--model", type=str, default=None, help="Model name to plot results for"
+)
+parser.add_argument(
+    "--inverse_noise_std",
+    type=float,
+    default=0.0,
+    help="Stddev of Gaussian noise added to inverse-model inputs",
 )
 
 args = parser.parse_args()
+
+if args.model is None:
+    args.model = DEFAULT_MODEL_NAME
+
+if args.log_dir is None:
+    args.log_dir = str(
+        PROJECT_ROOT
+        / "logs"
+        / DEFAULT_DATASET
+        / args.model
+        / f"seed_{DEFAULT_SEED}"
+    )
+
+if args.results_dir is None:
+    args.results_dir = str(DEFAULT_RESULTS_DIR)
+
+inverse_noise_std = max(args.inverse_noise_std, 0.0)
 
 # Set random seeds
 torch.manual_seed(args.seed)
@@ -365,6 +503,7 @@ plot_model_results(
     test_dataset=test_dataset,
     dataset_info=dataset_info,
     n_samples=args.n_samples,
+    inverse_noise_std=inverse_noise_std,
 )
 
 print(f"✓ Generated {args.n_samples} plots → {results_dir}")
