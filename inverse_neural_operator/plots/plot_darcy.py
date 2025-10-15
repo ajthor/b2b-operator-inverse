@@ -5,11 +5,14 @@ To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator
 
 import os
 import sys
+import json
 from pathlib import Path
 import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+from typing import Optional, Dict
+from collections import defaultdict
 
 import torch
 
@@ -24,14 +27,6 @@ for path in (PROJECT_ROOT, PACKAGE_ROOT):
 DEFAULT_DATASET = "darcy_1d"
 DEFAULT_MODEL_NAME = "nonlinear"
 DEFAULT_SEED = 1
-DEFAULT_LOG_DIR = PROJECT_ROOT / "logs" / DEFAULT_DATASET / DEFAULT_MODEL_NAME / f"seed_{DEFAULT_SEED}"
-DEFAULT_RESULTS_DIR = PROJECT_ROOT / "results" / "darcy_plots"
-
-from inverse_neural_operator.b2b.function_encoder import (
-    create_model as create_function_encoder,
-    load as load_function_encoder,
-    memory_efficient_inner_product,
-)
 
 from inverse_neural_operator.data.load_dataset import load_dataset
 from inverse_neural_operator.models.load_model import load_models
@@ -44,11 +39,70 @@ random.seed(42)
 np.random.seed(42)
 
 
+def to_device(*tensors):
+    return tuple(t.to(device) for t in tensors)
+
+
+def add_batch_dim(*tensors):
+    return tuple(t.unsqueeze(0) for t in tensors)
+
+
+def squeeze_to_numpy(tensor: torch.Tensor):
+    return tensor.squeeze(-1).cpu().numpy()
+
+
 def apply_inverse_noise(tensor: torch.Tensor, std: float) -> torch.Tensor:
     """Add zero-mean Gaussian noise for inverse inference without mutating input."""
     if std <= 0:
         return tensor
     return tensor + torch.randn_like(tensor) * std
+
+
+def format_noise_value(std: float) -> str:
+    trimmed = f"{std:.6f}".rstrip("0").rstrip(".")
+    return trimmed or format(std, "g")
+
+
+def infer_dataset_name(log_path: Path) -> str:
+    if len(log_path.parents) > 1 and log_path.parents[1].name:
+        return log_path.parents[1].name
+    if log_path.parent.name:
+        return log_path.parent.name
+    return DEFAULT_DATASET
+
+
+def collect_model_log_dirs(base_path: Path, seed: int, model_filter: Optional[set[str]]) -> Dict[str, Path]:
+    seed_dir_name = f"seed_{seed}"
+    model_dirs = {}
+
+    if (base_path / "params.pth").exists():
+        fallback_model = next(iter(model_filter)) if model_filter else DEFAULT_MODEL_NAME
+        model_name = base_path.parent.name or fallback_model
+        if not model_filter or model_name in model_filter:
+            model_dirs[model_name] = base_path
+        return model_dirs
+
+    seed_candidate = base_path / seed_dir_name
+    if (seed_candidate / "params.pth").exists():
+        model_name = base_path.name
+        if not model_filter or model_name in model_filter:
+            model_dirs[model_name] = seed_candidate
+        return model_dirs
+
+    if not base_path.is_dir():
+        return model_dirs
+
+    for entry in base_path.iterdir():
+        if not entry.is_dir() or entry.name == "shared":
+            continue
+        seed_dir = entry / seed_dir_name
+        if not (seed_dir / "params.pth").exists():
+            continue
+        if model_filter and entry.name not in model_filter:
+            continue
+        model_dirs[entry.name] = seed_dir
+
+    return model_dirs
 
 
 def compute_mse_errors(
@@ -71,31 +125,18 @@ def compute_mse_errors(
 
     with torch.no_grad():
         for sample in dataset:
-            X, u_true, Y, s_observed = sample
-
-            X = X.to(device)
-            u_true = u_true.to(device)
-            Y = Y.to(device)
-            s_observed = s_observed.to(device)
-
+            X, u_true, Y, s_observed = to_device(*sample)
             s_input = apply_inverse_noise(s_observed, inverse_noise_std)
 
-            point = (
-                X.unsqueeze(0),
-                u_true.unsqueeze(0),
-                Y.unsqueeze(0),
-                s_input.unsqueeze(0),
-            )
+            X_b, u_b, Y_b, s_b = add_batch_dim(X, u_true, Y, s_input)
             u_pred, _ = evaluate_fn(
-                model, point, input_function_encoder, output_function_encoder
+                model, (X_b, u_b, Y_b, s_b), input_function_encoder, output_function_encoder
             )
             u_pred = u_pred.squeeze(0)
 
-            alpha, _ = input_function_encoder.compute_coefficients(
-                X.unsqueeze(0), u_pred.unsqueeze(0)
-            )
+            alpha, _ = input_function_encoder.compute_coefficients(X_b, u_pred.unsqueeze(0))
             beta_pred = forward_model.forward(alpha)
-            s_resim = output_function_encoder(Y.unsqueeze(0), beta_pred).squeeze(0)
+            s_resim = output_function_encoder(Y_b, beta_pred).squeeze(0)
 
             inverse_sq_error += torch.sum((u_pred - u_true) ** 2).item()
             forward_sq_error += torch.sum((s_resim - s_observed) ** 2).item()
@@ -126,52 +167,26 @@ def plot_darcy_sample(
     model.eval()
     forward_model.eval()
 
-    X, u_true, Y, s_observed = sample
-
-    # Ensure tensors are on correct device
-    X = X.to(device)
-    u_true = u_true.to(device)
-    Y = Y.to(device)
-    s_observed = s_observed.to(device)
-
+    X, u_true, Y, s_observed = to_device(*sample)
     s_input = apply_inverse_noise(s_observed, inverse_noise_std)
 
-    # Get model prediction for input
     with torch.no_grad():
-        point = (
-            X.unsqueeze(0),
-            u_true.unsqueeze(0),
-            Y.unsqueeze(0),
-            s_input.unsqueeze(0),
-        )
+        X_b, u_b, Y_b, s_b = add_batch_dim(X, u_true, Y, s_input)
         u_pred, _ = evaluate_fn(
-            model, point, input_function_encoder, output_function_encoder
+            model, (X_b, u_b, Y_b, s_b), input_function_encoder, output_function_encoder
         )
         u_pred = u_pred.squeeze(0)
 
-    # Re-simulate using forward model
-    with torch.no_grad():
-        # Add batch dimension for forward model
-        X_batch = X.unsqueeze(0)
-        u_pred_batch = u_pred.unsqueeze(0)
-        Y_batch = Y.unsqueeze(0)
-
-        # Compute alpha coefficients from predicted input
-        alpha, _ = input_function_encoder.compute_coefficients(X_batch, u_pred_batch)
-
-        # Forward pass through model to get beta coefficients
+        alpha, _ = input_function_encoder.compute_coefficients(X_b, u_pred.unsqueeze(0))
         beta_pred = forward_model.forward(alpha)
-
-        # Reconstruct re-simulation output
-        s_resim = output_function_encoder(Y_batch, beta_pred)
-        s_resim = s_resim.squeeze(0)  # Remove batch dimension
+        s_resim = output_function_encoder(Y_b, beta_pred).squeeze(0)
 
     # Convert to numpy for plotting
-    u_true_np = u_true.squeeze(-1).cpu().numpy()
-    u_pred_np = u_pred.squeeze(-1).cpu().numpy()
-    s_observed_np = s_observed.squeeze(-1).cpu().numpy()
-    s_input_np = s_input.squeeze(-1).cpu().numpy()
-    s_resim_np = s_resim.squeeze(-1).cpu().numpy()
+    u_true_np = squeeze_to_numpy(u_true)
+    u_pred_np = squeeze_to_numpy(u_pred)
+    s_observed_np = squeeze_to_numpy(s_observed)
+    s_input_np = squeeze_to_numpy(s_input)
+    s_resim_np = squeeze_to_numpy(s_resim)
     X_np = X.squeeze(-1).cpu().numpy()
     Y_np = Y.squeeze(-1).cpu().numpy()
 
@@ -336,15 +351,14 @@ def plot_multiple_samples(
         range(len(test_dataset)), min(n_samples, len(test_dataset))
     )
 
-    for i, idx in enumerate(test_indices):
-        sample = test_dataset[idx]
+    for idx in test_indices:
         plot_darcy_sample(
             model,
             evaluate_fn,
             input_function_encoder,
             output_function_encoder,
             forward_model,
-            sample,
+            test_dataset[idx],
             idx,
             model_name,
             save_dir,
@@ -372,22 +386,19 @@ def plot_model_results(
         n_samples: Number of samples to plot
     """
 
-    # log_dir is now the complete path to the model directory
-    model_log_dir = log_dir
-
     # Load model parameters
-    params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
+    params = torch.load(os.path.join(log_dir, "params.pth"), weights_only=False)
 
     # Load models
     input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
-        log_dir=model_log_dir,
+        log_dir=log_dir,
         dataset_info=dataset_info,
         params=params,
         device=device,
     )
 
     # Load forward model for re-simulation
-    forward_model = load_forward_model(log_dir=model_log_dir, forward_model_name='b2b_nonlinear', device=device)
+    forward_model = load_forward_model(log_dir=log_dir, forward_model_name='b2b_nonlinear', device=device)
 
     inverse_mse, forward_mse = compute_mse_errors(
         model=model,
@@ -398,10 +409,6 @@ def plot_model_results(
         dataset=test_dataset,
         inverse_noise_std=inverse_noise_std,
     )
-    print(f"Inverse prediction MSE (û vs u): {inverse_mse:.6f}")
-    print(f"Forward prediction MSE (ŝ vs s): {forward_mse:.6f}")
-    if inverse_noise_std > 0:
-        print(f"Applied Gaussian noise with std={inverse_noise_std:.4f} to inverse inputs.")
 
     # Plot results
     plot_multiple_samples(
@@ -417,56 +424,28 @@ def plot_model_results(
         inverse_noise_std=inverse_noise_std,
     )
 
+    return {
+        "model": model_name,
+        "inverse_mse": inverse_mse,
+        "forward_mse": forward_mse,
+        "inverse_noise_std": inverse_noise_std,
+        "log_dir": log_dir,
+    }
+
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Plot Darcy 1D results for all models.")
-parser.add_argument(
-    "--log_dir",
-    type=str,
-    default=None,
-    help="Complete path to model directory (defaults to logs/darcy_1d/<model>/seed_1)",
-)
-parser.add_argument(
-    "--results_dir",
-    type=str,
-    default=None,
-    help="Results directory for saving plots",
-)
-parser.add_argument(
-    "--n_samples",
-    type=int,
-    default=3,
-    help="Number of random samples to plot per model",
-)
-parser.add_argument(
-    "--seed", type=int, default=1, help="Random seed for reproducibility"
-)
-parser.add_argument(
-    "--model", type=str, default=None, help="Model name to plot results for"
-)
-parser.add_argument(
-    "--inverse_noise_std",
-    type=float,
-    default=0.0,
-    help="Stddev of Gaussian noise added to inverse-model inputs",
-)
+parser.add_argument("--log_dir", type=str, default=None, help="Path to logs root (defaults to logs/darcy_1d; accepts model/seed paths too)")
+parser.add_argument("--results_dir", type=str, default=None, help="Results directory for saving plots")
+parser.add_argument("--n_samples", type=int, default=3, help="Number of random samples to plot per model")
+parser.add_argument("--seed", type=int, default=1, help="Random seed for reproducibility")
+parser.add_argument("--model", type=str, default=None, help="Model name to plot results for (defaults to all models)")
+parser.add_argument("--inverse_noise_std", type=float, default=0.0, help="Stddev of Gaussian noise added to inverse-model inputs")
 
 args = parser.parse_args()
 
-if args.model is None:
-    args.model = DEFAULT_MODEL_NAME
-
 if args.log_dir is None:
-    args.log_dir = str(
-        PROJECT_ROOT
-        / "logs"
-        / DEFAULT_DATASET
-        / args.model
-        / f"seed_{DEFAULT_SEED}"
-    )
-
-if args.results_dir is None:
-    args.results_dir = str(DEFAULT_RESULTS_DIR)
+    args.log_dir = str(PROJECT_ROOT / "logs" / DEFAULT_DATASET)
 
 inverse_noise_std = max(args.inverse_noise_std, 0.0)
 
@@ -475,35 +454,58 @@ torch.manual_seed(args.seed)
 random.seed(args.seed)
 np.random.seed(args.seed)
 
-# log_dir is now the complete path to the model directory
-log_dir = args.log_dir
-results_dir = args.results_dir
-model_name = args.model
+base_log_path = Path(args.log_dir)
+if not base_log_path.exists():
+    print(f"✗ Log directory not found: {base_log_path}")
+    exit(1)
+model_filter = {args.model} if args.model else None
+model_log_dirs = collect_model_log_dirs(base_log_path, args.seed, model_filter)
 
-# Check if model directory exists
-if not os.path.exists(os.path.join(log_dir, "params.pth")):
-    print(f"✗ Model not found at {log_dir}")
+if not model_log_dirs:
+    target = args.model or "any model"
+    print(f"✗ No models found at {base_log_path} for {target}")
     exit(1)
 
-print(f"Loading model parameters and dataset...")
-# Load dataset using the model's parameters
-params = torch.load(os.path.join(log_dir, "params.pth"), weights_only=False)
-test_dataset, dataset_info = load_dataset(params.dataset, params, device, split="test", return_info=True)
-print(f"✓ Loaded {len(test_dataset)} test samples")
+multiple_models = len(model_log_dirs) > 1
+custom_results_dir = Path(args.results_dir).resolve() if args.results_dir else None
+metrics_aggregate: Dict[Path, Dict[str, Dict]] = defaultdict(dict)
 
-# Create results directory
-os.makedirs(results_dir, exist_ok=True)
+for model_name, model_log_dir in sorted(model_log_dirs.items()):
+    dataset_name = infer_dataset_name(model_log_dir)
+    aggregator_base = custom_results_dir if custom_results_dir else PROJECT_ROOT / "results" / dataset_name
+    noise_suffix = format_noise_value(inverse_noise_std) if inverse_noise_std > 0 else None
+    aggregator_dir = aggregator_base if not noise_suffix else aggregator_base / noise_suffix
 
-print(f"Generating {args.n_samples} sample plots...")
-# Plot results for the specified model
-plot_model_results(
-    model_name=model_name,
-    log_dir=log_dir,
-    results_dir=results_dir,
-    test_dataset=test_dataset,
-    dataset_info=dataset_info,
-    n_samples=args.n_samples,
-    inverse_noise_std=inverse_noise_std,
-)
+    if custom_results_dir:
+        results_dir_path = aggregator_dir / model_name if multiple_models else aggregator_dir
+    else:
+        results_dir_path = aggregator_dir / model_name
 
-print(f"✓ Generated {args.n_samples} plots → {results_dir}")
+    results_dir = str(results_dir_path)
+    os.makedirs(results_dir, exist_ok=True)
+
+    print(f"Loading model parameters and dataset for {model_name}...")
+    params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
+    test_dataset, dataset_info = load_dataset(params.dataset, params, device, split="test", return_info=True)
+    print(f"✓ {model_name}: loaded {len(test_dataset)} test samples")
+
+    print(f"Generating {args.n_samples} sample plots for {model_name}...")
+    metrics = plot_model_results(
+        model_name=model_name,
+        log_dir=str(model_log_dir),
+        results_dir=results_dir,
+        test_dataset=test_dataset,
+        dataset_info=dataset_info,
+        n_samples=args.n_samples,
+        inverse_noise_std=inverse_noise_std,
+    )
+    metrics["results_dir"] = results_dir
+    metrics_aggregate[aggregator_dir][model_name] = metrics
+    print(f"✓ {model_name}: saved plots → {results_dir}")
+
+for metrics_dir, data in metrics_aggregate.items():
+    os.makedirs(metrics_dir, exist_ok=True)
+    metrics_path = metrics_dir / "metrics.json"
+    with metrics_path.open("w", encoding="utf-8") as metrics_file:
+        json.dump(data, metrics_file, indent=2)
+    print(f"✓ Saved metrics for {len(data)} model(s) → {metrics_path}")
