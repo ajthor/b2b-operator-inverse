@@ -4,10 +4,10 @@ set -euo pipefail
 #── CONFIGURATION ────────────────────────────────────────
 # Same datasets and models as in run_all.sh
 
-# DATASETS=(burgers_1d darcy_1d parametric_heat wave_scattering fwi chladni_2d)
+# DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d)
 # MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
-DATASETS=(wave_scattering)
-MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic)
+DATASETS=(burgers_1d darcy_1d wave_scattering fwi)
+MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
 
 # Base directory for experiment logs - same as in run_all.sh
 LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
@@ -130,7 +130,7 @@ for dataset in "${DATASETS[@]}"; do
       #   --results_dir "$RESULTS_DIR/comparison"
       # fi
       ;;
-      chladni)
+      chladni_2d)
       echo "  → Generating standard plots..."
       if python inverse_neural_operator/plots/plot_chladni.py \
         --model "$model" \

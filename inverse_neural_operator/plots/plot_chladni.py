@@ -20,6 +20,7 @@ from inverse_neural_operator.b2b.function_encoder import (
 from data.load_dataset import load_dataset
 from models.load_model import load_models
 from b2b.load_model import load_forward_model
+from plots.plot_utils import find_best_worst_samples
 
 device = "cpu"
 
@@ -246,6 +247,50 @@ def plot_model_results(
         dataset_info=dataset_info,
     )
 
+    # Find and plot best/worst case samples
+    print(f"Finding best and worst case samples for {model_name}...")
+    best_idx, worst_idx, best_mse, worst_mse = find_best_worst_samples(
+        model=model,
+        evaluate_fn=evaluate_fn,
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+        forward_model=forward_model,
+        test_dataset=test_dataset,
+        device=device,
+    )
+
+    # Plot best case
+    print(f"Plotting best case (MSE: {best_mse:.6e})...")
+    best_sample = test_dataset[best_idx]
+    plot_chladni_sample(
+        model=model,
+        evaluate_fn=evaluate_fn,
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+        forward_model=forward_model,
+        sample=best_sample,
+        sample_idx=f"best_{best_idx}",
+        model_name=model_name,
+        save_dir=results_dir,
+        dataset_info=dataset_info,
+    )
+
+    # Plot worst case
+    print(f"Plotting worst case (MSE: {worst_mse:.6e})...")
+    worst_sample = test_dataset[worst_idx]
+    plot_chladni_sample(
+        model=model,
+        evaluate_fn=evaluate_fn,
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+        forward_model=forward_model,
+        sample=worst_sample,
+        sample_idx=f"worst_{worst_idx}",
+        model_name=model_name,
+        save_dir=results_dir,
+        dataset_info=dataset_info,
+    )
+
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(
@@ -270,7 +315,7 @@ parser.add_argument(
     help="Number of random samples to plot per model",
 )
 parser.add_argument(
-    "--seed", type=int, default=1, help="Random seed for reproducibility"
+    "--seed", type=int, default=42, help="Random seed for reproducibility"
 )
 parser.add_argument(
     "--model", type=str, required=True, help="Model name to plot results for"

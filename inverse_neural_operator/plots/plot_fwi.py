@@ -1,6 +1,7 @@
 import os
 import argparse
 import json
+import random
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
@@ -15,10 +16,9 @@ from inverse_neural_operator.b2b.function_encoder import (
 
 from data.load_dataset import load_dataset
 from models.load_model import load_models
+from plots.plot_utils import find_best_worst_samples
 
 device = "cpu"
-
-torch.manual_seed(1)
 
 
 # Parse command line arguments
@@ -35,8 +35,16 @@ parser.add_argument(
 parser.add_argument(
     "--results_dir", type=str, default="results/fwi/variational_autoencoder"
 )
+parser.add_argument(
+    "--seed", type=int, default=42, help="Random seed for reproducibility"
+)
 
 args = parser.parse_args()
+
+# Set random seeds
+torch.manual_seed(args.seed)
+random.seed(args.seed)
+np.random.seed(args.seed)
 
 # log_dir is now the complete path to the model directory
 log_dir = args.log_dir
@@ -344,6 +352,52 @@ plot_multiple_samples(
     vmin=vmin,
     vmax=vmax,
     n_samples=3,
+    save_dir=results_dir,
+)
+
+# Find and plot best/worst case samples
+print(f"Finding best and worst case samples for {model_name}...")
+best_idx, worst_idx, best_mse, worst_mse = find_best_worst_samples(
+    model=model,
+    evaluate_fn=evaluate_fn,
+    input_function_encoder=input_function_encoder,
+    output_function_encoder=output_function_encoder,
+    forward_model=forward_model,
+    test_dataset=test_dataset,
+    device=device,
+)
+
+# Plot best case
+print(f"Plotting best case (MSE: {best_mse:.6e})...")
+best_sample = test_dataset[best_idx]
+plot_fwi_sample(
+    model=model,
+    evaluate_fn=evaluate_fn,
+    input_function_encoder=input_function_encoder,
+    output_function_encoder=output_function_encoder,
+    forward_model=forward_model,
+    sample=best_sample,
+    sample_idx=f"best_{best_idx}",
+    model_name=model_name,
+    vmin=vmin,
+    vmax=vmax,
+    save_dir=results_dir,
+)
+
+# Plot worst case
+print(f"Plotting worst case (MSE: {worst_mse:.6e})...")
+worst_sample = test_dataset[worst_idx]
+plot_fwi_sample(
+    model=model,
+    evaluate_fn=evaluate_fn,
+    input_function_encoder=input_function_encoder,
+    output_function_encoder=output_function_encoder,
+    forward_model=forward_model,
+    sample=worst_sample,
+    sample_idx=f"worst_{worst_idx}",
+    model_name=model_name,
+    vmin=vmin,
+    vmax=vmax,
     save_dir=results_dir,
 )
 

@@ -31,6 +31,7 @@ DEFAULT_SEED = 1
 from inverse_neural_operator.data.load_dataset import load_dataset
 from inverse_neural_operator.models.load_model import load_models
 from inverse_neural_operator.b2b.load_model import load_forward_model
+from inverse_neural_operator.plots.plot_utils import find_best_worst_samples
 
 device = "cpu"
 
@@ -424,6 +425,50 @@ def plot_model_results(
         inverse_noise_std=inverse_noise_std,
     )
 
+    # Find and plot best/worst case samples
+    print(f"Finding best and worst case samples for {model_name}...")
+    best_idx, worst_idx, best_mse, worst_mse = find_best_worst_samples(
+        model=model,
+        evaluate_fn=evaluate_fn,
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+        forward_model=forward_model,
+        test_dataset=test_dataset,
+        device=device,
+    )
+
+    # Plot best case
+    print(f"Plotting best case (MSE: {best_mse:.6e})...")
+    best_sample = test_dataset[best_idx]
+    plot_darcy_sample(
+        model=model,
+        evaluate_fn=evaluate_fn,
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+        forward_model=forward_model,
+        sample=best_sample,
+        sample_idx=f"best_{best_idx}",
+        model_name=model_name,
+        save_dir=results_dir,
+        inverse_noise_std=inverse_noise_std,
+    )
+
+    # Plot worst case
+    print(f"Plotting worst case (MSE: {worst_mse:.6e})...")
+    worst_sample = test_dataset[worst_idx]
+    plot_darcy_sample(
+        model=model,
+        evaluate_fn=evaluate_fn,
+        input_function_encoder=input_function_encoder,
+        output_function_encoder=output_function_encoder,
+        forward_model=forward_model,
+        sample=worst_sample,
+        sample_idx=f"worst_{worst_idx}",
+        model_name=model_name,
+        save_dir=results_dir,
+        inverse_noise_std=inverse_noise_std,
+    )
+
     return {
         "model": model_name,
         "inverse_mse": inverse_mse,
@@ -438,7 +483,7 @@ parser = argparse.ArgumentParser(description="Plot Darcy 1D results for all mode
 parser.add_argument("--log_dir", type=str, default=None, help="Path to logs root (defaults to logs/darcy_1d; accepts model/seed paths too)")
 parser.add_argument("--results_dir", type=str, default=None, help="Results directory for saving plots")
 parser.add_argument("--n_samples", type=int, default=3, help="Number of random samples to plot per model")
-parser.add_argument("--seed", type=int, default=1, help="Random seed for reproducibility")
+parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
 parser.add_argument("--model", type=str, default=None, help="Model name to plot results for (defaults to all models)")
 parser.add_argument("--inverse_noise_std", type=float, default=0.0, help="Stddev of Gaussian noise added to inverse-model inputs")
 
