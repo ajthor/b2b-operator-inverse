@@ -89,6 +89,16 @@ class FWIDataset(Dataset):
         }
 
 
+def _create_linear_gradient():
+    """
+    Create a linear gradient array for bias subtraction.
+    Gradient ranges from 100 (top) to 900 (bottom) with shape (24, 48).
+    """
+    gradient_1d = np.linspace(100.0, 900.0, 24)
+    gradient = np.tile(gradient_1d.reshape(-1, 1), (1, 48))
+    return gradient
+
+
 def _compute_global_stats(dataset):
     """Compute global statistics (min, max, mean, std) using Welford's algorithm."""
     print("Computing global normalization statistics...")
@@ -185,15 +195,33 @@ def load_data(params, device, split="train"):
             json.dump(stats, f, indent=2)
         print(f"Saved normalization statistics to {stats_file}")
 
+    # Create linear gradient for bias subtraction (created once and reused)
+    gradient = _create_linear_gradient()
+    stats['gradient'] = gradient
+    print(f"Created linear gradient bias: [{gradient.min():.1f}, {gradient.max():.1f}]")
+
     def _normalize_transform(batch, stats):
         """Apply normalization transform on-the-fly."""
-        # Normalize models to [-1, 1] using global stats
+        # Subtract linear gradient bias from models (so model learns residuals)
+        # models come as (batch_size, 24, 48, 1) from HuggingFace dataset
         models = np.array(batch["models"])
-        if stats["models_max"] > stats["models_min"]:
+        models = models.squeeze(-1)  # Remove channel dim -> (batch_size, 24, 48)
+
+        # Expand gradient to (1, 24, 48) for broadcasting over batch dimension
+        gradient_expanded = np.expand_dims(stats["gradient"], axis=0)
+        models = models - gradient_expanded
+
+        # Normalize residuals to [-1, 1] using adjusted stats
+        # After subtracting gradient [100, 900]:
+        # - Min residual: models_min - gradient_max = 100 - 900 = -800
+        # - Max residual: models_max - gradient_min = 879.6 - 100 = 779.6
+        residual_min = stats["models_min"] - 900.0
+        residual_max = stats["models_max"] - 100.0
+        if residual_max > residual_min:
             models = (
                 2
-                * (models - stats["models_min"])
-                / (stats["models_max"] - stats["models_min"])
+                * (models - residual_min)
+                / (residual_max - residual_min)
                 - 1
             )
         batch["models"] = models
