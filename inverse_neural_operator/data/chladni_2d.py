@@ -7,68 +7,57 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
-from datasets import Dataset as HFDataset, load_from_disk
+from datasets import Dataset as HFDataset, load_dataset
 from scipy.integrate import quad
 import tqdm
 import time
 import os
+import json
 
 
 class ChladniDataset(Dataset):
     """Custom dataset for Chladni plate data."""
 
-    def __init__(self, dataset, device="cpu"):
+    def __init__(self, dataset, device="cpu", stats=None):
         """
         Initialize the dataset by extracting spatial coordinates and function values.
 
         Args:
             dataset: HuggingFace dataset with new field structure
             device: The device to put tensors on
+            stats: Normalization statistics (dict with mean, std, min, max)
         """
         self.device = device
         self.n_samples = len(dataset)
+        self.stats = stats
 
         # Preload all data to GPU for fast training
         print(f"📊 Loading {self.n_samples} samples to {device}...")
-        
-        # Check if using new format or old format
-        if "spatial_coordinates" in dataset.features:
-            # New HuggingFace format
-            print("Using new HuggingFace dataset format with spatial_coordinates")
-            
-            # spatial_coordinates is the same for all samples, so we can use the first sample
-            # and expand it to all samples
-            spatial_coords = torch.tensor(dataset["spatial_coordinates"], device=device, dtype=torch.float32)
-            
-            # spatial_coords should be [batch_size, num_points, 2] but each sample has same coordinates
-            # So we take the first sample's coordinates and expand
-            if len(spatial_coords.shape) == 3:  # [batch_size, num_points, 2]
-                self.X = spatial_coords  # Input coordinates
-                self.Y = spatial_coords  # Output coordinates (same for Chladni)
-            elif len(spatial_coords.shape) == 2:  # [num_points, 2] - single set of coordinates
-                # Expand to all samples
-                spatial_coords = spatial_coords.unsqueeze(0).expand(self.n_samples, -1, -1)
-                self.X = spatial_coords  # Input coordinates  
-                self.Y = spatial_coords  # Output coordinates (same for Chladni)
-            
-            # Function values - flattened forcing (S) and displacement (Z) 
-            self.u = torch.tensor(dataset["S"], device=device, dtype=torch.float32)  # Flattened forcing
-            self.s = torch.tensor(dataset["Z"], device=device, dtype=torch.float32)  # Flattened displacement
-            
-        else:
-            # Fallback to old format
-            print("Using legacy dataset format")
-            self.X = torch.tensor(dataset["X"], device=device, dtype=torch.float32)  # Input coordinates
-            self.u = torch.tensor(dataset["u"], device=device, dtype=torch.float32)  # Input function (forces) 
-            self.Y = torch.tensor(dataset["Y"], device=device, dtype=torch.float32)  # Output coordinates
-            self.s = torch.tensor(dataset["s"], device=device, dtype=torch.float32)  # Output function (displacements)
-        
+
+        # spatial_coordinates is the same for all samples, so we can use the first sample
+        # and expand it to all samples
+        spatial_coords = torch.tensor(dataset["spatial_coordinates"], device=device, dtype=torch.float32)
+
+        # spatial_coords should be [batch_size, num_points, 2]
+        if len(spatial_coords.shape) == 3:  # [batch_size, num_points, 2]
+            self.X = spatial_coords  # Input coordinates
+            self.Y = spatial_coords  # Output coordinates (same for Chladni)
+        elif len(spatial_coords.shape) == 2:  # [num_points, 2] - single set of coordinates
+            # Expand to all samples
+            spatial_coords = spatial_coords.unsqueeze(0).expand(self.n_samples, -1, -1)
+            self.X = spatial_coords  # Input coordinates
+            self.Y = spatial_coords  # Output coordinates (same for Chladni)
+
+        # Function values - flattened forcing (S) and displacement (Z)
+        self.u = torch.tensor(dataset["S"], device=device, dtype=torch.float32)  # Flattened forcing
+        self.s = torch.tensor(dataset["Z"], device=device, dtype=torch.float32)  # Flattened displacement
+
         # Ensure correct dimensions
         if self.u.dim() == 2:  # [batch, values]
             self.u = self.u.unsqueeze(-1)  # [batch, values, 1]
         if self.s.dim() == 2:  # [batch, values]
             self.s = self.s.unsqueeze(-1)  # [batch, values, 1]
-            
+
         print(f"✅ Dataset loaded: {self.n_samples} samples, {self.X.shape[1]} points")
 
     def __len__(self):
@@ -88,7 +77,7 @@ class ChladniDataset(Dataset):
         return (
             self.X[idx],
             self.u[idx],
-            self.Y[idx], 
+            self.Y[idx],
             self.s[idx],
         )
 
@@ -97,30 +86,86 @@ class ChladniDataset(Dataset):
         # Try to infer grid size from coordinates
         n_points = self.X.shape[1]
         grid_size = int(np.sqrt(n_points))  # Assume square grid
-        
+
         return {
-            # Basic info (existing)
             "X_size": self.X.shape[-1],
-            "u_size": self.u.shape[-1], 
+            "u_size": self.u.shape[-1],
             "Y_size": self.Y.shape[-1],
             "s_size": self.s.shape[-1],
             "X_len": self.X.shape[0],
             "u_len": self.u.shape[0],
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
-            
-            # iFNO spatial info (inferred from data)
-            "input_spatial_dims": (grid_size, grid_size),      # Square grid
-            "output_spatial_dims": (grid_size, grid_size),     # Same for symmetric problem
-            "input_function_channels": 1,        # Scalar force field
-            "output_function_channels": 1,       # Scalar displacement field
-            "coordinate_dim": 2,                 # 2D spatial coordinates
+            # iFNO spatial info
+            "input_spatial_dims": (grid_size, grid_size),
+            "output_spatial_dims": (grid_size, grid_size),
+            "input_function_channels": 1,
+            "output_function_channels": 1,
+            "coordinate_dim": 2,
         }
+
+
+def _compute_global_stats(dataset):
+    """Compute global statistics (min, max, mean, std) using Welford's algorithm."""
+    print("Computing global normalization statistics...")
+
+    S_min = float("inf")
+    S_max = float("-inf")
+    Z_min = float("inf")
+    Z_max = float("-inf")
+
+    # Welford's algorithm for running mean and variance
+    S_count = 0
+    S_mean = 0.0
+    S_m2 = 0.0
+    Z_count = 0
+    Z_mean = 0.0
+    Z_m2 = 0.0
+
+    for sample in tqdm.tqdm(dataset, desc="Computing normalization stats"):
+        S = np.array(sample["S"])
+        Z = np.array(sample["Z"])
+
+        # Update min/max
+        S_min = min(S_min, S.min())
+        S_max = max(S_max, S.max())
+        Z_min = min(Z_min, Z.min())
+        Z_max = max(Z_max, Z.max())
+
+        # Welford's algorithm for S (forcing)
+        for value in S.flat:
+            S_count += 1
+            delta = value - S_mean
+            S_mean += delta / S_count
+            delta2 = value - S_mean
+            S_m2 += delta * delta2
+
+        # Welford's algorithm for Z (displacement)
+        for value in Z.flat:
+            Z_count += 1
+            delta = value - Z_mean
+            Z_mean += delta / Z_count
+            delta2 = value - Z_mean
+            Z_m2 += delta * delta2
+
+    S_std = np.sqrt(S_m2 / S_count) if S_count > 1 else 0.0
+    Z_std = np.sqrt(Z_m2 / Z_count) if Z_count > 1 else 0.0
+
+    return {
+        "S_min": float(S_min),
+        "S_max": float(S_max),
+        "S_mean": float(S_mean),
+        "S_std": float(S_std),
+        "Z_min": float(Z_min),
+        "Z_max": float(Z_max),
+        "Z_mean": float(Z_mean),
+        "Z_std": float(Z_std),
+    }
 
 
 def load_data(params=None, device="cpu", split="train"):
     """
-    Load Chladni dataset from a specific split.
+    Load Chladni dataset from a specific split with caching.
 
     Args:
         params: Parameters for processing (unused, for compatibility)
@@ -130,23 +175,61 @@ def load_data(params=None, device="cpu", split="train"):
     Returns:
         A ChladniDataset instance for the specified split
     """
-    try:
-        # Load from new HuggingFace dataset
-        from datasets import load_dataset
-        ds = load_dataset("ajthor/chladni", split=split)
-        model_dataset = ChladniDataset(ds, device=device)
-        return model_dataset
-    except Exception as e:
-        print(f"Error loading Chladni dataset from HuggingFace: {e}")
-        # Fallback to local dataset
-        try:
-            ds = load_from_disk('Data/chladni_dataset')
-            model_dataset = ChladniDataset(ds[split], device=device)
-            return model_dataset
-        except Exception as e2:
-            print(f"Error loading local Chladni dataset: {e2}")
-            print("Please ensure the dataset is available from HuggingFace or run generate_chladni_data() to create local dataset.")
-            raise
+    # Load HuggingFace dataset
+    print(f"Loading Chladni dataset (split={split})...")
+    ds = load_dataset("ajthor/chladni", split=split, streaming=False)
+
+    # Determine stats file path (same directory as this file)
+    # Always use train split for normalization stats
+    stats_file = os.path.join(os.path.dirname(__file__), "chladni_stats.json")
+
+    # Load or compute normalization statistics (always from train split)
+    if os.path.exists(stats_file):
+        print(f"Loading cached normalization statistics from {stats_file}")
+        with open(stats_file, "r") as f:
+            stats = json.load(f)
+    else:
+        # Compute statistics using streaming on train split only
+        print(f"Computing normalization statistics from train split (first run)...")
+        ds_streaming = load_dataset("ajthor/chladni", split="train", streaming=True)
+        stats = _compute_global_stats(ds_streaming)
+
+        # Save statistics to cache
+        with open(stats_file, "w") as f:
+            json.dump(stats, f, indent=2)
+        print(f"Saved normalization statistics to {stats_file}")
+
+    def _normalize_map(example):
+        """Apply normalization map to preprocess and cache."""
+        # Normalize S (forcing) to [-1, 1] using global stats
+        S = np.array(example["S"])
+        if stats["S_max"] > stats["S_min"]:
+            S = (
+                2
+                * (S - stats["S_min"])
+                / (stats["S_max"] - stats["S_min"])
+                - 1
+            )
+        example["S"] = S
+
+        # Normalize Z (displacement) to [-1, 1] using global stats
+        Z = np.array(example["Z"])
+        if stats["Z_max"] > stats["Z_min"]:
+            Z = (
+                2
+                * (Z - stats["Z_min"])
+                / (stats["Z_max"] - stats["Z_min"])
+                - 1
+            )
+        example["Z"] = Z
+
+        return example
+
+    # Apply map for preprocessing and caching normalization
+    print("Applying normalization to dataset...")
+    ds = ds.map(_normalize_map, desc="Normalizing data")
+
+    return ChladniDataset(dataset=ds, device=device, stats=stats)
 
 
 def generate_chladni_data():
@@ -326,34 +409,6 @@ def generate_chladni_data():
                        n_range=n_range, m_range=m_range)
     
     return ds
-
-
-def load_chladni_data():
-    """Load the generated Chladni data in HuggingFace format."""
-    try:
-        # Try new HuggingFace dataset first
-        from datasets import load_dataset
-        return load_dataset("ajthor/chladni")
-    except:
-        try:
-            # Fallback to local dataset
-            return load_from_disk('Data/chladni_dataset')
-        except:
-            # Last resort - load original arrays
-            data = np.load('Data/ChladniData_original.npz')
-            return {key: data[key] for key in data.keys()}
-
-
-def load_chladni_original():
-    """Load the original Chladni data arrays."""
-    data = np.load('Data/ChladniData_original.npz')
-    return {key: data[key] for key in data.keys()}
-
-
-def load_normalization_stats():
-    """Load the normalization statistics for denormalization if needed."""
-    data = np.load('Data/ChladniData_normalization.npz')
-    return {key: data[key] for key in data.keys()}
 
 
 def plot_input(ax, x, y):

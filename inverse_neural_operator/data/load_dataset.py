@@ -23,13 +23,7 @@ def load_dataset(dataset_name, params, device, split="train", return_info=False)
         ValueError: If dataset_name is not supported
     """
     # Apply dataset-specific batch size adjustments
-    # if dataset_name in ["wave_scattering", "fwi"]:
-    #     if hasattr(params, "batch_size") and params.batch_size > 4:
-    #         print(
-    #             f"Batch size {params.batch_size} is too large for the {dataset_name} dataset. "
-    #             "Setting batch size to 4."
-    #         )
-    #         params.batch_size = 4
+
     if dataset_name == "wave_scattering":
         if hasattr(params, "batch_size") and params.batch_size > 4:
             print(
@@ -37,6 +31,14 @@ def load_dataset(dataset_name, params, device, split="train", return_info=False)
                 "Setting batch size to 4."
             )
             params.batch_size = 4
+
+    if dataset_name == "chladni_2d":
+        if hasattr(params, "batch_size") and params.batch_size > 20:
+            print(
+                f"Batch size {params.batch_size} is too large for the chladni_2d dataset. "
+                "Setting batch size to 20."
+            )
+            params.batch_size = 20
 
     # Load dataset based on name
     match dataset_name:

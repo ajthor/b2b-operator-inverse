@@ -1,6 +1,8 @@
 import os
 import argparse
+import json
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import numpy as np
 
 import torch
@@ -21,12 +23,14 @@ torch.manual_seed(1)
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Plot results.")
-parser.add_argument("--model", type=str, required=True, help="Model name to plot results for")
+parser.add_argument(
+    "--model", type=str, required=True, help="Model name to plot results for"
+)
 parser.add_argument(
     "--log_dir",
     type=str,
     default="/store/at46867/b2b_operator_inverse",
-    help="Complete path to model directory (e.g., /path/to/logs/dataset/model/seed_1)"
+    help="Complete path to model directory (e.g., /path/to/logs/dataset/model/seed_1)",
 )
 parser.add_argument(
     "--results_dir", type=str, default="results/fwi/variational_autoencoder"
@@ -54,6 +58,14 @@ test_dataset, dataset_info = load_dataset(
 )
 print(f"✓ Loaded {len(test_dataset)} test samples")
 
+# Load normalization statistics
+stats_path = os.path.join(os.path.dirname(__file__), "../data/fwi_stats.json")
+with open(stats_path, "r") as f:
+    stats = json.load(f)
+vmin = stats["models_min"]
+vmax = stats["models_max"]
+print(f"✓ Loaded normalization stats: velocity range [{vmin:.2f}, {vmax:.2f}]")
+
 # Create results directory
 os.makedirs(results_dir, exist_ok=True)
 
@@ -76,6 +88,8 @@ def plot_fwi_sample(
     sample,
     sample_idx,
     model_name,
+    vmin,
+    vmax,
     save_dir=None,
 ):
     """
@@ -87,8 +101,7 @@ def plot_fwi_sample(
     5. Error between measured and re-simulated seismic transforms
     """
     model.eval()
-    if forward_model is not None:
-        forward_model.eval()
+    forward_model.eval()
 
     X, u_true, Y, s_observed = sample
 
@@ -111,31 +124,35 @@ def plot_fwi_sample(
         )
         u_pred = u_pred.squeeze(0)
 
-    # Re-simulate using forward model if available
-    s_resim = None
-    if forward_model is not None:
-        with torch.no_grad():
-            # Add batch dimension for forward model
-            X_batch = X.unsqueeze(0)
-            u_pred_batch = u_pred.unsqueeze(0)
-            Y_batch = Y.unsqueeze(0)
+    # Re-simulate using forward model (required)
+    with torch.no_grad():
+        # Add batch dimension for forward model
+        X_batch = X.unsqueeze(0)
+        u_pred_batch = u_pred.unsqueeze(0)
+        Y_batch = Y.unsqueeze(0)
 
-            # Compute alpha coefficients from predicted input
-            alpha, _ = input_function_encoder.compute_coefficients(
-                X_batch, u_pred_batch
-            )
+        # Compute alpha coefficients from predicted input
+        alpha, _ = input_function_encoder.compute_coefficients(
+            X_batch, u_pred_batch
+        )
 
-            # Forward pass through model to get beta coefficients
-            beta_pred = forward_model.forward(alpha)
+        # Forward pass through model to get beta coefficients
+        beta_pred = forward_model.forward(alpha)
 
-            # Reconstruct re-simulation output
-            s_resim = output_function_encoder(Y_batch, beta_pred)
-            s_resim = s_resim.squeeze(0)  # Remove batch dimension
+        # Reconstruct re-simulation output
+        s_resim = output_function_encoder(Y_batch, beta_pred)
+        s_resim = s_resim.squeeze(0)  # Remove batch dimension
 
     # Convert to numpy for plotting
     u_true_np = u_true.squeeze(-1).cpu().numpy()
     u_pred_np = u_pred.squeeze(-1).cpu().numpy()
     s_observed_np = s_observed.squeeze(-1).cpu().numpy()
+
+    # Denormalize velocity models from [-1, 1] back to original range
+    # The normalization formula was: 2 * (v - vmin) / (vmax - vmin) - 1
+    # So denormalization is: v = ((normalized + 1) / 2) * (vmax - vmin) + vmin
+    u_true_np = ((u_true_np + 1) / 2) * (vmax - vmin) + vmin
+    u_pred_np = ((u_pred_np + 1) / 2) * (vmax - vmin) + vmin
 
     # Reshape velocity models from flattened (1152,) to 2D (24, 48)
     u_true_2d = u_true_np.reshape(24, 48)
@@ -144,66 +161,120 @@ def plot_fwi_sample(
     # Reshape seismic transforms from flattened (30400,) to 2D (400, 76)
     s_observed_2d = s_observed_np.reshape(400, 76)
 
-    # Create figure with subplots
-    n_panels = 4 if s_resim is None else 5
-    fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 5))
-    if n_panels == 1:
-        axes = [axes]
+    # Re-simulation output
+    s_resim_np = s_resim.squeeze(-1).cpu().numpy()
+    s_resim_2d = s_resim_np.reshape(400, 76)
 
-    # Panel 1: True Velocity Model (Waterfall Plot)
-    x_coords = np.arange(48)  # x-axis coordinates
-    offset_scale = np.max(u_true_2d) - np.min(u_true_2d)
-    for i in range(24):  # Each row (y-coordinate)
-        y_offset = i * offset_scale * 0.3  # Vertical offset for waterfall effect
-        axes[0].plot(x_coords, u_true_2d[i, :] + y_offset, linewidth=1, alpha=0.8)
-    axes[0].set_title("True Velocity Model u(x,y)", fontsize=12)
-    axes[0].set_xlabel("x")
-    axes[0].set_ylabel("y (with offset)")
-    axes[0].grid(True, alpha=0.3)
+    # Create figure with proper spacing - use constrained_layout for automatic spacing
+    fig = plt.figure(figsize=(28, 6), constrained_layout=True)
 
-    # Panel 2: Predicted Velocity Model (Waterfall Plot)
-    offset_scale = np.max(u_pred_2d) - np.min(u_pred_2d)
-    for i in range(24):  # Each row (y-coordinate)
-        y_offset = i * offset_scale * 0.3  # Vertical offset for waterfall effect
-        axes[1].plot(x_coords, u_pred_2d[i, :] + y_offset, linewidth=1, alpha=0.8)
-    axes[1].set_title("Predicted Velocity Model û(x,y)", fontsize=12)
-    axes[1].set_xlabel("x")
-    axes[1].set_ylabel("y (with offset)")
-    axes[1].grid(True, alpha=0.3)
+    # Create GridSpec with 3 groups: velocity pair, seismic pair, error
+    # Each group has space for data plots + colorbar
+    gs = fig.add_gridspec(1, 13, width_ratios=[4, 4, 0.3, 0.5, 4, 4, 0.3, 0.5, 4, 0.3, 0.5, 0.5, 0.5])
+
+    # Velocity model panels
+    ax_vel_true = fig.add_subplot(gs[0, 0])
+    ax_vel_pred = fig.add_subplot(gs[0, 1])
+    ax_vel_cbar = fig.add_subplot(gs[0, 2])
+
+    # Seismic transform panels
+    ax_seismic_obs = fig.add_subplot(gs[0, 4])
+    ax_seismic_resim = fig.add_subplot(gs[0, 5])
+    ax_seismic_cbar = fig.add_subplot(gs[0, 6])
+
+    # Error panel
+    ax_error = fig.add_subplot(gs[0, 8])
+    ax_error_cbar = fig.add_subplot(gs[0, 9])
+
+    # Panel 1 & 2: Velocity Models (Contour Plots with shared scale)
+    x_coords = np.arange(48)
+    y_coords = np.arange(24)
+    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+
+    # Use shared vmin/vmax from both true and predicted for consistent color scale
+    shared_vmin = min(u_true_2d.min(), u_pred_2d.min())
+    shared_vmax = max(u_true_2d.max(), u_pred_2d.max())
+
+    contour1 = ax_vel_true.contourf(
+        X_grid,
+        Y_grid,
+        u_true_2d,
+        levels=20,
+        cmap="magma",
+        vmin=shared_vmin,
+        vmax=shared_vmax,
+    )
+    ax_vel_true.set_title("True Velocity Model u(x,y)", fontsize=13, fontweight='bold')
+    ax_vel_true.set_xlabel("x", fontsize=11)
+    ax_vel_true.set_ylabel("y", fontsize=11)
+
+    contour2 = ax_vel_pred.contourf(
+        X_grid,
+        Y_grid,
+        u_pred_2d,
+        levels=20,
+        cmap="magma",
+        vmin=shared_vmin,
+        vmax=shared_vmax,
+    )
+    ax_vel_pred.set_title("Predicted Velocity Model û(x,y)", fontsize=13, fontweight='bold')
+    ax_vel_pred.set_xlabel("x", fontsize=11)
+    ax_vel_pred.set_ylabel("y", fontsize=11)
+
+    # Add colorbar for velocity panels in dedicated axis
+    cbar1 = fig.colorbar(contour2, cax=ax_vel_cbar)
+    cbar1.set_label("Velocity (m/s)", fontsize=10)
+
+    # Panel 3 & 4: Seismic Transforms with shared scale
+    seismic_vmin = min(s_observed_2d.min(), s_resim_2d.min())
+    seismic_vmax = max(s_observed_2d.max(), s_resim_2d.max())
 
     # Panel 3: Measured Seismic Transform
-    im3 = axes[2].imshow(s_observed_2d, cmap="magma", aspect="auto", origin="lower")
-    axes[2].set_title("Measured Seismic Transform s(f,t)", fontsize=12)
-    axes[2].set_xlabel("Frequency")
-    axes[2].set_ylabel("Time")
-    plt.colorbar(im3, ax=axes[2], fraction=0.046)
+    im3 = ax_seismic_obs.imshow(
+        s_observed_2d,
+        cmap="viridis",
+        aspect="auto",
+        origin="lower",
+        vmin=seismic_vmin,
+        vmax=seismic_vmax
+    )
+    ax_seismic_obs.set_title("Measured Seismic Transform s(f,t)", fontsize=13, fontweight='bold')
+    ax_seismic_obs.set_xlabel("Frequency", fontsize=11)
+    ax_seismic_obs.set_ylabel("Time", fontsize=11)
 
-    if s_resim is not None:
-        s_resim_np = s_resim.squeeze(-1).cpu().numpy()
-        s_resim_2d = s_resim_np.reshape(400, 76)
+    # Panel 4: Re-simulated Seismic Transform
+    im4 = ax_seismic_resim.imshow(
+        s_resim_2d,
+        cmap="viridis",
+        aspect="auto",
+        origin="lower",
+        vmin=seismic_vmin,
+        vmax=seismic_vmax
+    )
+    ax_seismic_resim.set_title("Re-simulated Seismic Transform ŝ(f,t)", fontsize=13, fontweight='bold')
+    ax_seismic_resim.set_xlabel("Frequency", fontsize=11)
+    ax_seismic_resim.set_ylabel("Time", fontsize=11)
 
-        # Panel 4: Re-simulated Seismic Transform
-        im4 = axes[3].imshow(s_resim_2d, cmap="magma", aspect="auto", origin="lower")
-        axes[3].set_title("Re-simulated Seismic Transform ŝ(f,t)", fontsize=12)
-        axes[3].set_xlabel("Frequency")
-        axes[3].set_ylabel("Time")
-        plt.colorbar(im4, ax=axes[3], fraction=0.046)
+    # Add colorbar for seismic transforms in dedicated axis
+    cbar2 = fig.colorbar(im4, cax=ax_seismic_cbar)
+    cbar2.set_label("Amplitude", fontsize=10)
 
-        # Panel 5: Error Field
-        error_2d = np.abs(s_observed_2d - s_resim_2d)
-        mse_resim = np.mean((s_observed_2d - s_resim_2d) ** 2)
-        mae_resim = np.mean(np.abs(s_observed_2d - s_resim_2d))
+    # Panel 5: Error Field
+    error_2d = np.abs(s_observed_2d - s_resim_2d)
+    mse_resim = np.mean((s_observed_2d - s_resim_2d) ** 2)
+    mae_resim = np.mean(np.abs(s_observed_2d - s_resim_2d))
 
-        im5 = axes[4].imshow(error_2d, cmap="Reds", aspect="auto", origin="lower")
-        axes[4].set_title(
-            f"Re-simulation Error |s - ŝ|\nMSE: {mse_resim:.6f}, MAE: {mae_resim:.6f}",
-            fontsize=12,
-        )
-        axes[4].set_xlabel("Frequency")
-        axes[4].set_ylabel("Time")
-        plt.colorbar(im5, ax=axes[4], fraction=0.046)
+    im5 = ax_error.imshow(error_2d, cmap="Reds", aspect="auto", origin="lower")
+    ax_error.set_title(
+        f"Re-simulation Error |s - ŝ|\nMSE: {mse_resim:.6f}, MAE: {mae_resim:.6f}",
+        fontsize=13,
+        fontweight='bold'
+    )
+    ax_error.set_xlabel("Frequency", fontsize=11)
+    ax_error.set_ylabel("Time", fontsize=11)
 
-    plt.tight_layout()
+    cbar3 = fig.colorbar(im5, cax=ax_error_cbar)
+    cbar3.set_label("Error", fontsize=10)
 
     # Save plot if directory provided
     if save_dir:
@@ -212,7 +283,6 @@ def plot_fwi_sample(
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"Saved plot: {save_path}")
 
-    plt.show()
     plt.close()
 
 
@@ -224,6 +294,8 @@ def plot_multiple_samples(
     forward_model,
     test_dataset,
     model_name,
+    vmin,
+    vmax,
     n_samples=3,
     save_dir=None,
 ):
@@ -246,19 +318,19 @@ def plot_multiple_samples(
             sample,
             idx,
             model_name,
+            vmin,
+            vmax,
             save_dir,
         )
 
 
-# Try to load forward model for re-simulation (may not exist)
-forward_model = None
-try:
-    from b2b.load_model import load_forward_model
+# Load forward model for re-simulation (required)
+from b2b.load_model import load_forward_model
 
-    forward_model = load_forward_model(log_dir=log_dir, forward_model_name='b2b_nonlinear', device=device)
-    print("Loaded forward model for re-simulation")
-except (FileNotFoundError, ImportError) as e:
-    print(f"Forward model not available: {e}")
+forward_model = load_forward_model(
+    log_dir=log_dir, forward_model_name="b2b_nonlinear", device=device
+)
+print("✓ Loaded forward model for re-simulation")
 
 # Plot results
 plot_multiple_samples(
@@ -269,6 +341,8 @@ plot_multiple_samples(
     forward_model=forward_model,
     test_dataset=test_dataset,
     model_name=model_name,
+    vmin=vmin,
+    vmax=vmax,
     n_samples=3,
     save_dir=results_dir,
 )

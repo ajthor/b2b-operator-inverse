@@ -17,20 +17,24 @@ from torch.utils.data import DataLoader
 from tabulate import tabulate
 
 from data.load_dataset import load_dataset
-from models.load_model import load_models, load_forward_model
+from models.load_model import load_models
+from b2b.load_model import load_forward_model
+from utils.imports import import_model_functions
 
 
 # Available models to evaluate
 MODELS = [
-    "b2b_linear",
-    "b2b_linear_deterministic",
-    "b2b_nonlinear",
+    "linear_inverse",
+    "linear",
+    "nonlinear",
     "variational_autoencoder",
     "mixture_density_network",
     "inn_additive",
     "inn_affine",
     "cinn_additive",
     "cinn_affine",
+    "cinn_additive_probabilistic",
+    "cinn_affine_probabilistic",
 ]
 
 
@@ -59,26 +63,7 @@ def compute_resimulation_loss_all_batches(
         tuple: (avg_coeff_loss, avg_pred_loss)
     """
     # Import the appropriate resimulation_loss function based on model type
-    if model_name == "b2b_linear":
-        from models.b2b_operator_linear import resimulation_loss
-    elif model_name == "b2b_linear_deterministic":
-        from models.b2b_operator_linear_deterministic import resimulation_loss
-    elif model_name == "b2b_nonlinear":
-        from models.b2b_operator_nonlinear import resimulation_loss
-    elif model_name == "variational_autoencoder":
-        from models.variational_autoencoder import resimulation_loss
-    elif model_name == "mixture_density_network":
-        from models.mixture_density_network import resimulation_loss
-    elif model_name == "inn_additive":
-        from models.inn_additive import resimulation_loss
-    elif model_name == "inn_affine":
-        from models.inn_affine import resimulation_loss
-    elif model_name == "cinn_additive":
-        from models.cinn_additive import resimulation_loss
-    elif model_name == "cinn_affine":
-        from models.cinn_affine import resimulation_loss
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+    resimulation_loss = import_model_functions(model_name, "resimulation_loss")
 
     model.eval()
     forward_model.eval()

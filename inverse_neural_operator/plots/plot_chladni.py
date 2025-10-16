@@ -1,6 +1,6 @@
 """
-Plot the results of the Wave Scattering dataset for all models.
-To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator.plots.plot_wave_scattering
+Plot the results of the Chladni 2D dataset for inverse problem.
+To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator.plots.plot_chladni
 """
 
 import os
@@ -28,7 +28,7 @@ random.seed(42)
 np.random.seed(42)
 
 
-def plot_wave_scattering_sample(
+def plot_chladni_sample(
     model,
     evaluate_fn,
     input_function_encoder,
@@ -38,13 +38,14 @@ def plot_wave_scattering_sample(
     sample_idx,
     model_name,
     save_dir=None,
+    dataset_info=None,
 ):
     """
-    Plot a single wave scattering sample with 5-panel layout:
-    1. Measured density field
-    2. Predicted far field (polar)
-    3. True far field (polar)
-    4. Re-simulated density field
+    Plot a single Chladni sample with 5-panel layout:
+    1. Measured displacement field (output)
+    2. Predicted force field (input)
+    3. True force field (input)
+    4. Re-simulated displacement field (output)
     5. Error between measured and re-simulated
     """
     model.eval()
@@ -93,73 +94,59 @@ def plot_wave_scattering_sample(
     u_pred_np = u_pred.squeeze(-1).cpu().numpy()
     s_observed_np = s_observed.squeeze(-1).cpu().numpy()
     s_resim_np = s_resim.squeeze(-1).cpu().numpy()
-    X_np = X.squeeze(-1).cpu().numpy()
 
-    # Reshape density fields from flattened (40000,) to 2D (200, 200)
-    grid_size = 200
-    s_observed_2d = s_observed_np.reshape(grid_size, grid_size)
-    s_resim_2d = s_resim_np.reshape(grid_size, grid_size)
+    # Get spatial dimensions from dataset_info
+    if dataset_info is not None:
+        h, w = dataset_info.get("input_spatial_dims", (64, 64))
+    else:
+        # Default to square grid
+        total_points = len(s_observed_np)
+        h = w = int(np.sqrt(total_points))
 
-    # Create thresholded version (binary density field)
-    s_resim_thresholded = (s_resim_2d > 0.5).astype(float)
+    # Reshape fields to 2D
+    s_observed_2d = s_observed_np.reshape(h, w)
+    s_resim_2d = s_resim_np.reshape(h, w)
+    u_true_2d = u_true_np.reshape(h, w)
+    u_pred_2d = u_pred_np.reshape(h, w)
 
-    # Calculate error (using thresholded version)
-    error_2d = np.abs(s_observed_2d - s_resim_thresholded)
-    mse_resim = np.mean((s_observed_2d - s_resim_thresholded) ** 2)
-    mae_resim = np.mean(np.abs(s_observed_2d - s_resim_thresholded))
-
-    # Extract theta coordinates for polar plots (X_np contains [cos(theta), sin(theta)])
-    theta = np.arctan2(X_np[:, 1], X_np[:, 0])  # Convert back from Cartesian to angles
+    # Calculate error
+    error_2d = np.abs(s_observed_2d - s_resim_2d)
+    mse_resim = np.mean((s_observed_2d - s_resim_2d) ** 2)
+    mae_resim = np.mean(np.abs(s_observed_2d - s_resim_2d))
 
     # Create 5-panel plot
     fig, axes = plt.subplots(1, 5, figsize=(25, 5))
 
-    # Physical domain extent
-    extent = [0, 1, 0, 1]
-
-    # Panel 1: Measured Output (Density Field)
-    im1 = axes[0].imshow(s_observed_2d, cmap="viridis", extent=extent, origin="lower")
-    axes[0].set_title("Measured Density Field s(x,y)", fontsize=12)
+    # Panel 1: Measured Output (Displacement Field)
+    im1 = axes[0].imshow(s_observed_2d, cmap="viridis", origin="lower", aspect="equal")
+    axes[0].set_title("Measured Displacement s(x,y)", fontsize=12)
     axes[0].set_xlabel("x")
     axes[0].set_ylabel("y")
     plt.colorbar(im1, ax=axes[0], fraction=0.046)
 
-    # Panel 2: Predicted Far Field (Polar)
-    axes[1] = plt.subplot(1, 5, 2, projection="polar")
-    axes[1].plot(theta, np.abs(u_pred_np), "r-", linewidth=2, label="Predicted")
-    axes[1].set_title("Predicted Far Field û(θ)", fontsize=12, pad=20)
-    axes[1].legend(loc="upper right", bbox_to_anchor=(1.3, 1.0))
+    # Panel 2: Predicted Input (Force Field)
+    im2 = axes[1].imshow(u_pred_2d, cmap="RdBu_r", origin="lower", aspect="equal")
+    axes[1].set_title("Predicted Force û(x,y)", fontsize=12)
+    axes[1].set_xlabel("x")
+    axes[1].set_ylabel("y")
+    plt.colorbar(im2, ax=axes[1], fraction=0.046)
 
-    # Panel 3: True Far Field (Polar)
-    axes[2] = plt.subplot(1, 5, 3, projection="polar")
-    axes[2].plot(theta, np.abs(u_true_np), "b-", linewidth=2, label="True")
-    axes[2].set_title("True Far Field u(θ)", fontsize=12, pad=20)
-    axes[2].legend(loc="upper right", bbox_to_anchor=(1.3, 1.0))
+    # Panel 3: True Input (Force Field)
+    im3 = axes[2].imshow(u_true_2d, cmap="RdBu_r", origin="lower", aspect="equal")
+    axes[2].set_title("True Force u(x,y)", fontsize=12)
+    axes[2].set_xlabel("x")
+    axes[2].set_ylabel("y")
+    plt.colorbar(im3, ax=axes[2], fraction=0.046)
 
-    # Panel 4: Thresholded re-simulated output with continuous inset
-    axes[3] = plt.subplot(1, 5, 4)
-    im4 = axes[3].imshow(s_resim_thresholded, cmap="viridis", extent=extent, origin="lower")
-    axes[3].set_title("Re-simulated Density Field ŝ(x,y) (thresholded)", fontsize=12)
+    # Panel 4: Re-simulated Output
+    im4 = axes[3].imshow(s_resim_2d, cmap="viridis", origin="lower", aspect="equal")
+    axes[3].set_title("Re-simulated Displacement ŝ(x,y)", fontsize=12)
     axes[3].set_xlabel("x")
     axes[3].set_ylabel("y")
     plt.colorbar(im4, ax=axes[3], fraction=0.046)
 
-    # Add inset showing continuous version in top right corner
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-    ax4_inset = inset_axes(axes[3], width="33%", height="33%", loc='upper right',
-                           borderpad=0.5)
-    ax4_inset.imshow(s_resim_2d, cmap="viridis", extent=extent, origin="lower")
-    ax4_inset.set_xticks([])
-    ax4_inset.set_yticks([])
-    ax4_inset.set_title('continuous', fontsize=8, pad=2)
-    # Add border to inset
-    for spine in ax4_inset.spines.values():
-        spine.set_edgecolor('white')
-        spine.set_linewidth(1.5)
-
     # Panel 5: Error Field
-    axes[4] = plt.subplot(1, 5, 5)
-    im5 = axes[4].imshow(error_2d, cmap="Reds", extent=extent, origin="lower")
+    im5 = axes[4].imshow(error_2d, cmap="Reds", origin="lower", aspect="equal")
     axes[4].set_title(
         f"Re-simulation Error |s - ŝ|\nMSE: {mse_resim:.6f}, MAE: {mae_resim:.6f}",
         fontsize=12,
@@ -189,6 +176,7 @@ def plot_multiple_samples(
     model_name,
     n_samples=3,
     save_dir=None,
+    dataset_info=None,
 ):
     """Plot multiple random samples from the test set."""
 
@@ -199,7 +187,7 @@ def plot_multiple_samples(
 
     for idx in test_indices:
         sample = test_dataset[idx]
-        plot_wave_scattering_sample(
+        plot_chladni_sample(
             model,
             evaluate_fn,
             input_function_encoder,
@@ -209,6 +197,7 @@ def plot_multiple_samples(
             idx,
             model_name,
             save_dir,
+            dataset_info,
         )
 
 
@@ -254,12 +243,13 @@ def plot_model_results(
         model_name=model_name,
         n_samples=n_samples,
         save_dir=results_dir,
+        dataset_info=dataset_info,
     )
 
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(
-    description="Plot Wave Scattering results for all models."
+    description="Plot Chladni 2D results for all models."
 )
 parser.add_argument(
     "--log_dir",
@@ -270,7 +260,7 @@ parser.add_argument(
 parser.add_argument(
     "--results_dir",
     type=str,
-    default="results/wave_scattering_plots",
+    default="results/chladni_2d_plots",
     help="Results directory for saving plots",
 )
 parser.add_argument(

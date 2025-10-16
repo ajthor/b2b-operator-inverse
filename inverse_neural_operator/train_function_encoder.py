@@ -134,9 +134,9 @@ function_encoder = create_function_encoder(
     hidden_sizes=params.hidden_sizes,
     output_size=output_size,
     n_basis=params.n_basis,
-    # inner_product=(
-    #     memory_efficient_inner_product if params.dataset in ["fwi"] else None
-    # ),
+    inner_product=(
+        memory_efficient_inner_product if params.dataset in ["fwi"] else None
+    ),
     regularization=params.regularization,
 )
 # function_encoder = torch.compile(function_encoder)
