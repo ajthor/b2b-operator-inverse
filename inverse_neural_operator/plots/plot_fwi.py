@@ -74,6 +74,12 @@ vmin = stats["models_min"]
 vmax = stats["models_max"]
 print(f"✓ Loaded normalization stats: velocity range [{vmin:.2f}, {vmax:.2f}]")
 
+# Load/create gradient for reconstruction
+from data.fwi_data import _create_linear_gradient
+gradient = _create_linear_gradient()
+gradient_flat = gradient.flatten()
+print(f"✓ Created gradient for reconstruction: [{gradient.min():.2f}, {gradient.max():.2f}]")
+
 # Create results directory
 os.makedirs(results_dir, exist_ok=True)
 
@@ -156,11 +162,19 @@ def plot_fwi_sample(
     u_pred_np = u_pred.squeeze(-1).cpu().numpy()
     s_observed_np = s_observed.squeeze(-1).cpu().numpy()
 
-    # Denormalize velocity models from [-1, 1] back to original range
-    # The normalization formula was: 2 * (v - vmin) / (vmax - vmin) - 1
-    # So denormalization is: v = ((normalized + 1) / 2) * (vmax - vmin) + vmin
-    u_true_np = ((u_true_np + 1) / 2) * (vmax - vmin) + vmin
-    u_pred_np = ((u_pred_np + 1) / 2) * (vmax - vmin) + vmin
+    # Denormalize velocity residuals from [-1, 1] back to residual range
+    # Then add gradient to get original velocities
+    # Residual normalization range: [vmin - 900, vmax - 100]
+    residual_min = vmin - 900.0
+    residual_max = vmax - 100.0
+
+    # Denormalize residuals
+    u_true_residual = ((u_true_np + 1) / 2) * (residual_max - residual_min) + residual_min
+    u_pred_residual = ((u_pred_np + 1) / 2) * (residual_max - residual_min) + residual_min
+
+    # Add gradient back to get original velocities
+    u_true_np = u_true_residual + gradient_flat
+    u_pred_np = u_pred_residual + gradient_flat
 
     # Reshape velocity models from flattened (1152,) to 2D (24, 48)
     u_true_2d = u_true_np.reshape(24, 48)

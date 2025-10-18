@@ -1,11 +1,11 @@
 # Default arguments for train_model.py
 dataset: burgers_1d
 model: nonlinear
-hidden_sizes: [256, 256, 256]
-forward_model: b2b_nonlinear
-lambda_u: 0.0
 
-batch_size: 50
+hidden_sizes: [512, 512, 512]
+forward_model: b2b_nonlinear
+
+batch_size: 20
 epochs: 10000
 learning_rate: 0.0001
 

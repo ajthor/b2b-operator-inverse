@@ -1,10 +1,10 @@
 # Default arguments for train_forward_model.py
 dataset: burgers_1d
 model: b2b_nonlinear
-hidden_sizes: [256, 256, 256]
-lambda_u: 0.0
 
-batch_size: 50
+hidden_sizes: [512, 512, 512]
+
+batch_size: 20
 epochs: 10000
 learning_rate: 0.0001
 
@@ -13,4 +13,4 @@ log_dir: /store/at46867/b2b_operator_inverse/
 seed: 42
 
 checkpoint_interval: 100
-resume: true
+resume: false

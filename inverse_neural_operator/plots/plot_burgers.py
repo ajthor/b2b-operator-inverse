@@ -36,6 +36,160 @@ MODELS = [
 ]
 
 
+def plot_function_encoder_realizations(
+    function_encoder,
+    coordinates,
+    n_samples=9,
+    seed=42,
+    title_prefix="Input",
+    save_path=None,
+):
+    """
+    Plot random realizations from a function encoder by sampling basis coefficients.
+    For Burgers (1D): plots 3x3 grid of 1D function realizations.
+    """
+    function_encoder.eval()
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    with torch.no_grad():
+        # Get number of basis functions
+        n_basis = function_encoder.basis_functions.num_heads
+
+        # Sample random coefficients from standard normal distribution
+        alpha = torch.randn(n_samples, n_basis, device=device)
+
+        # Add batch dimension to coordinates and repeat for all samples
+        coords_batch = coordinates.unsqueeze(0).repeat(n_samples, 1, 1).to(device)
+
+        # Evaluate function encoder at coordinates
+        functions = function_encoder(coords_batch, alpha)
+
+    # Convert to numpy for plotting
+    functions_np = functions.cpu().numpy()
+    coords_np = coordinates.cpu().numpy()
+
+    # Extract x coordinates
+    if coords_np.shape[1] == 1:
+        x_coords = coords_np[:, 0]
+    else:
+        x_coords = coords_np[:, 0]
+
+    # Create 3x3 grid
+    fig, axes = plt.subplots(3, 3, figsize=(12, 10))
+    axes = axes.flatten()
+
+    for idx in range(n_samples):
+        ax = axes[idx]
+        function_values = functions_np[idx].squeeze()
+
+        ax.plot(x_coords, function_values, 'b-', linewidth=1.5)
+        ax.set_title(f'Realization {idx + 1}', fontsize=10)
+        ax.set_xlabel('x', fontsize=9)
+        ax.set_ylabel('value', fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+    fig.suptitle(f'{title_prefix} Function Encoder - Random Realizations (seed={seed})',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved: {save_path}")
+
+    plt.close()
+
+
+def plot_forward_model_comparison_grid(
+    forward_model,
+    input_function_encoder,
+    output_function_encoder,
+    test_dataset,
+    model_name,
+    n_samples=9,
+    seed=42,
+    save_path=None,
+):
+    """
+    Plot forward model predictions vs true outputs for random test samples in a 3x3 grid.
+    For Burgers (1D): shows 9 samples with predicted vs true output.
+    """
+    forward_model.eval()
+    input_function_encoder.eval()
+    output_function_encoder.eval()
+
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    # Randomly select samples from test dataset
+    indices = torch.randperm(len(test_dataset))[:n_samples].tolist()
+
+    # Create 3x3 grid
+    fig, axes = plt.subplots(3, 3, figsize=(15, 12))
+    axes = axes.flatten()
+
+    for plot_idx, sample_idx in enumerate(indices):
+        ax = axes[plot_idx]
+
+        # Get sample
+        X, u, Y, s_true = test_dataset[sample_idx]
+        X = X.to(device)
+        u = u.to(device)
+        Y = Y.to(device)
+        s_true = s_true.to(device)
+
+        with torch.no_grad():
+            # Add batch dimension
+            X_batch = X.unsqueeze(0)
+            u_batch = u.unsqueeze(0)
+            Y_batch = Y.unsqueeze(0)
+
+            # Compute alpha coefficients from input
+            alpha, _ = input_function_encoder.compute_coefficients(X_batch, u_batch)
+
+            # Forward pass through model
+            beta_pred = forward_model.forward(alpha)
+
+            # Reconstruct predicted output
+            s_pred = output_function_encoder(Y_batch, beta_pred)
+            s_pred = s_pred.squeeze(0)
+
+        # Convert to numpy
+        s_true_np = s_true.squeeze().cpu().numpy()
+        s_pred_np = s_pred.squeeze().cpu().numpy()
+        Y_np = Y.cpu().numpy()
+
+        # Extract coordinates
+        if Y_np.shape[1] == 1:
+            y_coords = Y_np[:, 0]
+        else:
+            y_coords = Y_np[:, 0]
+
+        # Compute error
+        mse = np.mean((s_true_np - s_pred_np) ** 2)
+
+        # Plot
+        ax.plot(y_coords, s_true_np, 'b-', label='True', linewidth=1.5, alpha=0.7)
+        ax.plot(y_coords, s_pred_np, 'r--', label='Predicted', linewidth=1.5, alpha=0.7)
+        ax.set_title(f'Sample {sample_idx}\nMSE: {mse:.2e}', fontsize=9)
+        ax.set_xlabel('y', fontsize=8)
+        ax.set_ylabel('s(y)', fontsize=8)
+        ax.legend(fontsize=7)
+        ax.grid(True, alpha=0.3)
+
+    fig.suptitle(f'{model_name} Forward Model - Predictions vs True Outputs (seed={seed})',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved: {save_path}")
+
+    plt.close()
+
+
 def plot_forward_model_sample(
     model,
     input_function_encoder,

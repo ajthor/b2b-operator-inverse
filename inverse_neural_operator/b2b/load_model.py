@@ -140,9 +140,7 @@ def load_forward_model(log_dir: str, forward_model_name: str, device: str = "cpu
     )
 
     # Load forward model weights
-    forward_model.load_state_dict(
-        torch.load(forward_model_path, map_location=device)
-    )
+    forward_model.load_state_dict(torch.load(forward_model_path, map_location=device))
     forward_model.eval()
 
     return forward_model

@@ -24,6 +24,14 @@ def load_dataset(dataset_name, params, device, split="train", return_info=False)
     """
     # Apply dataset-specific batch size adjustments
 
+    if dataset_name == "fwi":
+        if hasattr(params, "batch_size") and params.batch_size > 20:
+            print(
+                f"Batch size {params.batch_size} is too large for the fwi dataset. "
+                "Setting batch size to 20."
+            )
+            params.batch_size = 20
+
     if dataset_name == "wave_scattering":
         if hasattr(params, "batch_size") and params.batch_size > 4:
             print(
