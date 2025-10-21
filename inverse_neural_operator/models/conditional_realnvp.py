@@ -384,13 +384,8 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
     with torch.no_grad():
         X, u, Y, s = point
         beta, _ = output_function_encoder.compute_coefficients(Y, s)
-        z_zero = torch.zeros(
-            beta.shape[0],
-            model.latent_size,
-            device=beta.device,
-            dtype=beta.dtype,
-        )
-        alpha_pred = model.inverse(z_zero, beta)
+        z = model.sample_prior(beta.shape[0], device=beta.device)
+        alpha_pred = model.inverse(z, beta)
         pred = input_function_encoder(X, alpha_pred)
         return pred, alpha_pred
 
