@@ -5,7 +5,7 @@ model: b2b_nonlinear
 hidden_sizes: [512, 512, 512]
 
 batch_size: 20
-epochs: 10000
+epochs: 20000
 learning_rate: 0.0001
 
 log_dir: /store/at46867/b2b_operator_inverse/
