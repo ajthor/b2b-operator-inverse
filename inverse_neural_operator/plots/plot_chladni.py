@@ -231,7 +231,9 @@ def plot_model_results(
     )
 
     # Load forward model for re-simulation
-    forward_model = load_forward_model(log_dir=model_log_dir, forward_model_name='b2b_nonlinear', device=device)
+    forward_model = load_forward_model(
+        log_dir=model_log_dir, forward_model_name="b2b_nonlinear", device=device
+    )
 
     # Plot results
     plot_multiple_samples(
@@ -293,13 +295,11 @@ def plot_model_results(
 
 
 # Parse command line arguments
-parser = argparse.ArgumentParser(
-    description="Plot Chladni 2D results for all models."
-)
+parser = argparse.ArgumentParser(description="Plot Chladni 2D results for all models.")
 parser.add_argument(
     "--log_dir",
     type=str,
-    default="/workspaces/b2b-operator-inverse/logs",
+    default="/store/at46867/b2b_operator_inverse",
     help="Complete path to model directory (e.g., /path/to/logs/dataset/model/seed_1)",
 )
 parser.add_argument(

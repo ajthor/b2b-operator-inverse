@@ -122,15 +122,27 @@ def plot_burgers_probabilistic_sample(
     # Plot all realizations
     for i, u_sample_np in enumerate(u_samples_np):
         alpha = 0.6 if len(u_samples_np) > 1 else 0.8
-        color = "r" if len(u_samples_np) == 1 else plt.cm.Reds(0.4 + 0.6 * i / max(1, len(u_samples_np) - 1))
+        color = (
+            "r"
+            if len(u_samples_np) == 1
+            else plt.cm.Reds(0.4 + 0.6 * i / max(1, len(u_samples_np) - 1))
+        )
         label = f"Realization {i+1}" if len(u_samples_np) > 1 and i < 5 else None
         if len(u_samples_np) == 1:
             label = "Predicted Input û(x)"
         axes[1].plot(
-            x_coords, u_sample_np, "--", color=color, linewidth=2, alpha=alpha, label=label
+            x_coords,
+            u_sample_np,
+            "--",
+            color=color,
+            linewidth=2,
+            alpha=alpha,
+            label=label,
         )
 
-    axes[1].set_title(f"Input Function: True vs {len(u_samples_np)} Realizations", fontsize=12)
+    axes[1].set_title(
+        f"Input Function: True vs {len(u_samples_np)} Realizations", fontsize=12
+    )
     axes[1].set_xlabel("x")
     axes[1].set_ylabel("u(x)")
     axes[1].legend()
@@ -138,19 +150,34 @@ def plot_burgers_probabilistic_sample(
 
     # Plot 3: Re-simulation comparison
     axes[2].plot(
-        y_coords, s_observed_np, "g-", label="True Observed s(y)", linewidth=3, alpha=0.8
+        y_coords,
+        s_observed_np,
+        "g-",
+        label="True Observed s(y)",
+        linewidth=3,
+        alpha=0.8,
     )
 
     # Plot all re-simulation realizations
     mse_values = []
     for i, s_resim_np in enumerate(s_resim_samples_np):
         alpha = 0.6 if len(s_resim_samples_np) > 1 else 0.8
-        color = "m" if len(s_resim_samples_np) == 1 else plt.cm.Purples(0.4 + 0.6 * i / max(1, len(s_resim_samples_np) - 1))
+        color = (
+            "m"
+            if len(s_resim_samples_np) == 1
+            else plt.cm.Purples(0.4 + 0.6 * i / max(1, len(s_resim_samples_np) - 1))
+        )
         label = f"Re-sim {i+1}" if len(s_resim_samples_np) > 1 and i < 5 else None
         if len(s_resim_samples_np) == 1:
             label = "Re-simulated ŝ(y)"
         axes[2].plot(
-            y_coords, s_resim_np, "--", color=color, linewidth=2, alpha=alpha, label=label
+            y_coords,
+            s_resim_np,
+            "--",
+            color=color,
+            linewidth=2,
+            alpha=alpha,
+            label=label,
         )
 
         # Calculate error metrics
@@ -170,7 +197,11 @@ def plot_burgers_probabilistic_sample(
     axes[2].grid(True, alpha=0.3)
 
     # Detect if model is probabilistic by checking for variation in samples
-    is_probabilistic = len(set([tuple(u.flatten().tolist()) for u in u_samples_np[:2]])) > 1 if len(u_samples_np) > 1 else False
+    is_probabilistic = (
+        len(set([tuple(u.flatten().tolist()) for u in u_samples_np[:2]])) > 1
+        if len(u_samples_np) > 1
+        else False
+    )
     model_type = "Probabilistic" if is_probabilistic else "Deterministic"
     fig.suptitle(f"{model_name} ({model_type}) - Sample {sample_idx}", fontsize=14)
 
@@ -179,7 +210,9 @@ def plot_burgers_probabilistic_sample(
     # Save plot if directory provided
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"{model_name}_probabilistic_sample_{sample_idx}.png")
+        save_path = os.path.join(
+            save_dir, f"{model_name}_probabilistic_sample_{sample_idx}.png"
+        )
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     plt.close()
@@ -221,7 +254,13 @@ def plot_multiple_samples(
 
 
 def plot_model_results(
-    model_name, log_dir, results_dir, test_dataset, dataset_info, n_samples=3, n_realizations=10
+    model_name,
+    log_dir,
+    results_dir,
+    test_dataset,
+    dataset_info,
+    n_samples=3,
+    n_realizations=10,
 ):
     """Plot results for a single model.
 
@@ -250,7 +289,9 @@ def plot_model_results(
     )
 
     # Load forward model for re-simulation
-    forward_model = load_forward_model(log_dir=model_log_dir, forward_model_name='b2b_nonlinear', device=device)
+    forward_model = load_forward_model(
+        log_dir=model_log_dir, forward_model_name="b2b_nonlinear", device=device
+    )
 
     # Plot results
     plot_multiple_samples(
@@ -272,7 +313,7 @@ parser = argparse.ArgumentParser(description="Plot Darcy 1D probabilistic result
 parser.add_argument(
     "--log_dir",
     type=str,
-    default="/workspaces/b2b-operator-inverse/logs",
+    default="/store/at46867/b2b_operator_inverse",
     help="Complete path to model directory (e.g., /path/to/logs/dataset/model/seed_1)",
 )
 parser.add_argument(
@@ -320,13 +361,17 @@ if not os.path.exists(os.path.join(log_dir, "params.pth")):
 print(f"Loading model parameters and dataset...")
 # Load dataset using the model's parameters
 params = torch.load(os.path.join(log_dir, "params.pth"), weights_only=False)
-test_dataset, dataset_info = load_dataset(params.dataset, params, device, split="test", return_info=True)
+test_dataset, dataset_info = load_dataset(
+    params.dataset, params, device, split="test", return_info=True
+)
 print(f"✓ Loaded {len(test_dataset)} test samples")
 
 # Create results directory
 os.makedirs(results_dir, exist_ok=True)
 
-print(f"Generating {args.n_samples} probabilistic plots ({args.n_realizations} realizations each)...")
+print(
+    f"Generating {args.n_samples} probabilistic plots ({args.n_realizations} realizations each)..."
+)
 # Plot results for the specified model
 plot_model_results(
     model_name=model_name,

@@ -83,19 +83,22 @@ def plot_function_encoder_realizations(
         ax = axes[idx]
         function_values = functions_np[idx].squeeze()
 
-        ax.plot(x_coords, function_values, 'b-', linewidth=1.5)
-        ax.set_title(f'Realization {idx + 1}', fontsize=10)
-        ax.set_xlabel('x', fontsize=9)
-        ax.set_ylabel('value', fontsize=9)
+        ax.plot(x_coords, function_values, "b-", linewidth=1.5)
+        ax.set_title(f"Realization {idx + 1}", fontsize=10)
+        ax.set_xlabel("x", fontsize=9)
+        ax.set_ylabel("value", fontsize=9)
         ax.grid(True, alpha=0.3)
 
-    fig.suptitle(f'{title_prefix} Function Encoder - Random Realizations (seed={seed})',
-                 fontsize=14, fontweight='bold')
+    fig.suptitle(
+        f"{title_prefix} Function Encoder - Random Realizations (seed={seed})",
+        fontsize=14,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"Saved: {save_path}")
 
     plt.close()
@@ -170,21 +173,24 @@ def plot_forward_model_comparison_grid(
         mse = np.mean((s_true_np - s_pred_np) ** 2)
 
         # Plot
-        ax.plot(y_coords, s_true_np, 'b-', label='True', linewidth=1.5, alpha=0.7)
-        ax.plot(y_coords, s_pred_np, 'r--', label='Predicted', linewidth=1.5, alpha=0.7)
-        ax.set_title(f'Sample {sample_idx}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('y', fontsize=8)
-        ax.set_ylabel('s(y)', fontsize=8)
+        ax.plot(y_coords, s_true_np, "b-", label="True", linewidth=1.5, alpha=0.7)
+        ax.plot(y_coords, s_pred_np, "r--", label="Predicted", linewidth=1.5, alpha=0.7)
+        ax.set_title(f"Sample {sample_idx}\nMSE: {mse:.2e}", fontsize=9)
+        ax.set_xlabel("y", fontsize=8)
+        ax.set_ylabel("s(y)", fontsize=8)
         ax.legend(fontsize=7)
         ax.grid(True, alpha=0.3)
 
-    fig.suptitle(f'{model_name} Forward Model - Predictions vs True Outputs (seed={seed})',
-                 fontsize=14, fontweight='bold')
+    fig.suptitle(
+        f"{model_name} Forward Model - Predictions vs True Outputs (seed={seed})",
+        fontsize=14,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"Saved: {save_path}")
 
     plt.close()
@@ -540,7 +546,9 @@ def plot_model_results(
     )
 
     # Load forward model for re-simulation
-    forward_model = load_forward_model(log_dir=model_log_dir, forward_model_name='b2b_nonlinear', device=device)
+    forward_model = load_forward_model(
+        log_dir=model_log_dir, forward_model_name="b2b_nonlinear", device=device
+    )
 
     # Use results_dir directly (already includes dataset/model path from plot_all.sh)
     # model_results_dir = os.path.join(results_dir, model_name)
@@ -627,7 +635,7 @@ parser = argparse.ArgumentParser(description="Plot Burgers 1D results for all mo
 parser.add_argument(
     "--log_dir",
     type=str,
-    default="/workspaces/b2b-operator-inverse/logs",
+    default="/store/at46867/b2b_operator_inverse",
     help="Complete path to model directory (e.g., /path/to/logs/dataset/model/seed_1)",
 )
 parser.add_argument(
