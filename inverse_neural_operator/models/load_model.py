@@ -62,6 +62,7 @@ def load_models(
         "cinn_affine_probabilistic",
         "ifno",
         "mixture_density_network",
+        "conditional_realnvp",
     ]:
         input_params, output_params = load_function_encoder_params(log_dir)
         input_size = input_params.n_basis

@@ -17,4 +17,4 @@ log_dir: /store/at46867/b2b_operator_inverse/
 seed: 42
 
 checkpoint_interval: 100
-resume: true
+resume: false

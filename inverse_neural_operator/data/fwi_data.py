@@ -197,7 +197,7 @@ def load_data(params, device, split="train"):
 
     # Create linear gradient for bias subtraction (created once and reused)
     gradient = _create_linear_gradient()
-    stats['gradient'] = gradient
+    stats["gradient"] = gradient
     print(f"Created linear gradient bias: [{gradient.min():.1f}, {gradient.max():.1f}]")
 
     def _normalize_transform(batch, stats):
@@ -207,9 +207,9 @@ def load_data(params, device, split="train"):
         models = np.array(batch["models"])
         models = models.squeeze(-1)  # Remove channel dim -> (batch_size, 24, 48)
 
-        # Expand gradient to (1, 24, 48) for broadcasting over batch dimension
-        gradient_expanded = np.expand_dims(stats["gradient"], axis=0)
-        models = models - gradient_expanded
+        # # Expand gradient to (1, 24, 48) for broadcasting over batch dimension
+        # gradient_expanded = np.expand_dims(stats["gradient"], axis=0)
+        # models = models - gradient_expanded
 
         # Normalize residuals to [-1, 1] using adjusted stats
         # After subtracting gradient [100, 900]:
@@ -218,12 +218,7 @@ def load_data(params, device, split="train"):
         residual_min = stats["models_min"] - 900.0
         residual_max = stats["models_max"] - 100.0
         if residual_max > residual_min:
-            models = (
-                2
-                * (models - residual_min)
-                / (residual_max - residual_min)
-                - 1
-            )
+            models = 2 * (models - residual_min) / (residual_max - residual_min) - 1
         batch["models"] = models
 
         # Normalize transforms to [-1, 1] using global stats

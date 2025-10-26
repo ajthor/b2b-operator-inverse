@@ -74,11 +74,11 @@ vmin = stats["models_min"]
 vmax = stats["models_max"]
 print(f"✓ Loaded normalization stats: velocity range [{vmin:.2f}, {vmax:.2f}]")
 
-# Load/create gradient for reconstruction
-from data.fwi_data import _create_linear_gradient
-gradient = _create_linear_gradient()
-gradient_flat = gradient.flatten()
-print(f"✓ Created gradient for reconstruction: [{gradient.min():.2f}, {gradient.max():.2f}]")
+# # Load/create gradient for reconstruction
+# from data.fwi_data import _create_linear_gradient
+# gradient = _create_linear_gradient()
+# gradient_flat = gradient.flatten()
+# print(f"✓ Created gradient for reconstruction: [{gradient.min():.2f}, {gradient.max():.2f}]")
 
 # Create results directory
 os.makedirs(results_dir, exist_ok=True)
@@ -146,9 +146,7 @@ def plot_fwi_sample(
         Y_batch = Y.unsqueeze(0)
 
         # Compute alpha coefficients from predicted input
-        alpha, _ = input_function_encoder.compute_coefficients(
-            X_batch, u_pred_batch
-        )
+        alpha, _ = input_function_encoder.compute_coefficients(X_batch, u_pred_batch)
 
         # Forward pass through model to get beta coefficients
         beta_pred = forward_model.forward(alpha)
@@ -169,12 +167,16 @@ def plot_fwi_sample(
     residual_max = vmax - 100.0
 
     # Denormalize residuals
-    u_true_residual = ((u_true_np + 1) / 2) * (residual_max - residual_min) + residual_min
-    u_pred_residual = ((u_pred_np + 1) / 2) * (residual_max - residual_min) + residual_min
+    u_true_residual = ((u_true_np + 1) / 2) * (
+        residual_max - residual_min
+    ) + residual_min
+    u_pred_residual = ((u_pred_np + 1) / 2) * (
+        residual_max - residual_min
+    ) + residual_min
 
-    # Add gradient back to get original velocities
-    u_true_np = u_true_residual + gradient_flat
-    u_pred_np = u_pred_residual + gradient_flat
+    # # Add gradient back to get original velocities
+    # u_true_np = u_true_residual + gradient_flat
+    # u_pred_np = u_pred_residual + gradient_flat
 
     # Reshape velocity models from flattened (1152,) to 2D (24, 48)
     u_true_2d = u_true_np.reshape(24, 48)
@@ -192,7 +194,9 @@ def plot_fwi_sample(
 
     # Create GridSpec with 3 groups: velocity pair, seismic pair, error
     # Each group has space for data plots + colorbar
-    gs = fig.add_gridspec(1, 13, width_ratios=[4, 4, 0.3, 0.5, 4, 4, 0.3, 0.5, 4, 0.3, 0.5, 0.5, 0.5])
+    gs = fig.add_gridspec(
+        1, 13, width_ratios=[4, 4, 0.3, 0.5, 4, 4, 0.3, 0.5, 4, 0.3, 0.5, 0.5, 0.5]
+    )
 
     # Velocity model panels
     ax_vel_true = fig.add_subplot(gs[0, 0])
@@ -226,7 +230,7 @@ def plot_fwi_sample(
         vmin=shared_vmin,
         vmax=shared_vmax,
     )
-    ax_vel_true.set_title("True Velocity Model u(x,y)", fontsize=13, fontweight='bold')
+    ax_vel_true.set_title("True Velocity Model u(x,y)", fontsize=13, fontweight="bold")
     ax_vel_true.set_xlabel("x", fontsize=11)
     ax_vel_true.set_ylabel("y", fontsize=11)
 
@@ -239,7 +243,9 @@ def plot_fwi_sample(
         vmin=shared_vmin,
         vmax=shared_vmax,
     )
-    ax_vel_pred.set_title("Predicted Velocity Model û(x,y)", fontsize=13, fontweight='bold')
+    ax_vel_pred.set_title(
+        "Predicted Velocity Model û(x,y)", fontsize=13, fontweight="bold"
+    )
     ax_vel_pred.set_xlabel("x", fontsize=11)
     ax_vel_pred.set_ylabel("y", fontsize=11)
 
@@ -258,9 +264,11 @@ def plot_fwi_sample(
         aspect="auto",
         origin="lower",
         vmin=seismic_vmin,
-        vmax=seismic_vmax
+        vmax=seismic_vmax,
     )
-    ax_seismic_obs.set_title("Measured Seismic Transform s(f,t)", fontsize=13, fontweight='bold')
+    ax_seismic_obs.set_title(
+        "Measured Seismic Transform s(f,t)", fontsize=13, fontweight="bold"
+    )
     ax_seismic_obs.set_xlabel("Frequency", fontsize=11)
     ax_seismic_obs.set_ylabel("Time", fontsize=11)
 
@@ -271,9 +279,11 @@ def plot_fwi_sample(
         aspect="auto",
         origin="lower",
         vmin=seismic_vmin,
-        vmax=seismic_vmax
+        vmax=seismic_vmax,
     )
-    ax_seismic_resim.set_title("Re-simulated Seismic Transform ŝ(f,t)", fontsize=13, fontweight='bold')
+    ax_seismic_resim.set_title(
+        "Re-simulated Seismic Transform ŝ(f,t)", fontsize=13, fontweight="bold"
+    )
     ax_seismic_resim.set_xlabel("Frequency", fontsize=11)
     ax_seismic_resim.set_ylabel("Time", fontsize=11)
 
@@ -290,7 +300,7 @@ def plot_fwi_sample(
     ax_error.set_title(
         f"Re-simulation Error |s - ŝ|\nMSE: {mse_resim:.6f}, MAE: {mae_resim:.6f}",
         fontsize=13,
-        fontweight='bold'
+        fontweight="bold",
     )
     ax_error.set_xlabel("Frequency", fontsize=11)
     ax_error.set_ylabel("Time", fontsize=11)
