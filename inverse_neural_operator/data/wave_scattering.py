@@ -20,32 +20,33 @@ class WaveScatteringDataset(Dataset):
         self.device = device
         self.n_samples = len(dataset)
 
-        # Extract theta, u, and s values from dataset
-        # theta is a list of 100 angle values (the measurement directions)
-        self.theta = torch.tensor(dataset["theta"], device=device)  # [n_samples, 100]
-        self.u = torch.tensor(dataset["u"], device=device)  # [n_samples, 100, 2] - complex measurements
-        self.s = torch.tensor(dataset["s"], device=device)  # [n_samples, 200, 200]
+        # Extract theta (X), u, and s values from dataset
+        self.X = torch.tensor(dataset["theta"], device=device)  # Input parameters
+        self.u = torch.tensor(dataset["u"], device=device)  # Input function values
+        self.s = torch.tensor(dataset["s"], device=device)
 
-        # s is [n_samples, 200, 200]. Flatten it to [n_samples, 40000]
+        # X is in radians, so we convert it to Cartesian coordinates
+        self.X = torch.stack([torch.cos(self.X), torch.sin(self.X)], dim=-1)
+
+        # s is [1000, 200, 200]. Flatten it to [1000, 40000]
         self.s = self.s.view(self.s.shape[0], -1)
 
-        # Add channel dimension to s: [n_samples, 40000, 1]
+        # Ensure correct dimensions
+        if self.X.dim() == 2:
+            self.X = self.X.unsqueeze(-1)
+        if self.u.dim() == 2:
+            self.u = self.u.unsqueeze(-1)
         if self.s.dim() == 2:
             self.s = self.s.unsqueeze(-1)
 
-        # Create 1D spatial coordinates for input domain (100 measurement points)
-        # X represents angular positions (0 to 2π) for the 100 measurement directions
-        input_coords = torch.linspace(0, 1, 100, device=device)
-        self.X = input_coords.unsqueeze(0).unsqueeze(-1).expand(self.n_samples, -1, -1)  # [n_samples, 100, 1]
-
-        # Create a 2D meshgrid for Y coordinates (output domain)
+        # Create a meshgrid for Y coordinates
         grid_size = 200
         x = torch.linspace(0, 1, grid_size, device=device)
         y = torch.linspace(0, 1, grid_size, device=device)
         X_grid, Y_grid = torch.meshgrid(x, y, indexing="ij")
 
         self.Y = torch.stack([X_grid.flatten(), Y_grid.flatten()], dim=1)
-        self.Y = self.Y.unsqueeze(0).expand(self.s.shape[0], -1, -1)  # [n_samples, 40000, 2]
+        self.Y = self.Y.unsqueeze(0).expand(self.s.shape[0], -1, -1)
 
     def __len__(self):
         return self.n_samples
@@ -80,13 +81,12 @@ class WaveScatteringDataset(Dataset):
             "u_len": self.u.shape[0],
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
-            
             # iFNO spatial info (hardcoded for Wave Scattering - asymmetric)
-            "input_spatial_dims": (100,),        # 1D input domain (100 measurement directions)
-            "output_spatial_dims": (200, 200),   # 2D output domain (200x200 spatial grid)
-            "input_function_channels": 2,        # 2-channel input (real/imaginary parts of scattered wave)
-            "output_function_channels": 1,       # Scalar output field
-            "coordinate_dim": 2,                 # For asymmetric, actual coord dims inferred from spatial_dims
+            "input_spatial_dims": (200,),  # 1D angular domain
+            "output_spatial_dims": (200, 200),  # 2D spatial domain
+            "input_function_channels": 1,  # Scalar wave parameters
+            "output_function_channels": 1,  # Scalar scattered field
+            "coordinate_dim": 2,  # Output coordinates are 2D
         }
 
 
