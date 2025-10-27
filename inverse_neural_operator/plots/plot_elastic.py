@@ -15,7 +15,7 @@ from scipy.interpolate import griddata
 # Add path for imports
 sys.path.insert(0, 'inverse_neural_operator')
 
-from models.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,

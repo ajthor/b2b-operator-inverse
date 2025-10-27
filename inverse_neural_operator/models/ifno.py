@@ -109,6 +109,7 @@ class VAE1D(nn.Module):
         super(VAE1D, self).__init__()
         self.latent_dim = latent_dim
         self.input_length = input_length
+        self.in_channels = in_channels  # Store for decoder output
         modules = []
         if hidden_dims is None:
             hidden_dims = [32, 64, 128, 256, 512]
@@ -129,14 +130,17 @@ class VAE1D(nn.Module):
             in_channels = h_dim
 
         self.encoder = nn.Sequential(*modules)
-        
+
+        # Cache encoder output channels before reversing hidden_dims
+        self.encoder_out_channels = hidden_dims[-1]
+
         # Calculate actual flattened size after convolutions using a dummy forward pass
         with torch.no_grad():
-            dummy_input = torch.zeros(1, 1, input_length)
+            dummy_input = torch.zeros(1, self.in_channels, input_length)
             dummy_output = self.encoder(dummy_input)
             self.encoded_size = dummy_output.numel()
             self.reduced_length = dummy_output.shape[-1]
-        
+
         self.fc_mu = nn.Linear(self.encoded_size, latent_dim)
         self.fc_var = nn.Linear(self.encoded_size, latent_dim)
 
@@ -170,7 +174,7 @@ class VAE1D(nn.Module):
                 output_padding=1,
             ),
             nn.GELU(),
-            nn.Conv1d(hidden_dims[-1], out_channels=1, kernel_size=3, padding=1),
+            nn.Conv1d(hidden_dims[-1], out_channels=self.in_channels, kernel_size=3, padding=1),
         )
 
     def encode(self, input):
@@ -182,7 +186,7 @@ class VAE1D(nn.Module):
 
     def decode(self, z):
         result = self.decoder_input(z)
-        result = result.view(-1, 512, self.reduced_length)
+        result = result.view(-1, self.encoder_out_channels, self.reduced_length)
         result = self.decoder(result)
         result = self.final_layer(result)
         
@@ -218,6 +222,7 @@ class VAE2D(nn.Module):
         super(VAE2D, self).__init__()
         self.latent_dim = latent_dim
         self.input_size = input_size  # (H, W) tuple
+        self.in_channels = in_channels  # Store for decoder output
         modules = []
         if hidden_dims is None:
             hidden_dims = [32, 64, 128, 256, 512]
@@ -238,15 +243,18 @@ class VAE2D(nn.Module):
             in_channels = h_dim
 
         self.encoder = nn.Sequential(*modules)
-        
+
+        # Cache encoder output channels before reversing hidden_dims
+        self.encoder_out_channels = hidden_dims[-1]
+
         # Calculate actual flattened size after convolutions using a dummy forward pass
         with torch.no_grad():
-            dummy_input = torch.zeros(1, 1, input_size[0], input_size[1])
+            dummy_input = torch.zeros(1, self.in_channels, input_size[0], input_size[1])
             dummy_output = self.encoder(dummy_input)
             self.encoded_size = dummy_output.numel()
             self.decoder_h = dummy_output.shape[-2]
             self.decoder_w = dummy_output.shape[-1]
-        
+
         self.fc_mu = nn.Linear(self.encoded_size, latent_dim)
         self.fc_var = nn.Linear(self.encoded_size, latent_dim)
 
@@ -280,7 +288,7 @@ class VAE2D(nn.Module):
                 output_padding=1,
             ),
             nn.GELU(),
-            nn.Conv2d(hidden_dims[-1], out_channels=1, kernel_size=3, padding=1),
+            nn.Conv2d(hidden_dims[-1], out_channels=self.in_channels, kernel_size=3, padding=1),
         )
 
     def encode(self, input):
@@ -292,7 +300,7 @@ class VAE2D(nn.Module):
 
     def decode(self, z):
         result = self.decoder_input(z)
-        result = result.view(-1, 512, self.decoder_h, self.decoder_w)
+        result = result.view(-1, self.encoder_out_channels, self.decoder_h, self.decoder_w)
         result = self.decoder(result)
         result = self.final_layer(result)
         
@@ -335,6 +343,7 @@ class VAE3D(nn.Module):
         super(VAE3D, self).__init__()
         self.latent_dim = latent_dim
         self.input_size = input_size  # (D, H, W) tuple
+        self.in_channels = in_channels  # Store for decoder output
         modules = []
         if hidden_dims is None:
             hidden_dims = [32, 64, 128, 256, 512]
@@ -355,16 +364,19 @@ class VAE3D(nn.Module):
             in_channels = h_dim
 
         self.encoder = nn.Sequential(*modules)
-        
+
+        # Cache encoder output channels before reversing hidden_dims
+        self.encoder_out_channels = hidden_dims[-1]
+
         # Calculate actual flattened size after convolutions using a dummy forward pass
         with torch.no_grad():
-            dummy_input = torch.zeros(1, 1, input_size[0], input_size[1], input_size[2])
+            dummy_input = torch.zeros(1, self.in_channels, input_size[0], input_size[1], input_size[2])
             dummy_output = self.encoder(dummy_input)
             self.encoded_size = dummy_output.numel()
             self.decoder_d = dummy_output.shape[-3]
             self.decoder_h = dummy_output.shape[-2]
             self.decoder_w = dummy_output.shape[-1]
-        
+
         self.fc_mu = nn.Linear(self.encoded_size, latent_dim)
         self.fc_var = nn.Linear(self.encoded_size, latent_dim)
 
@@ -398,7 +410,7 @@ class VAE3D(nn.Module):
                 output_padding=1,
             ),
             nn.GELU(),
-            nn.Conv3d(hidden_dims[-1], out_channels=1, kernel_size=3, padding=1),
+            nn.Conv3d(hidden_dims[-1], out_channels=self.in_channels, kernel_size=3, padding=1),
         )
 
     def encode(self, input):
@@ -410,7 +422,7 @@ class VAE3D(nn.Module):
 
     def decode(self, z):
         result = self.decoder_input(z)
-        result = result.view(-1, 512, self.decoder_d, self.decoder_h, self.decoder_w)
+        result = result.view(-1, self.encoder_out_channels, self.decoder_d, self.decoder_h, self.decoder_w)
         result = self.decoder(result)
         result = self.final_layer(result)
         
@@ -494,16 +506,28 @@ class IFNO(nn.Module):
         self.coordinate_dim = coordinate_dim
         self.intermediate_dim = intermediate_dim
 
+        # Detect if this is a symmetric vs asymmetric problem
+        self.is_symmetric = (input_spatial_dims == output_spatial_dims)
+
+        # For asymmetric problems, input and output may have different coordinate dimensions
+        # Use the actual spatial dimensions to determine coordinate dimensions
+        if self.is_symmetric:
+            # Symmetric: use coordinate_dim for both input and output
+            self.input_coordinate_dim = coordinate_dim
+            self.output_coordinate_dim = coordinate_dim
+        else:
+            # Asymmetric: infer coordinate dimensions from spatial structure
+            # For wave scattering: input is 1D (200,), output is 2D (200, 200)
+            self.input_coordinate_dim = len(input_spatial_dims)
+            self.output_coordinate_dim = len(output_spatial_dims)
+
         # Derive legacy parameters for compatibility
         self.resolution = resolution or self._get_primary_resolution()
         self.mm = mm or self._get_output_size()
         self.input_channels = input_channels or (
-            input_function_channels + coordinate_dim)
+            input_function_channels + self.input_coordinate_dim)
         self.output_channels = output_channels or (
-            output_function_channels + coordinate_dim)
-
-        # Detect if this is a symmetric vs asymmetric problem
-        self.is_symmetric = (input_spatial_dims == output_spatial_dims)
+            output_function_channels + self.output_coordinate_dim)
 
         # Spatial structure dimension (for operations, based on structure not coordinates)
         self.spatial_ndim = len(input_spatial_dims)
@@ -586,25 +610,26 @@ class IFNO(nn.Module):
 
         # VAE for reconstruction (adaptive based on spatial structure, not coordinate dim)
         # Use spatial_dims length to determine VAE type (supports unstructured meshes)
+        # Use input_function_channels for number of input channels
         if len(self.input_spatial_dims) == 1:
             # 1D spatial structure (including flattened unstructured meshes)
             vae_input_size = self.input_spatial_dims[0]
             self.vae_net = VAE1D(
-                in_channels=1, latent_dim=vae_latent_dim,
+                in_channels=input_function_channels, latent_dim=vae_latent_dim,
                 input_length=vae_input_size, hidden_dims=vae_hidden_dims
             )
         elif len(self.input_spatial_dims) == 2:
             # 2D structured grid
             vae_input_size = self.input_spatial_dims
             self.vae_net = VAE2D(
-                in_channels=1, latent_dim=vae_latent_dim,
+                in_channels=input_function_channels, latent_dim=vae_latent_dim,
                 input_size=vae_input_size, hidden_dims=vae_hidden_dims
             )
         elif len(self.input_spatial_dims) == 3:
             # 3D structured grid
             vae_input_size = self.input_spatial_dims
             self.vae_net = VAE3D(
-                in_channels=1, latent_dim=vae_latent_dim,
+                in_channels=input_function_channels, latent_dim=vae_latent_dim,
                 input_size=vae_input_size, hidden_dims=vae_hidden_dims
             )
         else:
@@ -619,7 +644,13 @@ class IFNO(nn.Module):
 
     def _get_output_size(self):
         """Get output size parameter (like mm in original)"""
-        if len(self.output_spatial_dims) >= 2:
+        # For asymmetric problems where input and output have different spatial structure
+        # (e.g., 1D input -> 2D output), we need the total flattened output size
+        if not self.is_symmetric and len(self.input_spatial_dims) != len(self.output_spatial_dims):
+            # Asymmetric with different spatial structure: return total flattened size
+            import numpy as np
+            return int(np.prod(self.output_spatial_dims))
+        elif len(self.output_spatial_dims) >= 2:
             return self.output_spatial_dims[1]  # Second dimension (like mm=58)
         else:
             return self.output_spatial_dims[0]  # 1D case
@@ -648,20 +679,42 @@ class IFNO(nn.Module):
         """Get proper shape for VAE input based on spatial structure (not coordinate dim)"""
         batch_size = data.shape[0]
 
+        # Determine number of channels from the data
+        # data can be (batch, spatial_points, channels) or already processed
         if len(self.input_spatial_dims) == 1:
-            # 1D spatial structure (including flattened unstructured meshes)
-            # Shape: (batch, channels, length)
-            return data.reshape(batch_size, 1, self.input_spatial_dims[0])
+            # 1D spatial structure
+            # Input data: (batch, spatial_points, channels)
+            # Output shape: (batch, channels, spatial_points)
+            spatial_size = self.input_spatial_dims[0]
+            if data.numel() == batch_size * spatial_size:
+                # Single channel
+                return data.reshape(batch_size, 1, spatial_size)
+            else:
+                # Multi-channel: infer number of channels
+                n_channels = data.numel() // (batch_size * spatial_size)
+                return data.reshape(batch_size, n_channels, spatial_size)
         elif len(self.input_spatial_dims) == 2:
             # 2D structured grid
-            # Shape: (batch, channels, height, width)
             h, w = self.input_spatial_dims
-            return data.reshape(batch_size, 1, h, w)
+            spatial_size = h * w
+            if data.numel() == batch_size * spatial_size:
+                # Single channel
+                return data.reshape(batch_size, 1, h, w)
+            else:
+                # Multi-channel
+                n_channels = data.numel() // (batch_size * spatial_size)
+                return data.reshape(batch_size, n_channels, h, w)
         elif len(self.input_spatial_dims) == 3:
             # 3D structured grid
-            # Shape: (batch, channels, depth, height, width)
             d, h, w = self.input_spatial_dims
-            return data.reshape(batch_size, 1, d, h, w)
+            spatial_size = d * h * w
+            if data.numel() == batch_size * spatial_size:
+                # Single channel
+                return data.reshape(batch_size, 1, d, h, w)
+            else:
+                # Multi-channel
+                n_channels = data.numel() // (batch_size * spatial_size)
+                return data.reshape(batch_size, n_channels, d, h, w)
         else:
             raise ValueError(f"Unsupported spatial dimensions: {self.input_spatial_dims}")
 
@@ -1569,7 +1622,7 @@ def test_model(model, test_dataloader, input_function_encoder, output_function_e
             total_loss = forward_loss + backward_loss
             total_test_loss += total_loss.item()
 
-    avg_test_loss = total_test_loss / len(test_dataloader.dataset)
+    avg_test_loss = total_test_loss / len(test_dataloader)
     return avg_test_loss
 
 
