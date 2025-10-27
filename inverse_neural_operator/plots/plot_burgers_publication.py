@@ -225,19 +225,20 @@ def main():
         print("ERROR: no models loaded")
         raise SystemExit(1)
 
+    forward_model = load_forward_model(log_dir, args.seed, device=device)
+    output_transform = make_output_transform(forward_model, output_enc)
+
     # Select top models and representative sample
     models_to_plot, sample_idx = select_models_and_sample(
         test_dataset,
         models_dict,
         input_enc,
         output_enc,
+        forward_model,
         max_models=MAX_MODELS,
         sample_index=args.sample_index,
         device=device,
     )
-
-    forward_model = load_forward_model(log_dir, args.seed, device=device)
-    output_transform = make_output_transform(forward_model, output_enc)
 
     print("Collecting predictions...")
     predictions, meta = collect_predictions(

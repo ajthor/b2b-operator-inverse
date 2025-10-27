@@ -258,25 +258,20 @@ def main():
         print("ERROR: no models loaded")
         raise SystemExit(1)
 
-    # For testing: just use first N models without evaluation
-    models_to_plot = list(models_dict.keys())[:MAX_MODELS]
-    sample_idx = args.sample_index if args.sample_index is not None else 0
-    print(f"  Using models: {', '.join(models_to_plot)}")
-    print(f"  Using sample index: {sample_idx}")
+    forward_model = load_forward_model(log_dir, args.seed, device=device)
+    output_transform = make_output_transform(forward_model, output_enc)
 
-    # Uncomment to evaluate models and select best performers
+    # Evaluate models and select best performers
     models_to_plot, sample_idx = select_models_and_sample(
         test_dataset,
         models_dict,
         input_enc,
         output_enc,
+        forward_model,
         max_models=MAX_MODELS,
         sample_index=args.sample_index,
         device=device,
     )
-
-    forward_model = load_forward_model(log_dir, args.seed, device=device)
-    output_transform = make_output_transform(forward_model, output_enc)
 
     print("Collecting predictions...")
     predictions, meta = collect_predictions(
