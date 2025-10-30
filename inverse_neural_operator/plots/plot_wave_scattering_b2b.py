@@ -1,6 +1,13 @@
 """
-Plot B2B model performance for Wave Scattering dataset.
-Shows function encoder realizations and forward model predictions.
+Publication-quality plotting script for Wave Scattering B2B model performance.
+
+Creates a 4x4 gridspec layout showing:
+- Row 1: Input function encoder reconstructions (3 polar plots + colorbar)
+- Row 2: Output function encoder reconstructions (3 pairs: prediction|error + colorbar)
+- Row 3: Linear B2B forward model (3 pairs: prediction|error + colorbar)
+- Row 4: Nonlinear B2B forward model (3 pairs: prediction|error + colorbar)
+
+Each row has a common parent axis with shared labels and title.
 
 To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator.plots.plot_wave_scattering_b2b
 """
@@ -8,296 +15,366 @@ To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator
 import os
 import argparse
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpecFromSubplotSpec
 import numpy as np
 import random
 
 import torch
 
-from inverse_neural_operator.b2b.load_model import (
+from skimage.metrics import structural_similarity as ssim
+
+from b2b.load_model import (
     load_function_encoders,
     load_forward_model,
 )
 from data.load_dataset import load_dataset
 from data.process_data import InputFunctionEncoderDataset, OutputFunctionEncoderDataset
+from plots.utils.plot_utils import setup_publication_style
 
 device = "cpu"
+GRID_SIZE = 200  # Wave scattering output grid size
 
 
-def plot_input_function_encoder_realizations(
+def plot_b2b_publication_grid(
     input_function_encoder,
+    output_function_encoder,
+    linear_forward_model,
+    nonlinear_forward_model,
     input_encoder_dataset,
-    n_samples=9,
-    seed=42,
-    save_path=None,
-):
-    """
-    Plot realizations from input function encoder using actual dataset samples.
-    Uses the function encoder dataset to properly split example and spatial points.
-    For Wave Scattering (2D): plots 3x3 grid of 2D density field realizations.
-    """
-    input_function_encoder.eval()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-
-    # Randomly select samples from input encoder dataset
-    indices = random.sample(range(len(input_encoder_dataset)), min(n_samples, len(input_encoder_dataset)))
-
-    with torch.no_grad():
-        # Collect coefficients, spatial coordinates, and ground truth from actual data samples
-        alphas = []
-        all_xs = []
-        all_us = []
-        for idx in indices:
-            # Get split data from function encoder dataset (for example points)
-            example_xs, example_ys, xs, ys = input_encoder_dataset[idx]
-
-            # Get full spatial coordinates and ground truth from base dataset
-            X, u, Y, s = input_encoder_dataset.dataset[idx]
-
-            # Add batch dimension
-            example_xs = example_xs.unsqueeze(0).to(device)
-            example_ys = example_ys.unsqueeze(0).to(device)
-            X = X.unsqueeze(0).to(device)
-
-            # Compute coefficients from example points
-            alpha, _ = input_function_encoder.compute_coefficients(example_xs, example_ys)
-            alphas.append(alpha)
-            all_xs.append(X)
-            all_us.append(u)
-
-        # Stack all alphas and full spatial coordinates
-        alphas = torch.cat(alphas, dim=0)
-        all_xs = torch.cat(all_xs, dim=0)
-
-        # Evaluate function encoder at full spatial coordinates using computed coefficients
-        functions = input_function_encoder(all_xs, alphas)
-
-    # Convert to numpy for plotting
-    functions_np = functions.cpu().numpy()
-    all_xs_np = all_xs.cpu().numpy()
-
-    # Wave scattering input is 1D (200 angular measurements), plot as polar
-    # Extract theta coordinates from X (converted from Cartesian)
-
-    # Create 3x3 grid for polar plots
-    fig, axes = plt.subplots(3, 3, figsize=(12, 10), subplot_kw=dict(projection='polar'))
-    axes = axes.flatten()
-
-    for idx in range(n_samples):
-        ax = axes[idx]
-        function_values = functions_np[idx].squeeze()
-        ground_truth = all_us[idx].cpu().numpy().squeeze()
-        X_np = all_xs_np[idx].squeeze()
-
-        # Compute MSE
-        mse = np.mean((ground_truth - function_values) ** 2)
-
-        # Extract theta coordinates (X is in Cartesian form [cos(theta), sin(theta)])
-        theta = np.arctan2(X_np[:, 1], X_np[:, 0])
-
-        # Plot ground truth and reconstruction on polar axes
-        ax.plot(theta, np.abs(ground_truth), 'b-', label='Ground Truth', linewidth=1.5, alpha=0.7)
-        ax.plot(theta, np.abs(function_values), 'r--', label='Reconstruction', linewidth=1.5, alpha=0.7)
-        ax.set_title(f'Sample {indices[idx]}\nMSE: {mse:.2e}', fontsize=9, pad=20)
-        ax.legend(fontsize=7, loc='upper right')
-        ax.grid(True, alpha=0.3)
-
-    fig.suptitle(f'Input Function Encoder - Reconstruction Error (GT - Recon) (seed={seed})',
-                 fontsize=14, fontweight='bold')
-    plt.tight_layout()
-
-    if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"  ✓ Saved: {save_path}")
-
-    plt.close()
-
-
-def plot_output_function_encoder_realizations(
-    output_function_encoder,
     output_encoder_dataset,
-    n_samples=9,
+    test_dataset,
+    n_realizations=3,
     seed=42,
     save_path=None,
 ):
     """
-    Plot realizations from output function encoder using actual dataset samples.
-    Uses the function encoder dataset to properly split example and spatial points.
-    For Wave Scattering: plots 3x3 grid of polar far-field patterns.
+    Create publication-quality 4x4 gridspec plot for B2B performance.
+    Each column shows a different random realization (plus colorbar column).
+    Row 0: input function encoder (polar plots)
+    Rows 1-3: output function encoder, linear B2B, nonlinear B2B (2D imshow: prediction|error pairs)
+
+    Args:
+        input_function_encoder: Input function encoder model
+        output_function_encoder: Output function encoder model
+        linear_forward_model: Linear B2B forward model
+        nonlinear_forward_model: Nonlinear B2B forward model
+        input_encoder_dataset: Input encoder dataset
+        output_encoder_dataset: Output encoder dataset
+        test_dataset: Test dataset
+        n_realizations: Number of random realizations to show (columns)
+        seed: Random seed
+        save_path: Path to save the figure
     """
-    output_function_encoder.eval()
+    # Set random seeds
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
-    # Randomly select samples from output encoder dataset (using same seed as input encoder)
-    indices = random.sample(range(len(output_encoder_dataset)), min(n_samples, len(output_encoder_dataset)))
-
-    with torch.no_grad():
-        # Collect coefficients, spatial coordinates, and ground truth from actual data samples
-        betas = []
-        all_ys = []
-        all_ss = []
-        for idx in indices:
-            # Get split data from function encoder dataset (for example points)
-            example_xs, example_ys, xs, ys = output_encoder_dataset[idx]
-
-            # Get full spatial coordinates and ground truth from base dataset
-            X, u, Y, s = output_encoder_dataset.dataset[idx]
-
-            # Add batch dimension
-            example_xs = example_xs.unsqueeze(0).to(device)
-            example_ys = example_ys.unsqueeze(0).to(device)
-            Y = Y.unsqueeze(0).to(device)
-
-            # Compute coefficients from example points
-            beta, _ = output_function_encoder.compute_coefficients(example_xs, example_ys)
-            betas.append(beta)
-            all_ys.append(Y)
-            all_ss.append(s)
-
-        # Stack all betas and full spatial coordinates
-        betas = torch.cat(betas, dim=0)
-        all_ys = torch.cat(all_ys, dim=0)
-
-        # Evaluate function encoder at full spatial coordinates using computed coefficients
-        functions = output_function_encoder(all_ys, betas)
-
-    # Convert to numpy for plotting
-    functions_np = functions.cpu().numpy()
-
-    # Output is 2D (200x200 density field), reshape from flattened
-    grid_size = 200
-
-    # Create 3x3 grid for 2D density field plots
-    fig, axes = plt.subplots(3, 3, figsize=(12, 10))
-    axes = axes.flatten()
-
-    for idx in range(n_samples):
-        ax = axes[idx]
-        function_values = functions_np[idx].squeeze()
-        ground_truth = all_ss[idx].cpu().numpy().squeeze()
-
-        # Compute MSE
-        mse = np.mean((ground_truth - function_values) ** 2)
-
-        # Reshape to 2D for plotting
-        diff = (ground_truth - function_values).reshape(grid_size, grid_size)
-        vmax_diff = max(abs(diff.min()), abs(diff.max()))
-
-        # Plot difference map
-        im = ax.imshow(diff, cmap='seismic', origin='lower', extent=[0, 1, 0, 1],
-                      vmin=-vmax_diff, vmax=vmax_diff)
-        ax.set_title(f'Sample {indices[idx]}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('x', fontsize=8)
-        ax.set_ylabel('y', fontsize=8)
-        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-    fig.suptitle(f'Output Function Encoder - Ground Truth vs Reconstruction (seed={seed})',
-                 fontsize=14, fontweight='bold', y=0.98)
-    plt.tight_layout()
-
-    if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"  ✓ Saved: {save_path}")
-
-    plt.close()
-
-
-def plot_forward_model_performance(
-    forward_model,
-    input_function_encoder,
-    output_function_encoder,
-    test_dataset,
-    model_name,
-    n_samples=9,
-    seed=42,
-    save_path=None,
-):
-    """
-    Plot forward model predictions vs true outputs for random test samples in a 3x3 grid.
-    For Wave Scattering: shows 9 samples with predicted vs true density fields (2D).
-    """
-    forward_model.eval()
+    # Set models to eval mode
     input_function_encoder.eval()
     output_function_encoder.eval()
+    linear_forward_model.eval()
+    nonlinear_forward_model.eval()
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+    # Randomly select samples
+    indices = random.sample(
+        range(len(test_dataset)), min(n_realizations, len(test_dataset))
+    )
 
-    # Randomly select samples from test dataset
-    indices = random.sample(range(len(test_dataset)), min(n_samples, len(test_dataset)))
+    # Set up publication style
+    setup_publication_style()
 
-    # Create 3x3 grid for 2D density field difference maps
-    fig, axes = plt.subplots(3, 3, figsize=(15, 12))
-    axes = axes.flatten()
+    # Create figure with constrained layout
+    fig = plt.figure(figsize=(6.5, 5.5))
+    # fig.set_constrained_layout_pads(
+    #     w_pad=5.0 / 72.0, h_pad=5.0 / 72.0, hspace=0.0, wspace=0.0
+    # )
 
-    # Grid size for wave scattering output
-    grid_size = 200
+    # Create gridspec: 4 rows × 4 columns (3 data + 1 colorbar)
+    gs = fig.add_gridspec(
+        4,
+        4,
+        hspace=0.35,
+        wspace=0.05,
+        left=0.0,
+        right=1.0,
+        top=1.0,
+        bottom=0.0,
+        width_ratios=[1, 1, 1, 0.05],
+        height_ratios=[1.5, 1, 1, 1],
+    )
 
-    for plot_idx, sample_idx in enumerate(indices):
-        ax = axes[plot_idx]
+    # Row titles and labels
+    row_configs = [
+        {
+            "title": "Wave Scattering Dataset Input Function Encoder Reconstructions",
+            "xlabel": "",
+            "ylabel": r"$|u(\theta)|$",
+        },
+        {
+            "title": "Wave Scattering Dataset Output Function Encoder Reconstructions",
+            "xlabel": r"$x$",
+            "ylabel": r"$y$",
+        },
+        {
+            "title": "Wave Scattering Dataset Linear B2B Forward Model",
+            "xlabel": r"$x$",
+            "ylabel": r"$y$",
+        },
+        {
+            "title": "Wave Scattering Dataset Nonlinear B2B Forward Model",
+            "xlabel": r"$x$",
+            "ylabel": r"$y$",
+        },
+    ]
 
-        # Get sample
-        X, u, Y, s_true = test_dataset[sample_idx]
-        X = X.to(device)
-        u = u.to(device)
-        Y = Y.to(device)
-        s_true = s_true.to(device)
+    # Create parent axes for each row
+    parent_axes = []
+    for row_idx, config in enumerate(row_configs):
+        ax_parent = fig.add_subplot(gs[row_idx, :3], frameon=False)
+        ax_parent.tick_params(
+            labelcolor="none", top=False, bottom=False, left=False, right=False
+        )
+        if config["xlabel"]:
+            ax_parent.set_xlabel(config["xlabel"], labelpad=0 if row_idx == 3 else -8)
+        if config["ylabel"]:
+            ax_parent.set_ylabel(config["ylabel"], labelpad=8)
+        ax_parent.set_title(config["title"], pad=12 if row_idx == 0 else 4)
+        parent_axes.append(ax_parent)
 
-        with torch.no_grad():
+    # Collect all data for consistent limits within each row
+    row_data = [[] for _ in range(4)]
+
+    with torch.no_grad():
+        for col_idx, sample_idx in enumerate(indices):
+            # Get sample
+            X, u, Y, s_true = test_dataset[sample_idx]
+            X = X.to(device)
+            u = u.to(device)
+            Y = Y.to(device)
+            s_true = s_true.to(device)
+
             # Add batch dimension
             X_batch = X.unsqueeze(0)
             u_batch = u.unsqueeze(0)
             Y_batch = Y.unsqueeze(0)
 
-            # Compute alpha coefficients from input
-            alpha, _ = input_function_encoder.compute_coefficients(X_batch, u_batch)
+            # Get input encoder reconstruction
+            example_xs_input, example_ys_input, xs_input, ys_input = (
+                input_encoder_dataset[sample_idx]
+            )
+            example_xs_input = example_xs_input.unsqueeze(0).to(device)
+            example_ys_input = example_ys_input.unsqueeze(0).to(device)
+            alpha, _ = input_function_encoder.compute_coefficients(
+                example_xs_input, example_ys_input
+            )
+            u_recon = input_function_encoder(X_batch, alpha).squeeze(0)
 
-            # Forward pass through model
-            beta_pred = forward_model.forward(alpha)
+            # Get output encoder reconstruction
+            example_xs_output, example_ys_output, xs_output, ys_output = (
+                output_encoder_dataset[sample_idx]
+            )
+            example_xs_output = example_xs_output.unsqueeze(0).to(device)
+            example_ys_output = example_ys_output.unsqueeze(0).to(device)
+            beta, _ = output_function_encoder.compute_coefficients(
+                example_xs_output, example_ys_output
+            )
+            s_recon = output_function_encoder(Y_batch, beta).squeeze(0)
 
-            # Reconstruct predicted output
-            s_pred = output_function_encoder(Y_batch, beta_pred)
-            s_pred = s_pred.squeeze(0)
+            # Get linear B2B prediction
+            beta_linear = linear_forward_model.forward(alpha)
+            s_linear = output_function_encoder(Y_batch, beta_linear).squeeze(0)
 
-        # Convert to numpy
-        s_true_np = s_true.squeeze().cpu().numpy()
-        s_pred_np = s_pred.squeeze().cpu().numpy()
+            # Get nonlinear B2B prediction
+            beta_nonlinear = nonlinear_forward_model.forward(alpha)
+            s_nonlinear = output_function_encoder(Y_batch, beta_nonlinear).squeeze(0)
 
-        # Compute error
-        mse = np.mean((s_true_np - s_pred_np) ** 2)
+            # Store data for plotting (convert to numpy)
+            X_np = X.cpu().numpy().squeeze()
+            u_true_np = u.cpu().numpy().squeeze()
+            u_recon_np = u_recon.cpu().numpy().squeeze()
+            s_true_np = s_true.cpu().numpy().squeeze()
+            s_recon_np = s_recon.cpu().numpy().squeeze()
+            s_linear_np = s_linear.cpu().numpy().squeeze()
+            s_nonlinear_np = s_nonlinear.cpu().numpy().squeeze()
 
-        # Reshape to 2D for plotting
-        diff = (s_true_np - s_pred_np).reshape(grid_size, grid_size)
-        vmax_diff = max(abs(diff.min()), abs(diff.max()))
+            # Extract theta for polar plot
+            theta = np.arctan2(X_np[:, 1], X_np[:, 0])
 
-        # Plot difference map
-        im = ax.imshow(diff, cmap='seismic', origin='lower', extent=[0, 1, 0, 1],
-                      vmin=-vmax_diff, vmax=vmax_diff)
-        ax.set_title(f'Sample {sample_idx}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('x', fontsize=8)
-        ax.set_ylabel('y', fontsize=8)
-        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            row_data[0].append((theta, u_true_np, u_recon_np))
+            row_data[1].append((s_true_np, s_recon_np))
+            row_data[2].append((s_true_np, s_linear_np))
+            row_data[3].append((s_true_np, s_nonlinear_np))
 
-    fig.suptitle(f'{model_name} Forward Model - Predictions vs True Outputs (seed={seed})',
-                 fontsize=14, fontweight='bold', y=0.98)
-    plt.tight_layout()
+    # Compute vmin/vmax for each 2D row (rows 1-3) for shared colorbars
+    row_vlims_pred = []
+    row_vlims_error = []
+    for row_idx in range(1, 4):
+        v_min_pred, v_max_pred = float("inf"), float("-inf")
+        v_min_err, v_max_err = float("inf"), float("-inf")
+        for s_true, s_pred in row_data[row_idx]:
+            # Reshape and threshold to binary density fields
+            s_true_2d = s_true.reshape(GRID_SIZE, GRID_SIZE)
+            s_pred_2d = s_pred.reshape(GRID_SIZE, GRID_SIZE)
+            s_true_binary = (s_true_2d > 0.5).astype(float)
+            s_pred_binary = (s_pred_2d > 0.5).astype(float)
+
+            v_min_pred = min(v_min_pred, s_pred_binary.min())
+            v_max_pred = max(v_max_pred, s_pred_binary.max())
+            error = np.abs(s_true_binary - s_pred_binary)
+            v_min_err = min(v_min_err, error.min())
+            v_max_err = max(v_max_err, error.max())
+        row_vlims_pred.append((v_min_pred, v_max_pred))
+        row_vlims_error.append((v_min_err, v_max_err))
+
+    # Plot row 0 (input function encoder - polar plots)
+    for col_idx in range(n_realizations):
+        ax = fig.add_subplot(gs[0, col_idx], projection="polar")
+        theta, u_true, u_recon = row_data[0][col_idx]
+
+        # Plot ground truth as gray dashed, reconstruction as C0 solid
+        ax.plot(theta, np.abs(u_true), "--", color="gray", linewidth=1.0, alpha=0.8)
+        ax.plot(theta, np.abs(u_recon), "-", color="C0", linewidth=1.0, alpha=0.8)
+
+        # # Compute MSE
+        # mse = np.mean((u_true - u_recon) ** 2)
+
+        # Compute L2 error
+        l2_error = np.linalg.norm(u_true - u_recon) / np.linalg.norm(u_true)
+
+        # Add MSE annotation
+        ax.text(
+            0.95,
+            0.95,
+            f"L2: {l2_error:.2e}",
+            transform=ax.transAxes,
+            fontsize=5,
+            color="white",
+            va="top",
+            ha="right",
+            bbox=dict(
+                boxstyle="round,pad=0.3",
+                facecolor="#333333",
+                alpha=0.8,
+                edgecolor="none",
+            ),
+        )
+
+        ax.grid(True, linestyle="-", linewidth=0.4, alpha=0.6)
+
+        # Add tick labels to all polar plots
+        ax.tick_params(
+            labelsize=5,
+            pad=-3,
+        )
+
+    # No colorbar for row 0 (polar plots)
+    fig.add_subplot(gs[0, 3]).axis("off")
+
+    # Plot rows 1-3 (output encoder, linear/nonlinear B2B - 2D imshow)
+    for row_idx in range(1, 4):
+        for col_idx in range(n_realizations):
+            # Create nested gridspec for prediction|error side-by-side
+            cell_gs = GridSpecFromSubplotSpec(
+                1, 2, subplot_spec=gs[row_idx, col_idx], wspace=0.0, hspace=0.0
+            )
+
+            s_true, s_pred = row_data[row_idx][col_idx]
+
+            # Reshape to 2D
+            s_true_2d = s_true.reshape(GRID_SIZE, GRID_SIZE)
+            s_pred_2d = s_pred.reshape(GRID_SIZE, GRID_SIZE)
+
+            # Create thresholded versions (binary density fields)
+            s_true_binary = (s_true_2d > 0.5).astype(float)
+            s_pred_binary = (s_pred_2d > 0.5).astype(float)
+
+            # Compute error between binary density fields
+            error_2d = np.abs(s_true_binary - s_pred_binary)
+
+            # Left: predicted binary density field
+            ax_pred = fig.add_subplot(cell_gs[0])
+            ax_pred.imshow(
+                s_pred_binary,
+                cmap="viridis",
+                origin="lower",
+                extent=[0, 1, 0, 1],
+                vmin=row_vlims_pred[row_idx - 1][0],
+                vmax=row_vlims_pred[row_idx - 1][1],
+            )
+
+            # Show y-axis labels on left column, x-axis labels on bottom row
+            show_left = col_idx == 0
+            show_bottom = row_idx == 3
+            ax_pred.tick_params(
+                labelbottom=show_bottom,
+                labelleft=show_left,
+                length=2,
+                width=0.5,
+                labelsize=5,
+            )
+            ax_pred.set_aspect("equal")
+
+            # Right: error in binary density field
+            ax_err = fig.add_subplot(cell_gs[1])
+            im_err = ax_err.imshow(
+                error_2d,
+                cmap="Reds",
+                origin="lower",
+                extent=[0, 1, 0, 1],
+                vmin=row_vlims_error[row_idx - 1][0],
+                vmax=row_vlims_error[row_idx - 1][1],
+            )
+            ax_err.set_xticks([])
+            ax_err.set_yticks([])
+            ax_err.set_aspect("equal")
+
+            # Compute SSIM between binary density fields
+            ssim_value = ssim(
+                s_true_binary,
+                s_pred_binary,
+                data_range=s_true_binary.max() - s_true_binary.min(),
+            )
+
+            # Add SSIM annotation to error plot
+            ax_err.text(
+                0.95,
+                0.95,
+                f"SSIM: {ssim_value:.3f}",
+                transform=ax_err.transAxes,
+                fontsize=5,
+                color="white",
+                va="top",
+                ha="right",
+                bbox=dict(
+                    boxstyle="round,pad=0.3",
+                    facecolor="#333333",
+                    alpha=0.8,
+                    edgecolor="none",
+                ),
+            )
+
+        # Add shared colorbar for this row (column 3)
+        # Use the last im_err for colorbar (they all share same vmin/vmax)
+        cax = fig.add_subplot(gs[row_idx, 3])
+        fig.colorbar(im_err, cax=cax, use_gridspec=True)
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"  ✓ Saved: {save_path}")
+        # Also save as PDF
+        pdf_path = save_path.replace(".png", ".pdf")
+        plt.savefig(pdf_path, dpi=300, bbox_inches="tight")
+        print(f"  ✓ Saved: {pdf_path}")
 
     plt.close()
 
 
 # Parse command line arguments
-parser = argparse.ArgumentParser(description="Plot B2B model performance for Wave Scattering dataset.")
+parser = argparse.ArgumentParser(
+    description="Create publication-quality B2B performance plot for Wave Scattering dataset."
+)
 parser.add_argument(
     "--log_dir",
     type=str,
@@ -311,23 +388,16 @@ parser.add_argument(
     help="Base results directory for saving plots",
 )
 parser.add_argument(
-    "--forward_model",
-    type=str,
-    choices=["b2b_linear", "b2b_nonlinear", "all"],
-    default="all",
-    help="Forward model to plot (default: all)",
-)
-parser.add_argument(
     "--seed",
     type=int,
     default=42,
     help="Random seed for reproducibility",
 )
 parser.add_argument(
-    "--n_samples",
+    "--n_realizations",
     type=int,
-    default=9,
-    help="Number of samples to plot (default: 9 for 3x3 grid)",
+    default=3,
+    help="Number of random realizations to show (columns, default: 3)",
 )
 
 args = parser.parse_args()
@@ -342,7 +412,7 @@ dataset_name = "wave_scattering"
 
 # Construct paths
 shared_log_dir = os.path.join(args.log_dir, dataset_name, "shared", "seed_1")
-shared_results_dir = os.path.join(args.results_dir, dataset_name, "shared")
+shared_results_dir = os.path.join(args.results_dir, dataset_name, "shared", "seed_1")
 
 # Check if shared directory exists
 if not os.path.exists(os.path.join(shared_log_dir, "input_function_encoder.pth")):
@@ -373,56 +443,38 @@ input_function_encoder, output_function_encoder = load_function_encoders(
 )
 print(f"✓ Loaded function encoders")
 
+# Load forward models
+print(f"Loading forward models...")
+linear_forward_model = load_forward_model(
+    log_dir=shared_log_dir,
+    forward_model_name="b2b_linear",
+    device=device,
+)
+print(f"✓ Loaded linear forward model")
+
+nonlinear_forward_model = load_forward_model(
+    log_dir=shared_log_dir,
+    forward_model_name="b2b_nonlinear",
+    device=device,
+)
+print(f"✓ Loaded nonlinear forward model")
+
 # Create results directory
 os.makedirs(shared_results_dir, exist_ok=True)
 
-# Plot input function encoder realizations
-print(f"Generating input function encoder realizations...")
-plot_input_function_encoder_realizations(
+# Generate publication-quality B2B plot
+print(f"Generating publication-quality B2B plot...")
+plot_b2b_publication_grid(
     input_function_encoder=input_function_encoder,
-    input_encoder_dataset=input_encoder_dataset,
-    n_samples=args.n_samples,
-    seed=args.seed,
-    save_path=os.path.join(shared_results_dir, "input_encoder_realizations.png"),
-)
-
-# Plot output function encoder realizations
-print(f"Generating output function encoder realizations...")
-plot_output_function_encoder_realizations(
     output_function_encoder=output_function_encoder,
+    linear_forward_model=linear_forward_model,
+    nonlinear_forward_model=nonlinear_forward_model,
+    input_encoder_dataset=input_encoder_dataset,
     output_encoder_dataset=output_encoder_dataset,
-    n_samples=args.n_samples,
+    test_dataset=test_dataset,
+    n_realizations=args.n_realizations,
     seed=args.seed,
-    save_path=os.path.join(shared_results_dir, "output_encoder_realizations.png"),
+    save_path=os.path.join(shared_results_dir, "wave_scattering_b2b_publication.png"),
 )
 
-# Determine which forward models to plot
-forward_models = ["b2b_linear", "b2b_nonlinear"] if args.forward_model == "all" else [args.forward_model]
-
-# Plot forward model performance
-for forward_model_name in forward_models:
-    try:
-        print(f"Loading {forward_model_name} forward model...")
-        forward_model = load_forward_model(
-            log_dir=shared_log_dir,
-            forward_model_name=forward_model_name,
-            device=device,
-        )
-        print(f"✓ Loaded {forward_model_name}")
-
-        print(f"Generating {forward_model_name} performance plot...")
-        plot_forward_model_performance(
-            forward_model=forward_model,
-            input_function_encoder=input_function_encoder,
-            output_function_encoder=output_function_encoder,
-            test_dataset=test_dataset,
-            model_name=forward_model_name,
-            n_samples=args.n_samples,
-            seed=args.seed,
-            save_path=os.path.join(shared_results_dir, f"{forward_model_name}_performance.png"),
-        )
-    except FileNotFoundError as e:
-        print(f"  ⚠ {forward_model_name} not found, skipping...")
-        continue
-
-print(f"✓ All B2B performance plots generated → {shared_results_dir}")
+print(f"✓ Publication-quality B2B plot generated → {shared_results_dir}")

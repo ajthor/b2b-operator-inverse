@@ -1,6 +1,13 @@
 """
-Plot B2B model performance for Darcy 1D dataset.
-Shows function encoder realizations and forward model predictions.
+Publication-quality plotting script for Darcy B2B model performance.
+
+Creates a 4x3 gridspec layout showing:
+- Row 1: Input function encoder reconstructions (3 random realizations)
+- Row 2: Output function encoder reconstructions (3 random realizations)
+- Row 3: Linear B2B forward model predictions (3 random realizations)
+- Row 4: Nonlinear B2B forward model predictions (3 random realizations)
+
+Each row has a common parent axis with shared labels and title.
 
 To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator.plots.plot_darcy_b2b
 """
@@ -13,285 +20,264 @@ import random
 
 import torch
 
-from inverse_neural_operator.b2b.load_model import (
+from b2b.load_model import (
     load_function_encoders,
     load_forward_model,
 )
 from data.load_dataset import load_dataset
 from data.process_data import InputFunctionEncoderDataset, OutputFunctionEncoderDataset
+from plots.utils.plot_utils import setup_publication_style
 
 device = "cpu"
 
 
-def plot_input_function_encoder_realizations(
+def plot_b2b_publication_grid(
     input_function_encoder,
+    output_function_encoder,
+    linear_forward_model,
+    nonlinear_forward_model,
     input_encoder_dataset,
-    n_samples=9,
-    seed=42,
-    save_path=None,
-):
-    """
-    Plot realizations from input function encoder using actual dataset samples.
-    Uses the function encoder dataset to properly split example and spatial points.
-    For Darcy (1D): plots 3x3 grid of 1D function realizations.
-    """
-    input_function_encoder.eval()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-
-    # Randomly select samples from input encoder dataset
-    indices = random.sample(range(len(input_encoder_dataset)), min(n_samples, len(input_encoder_dataset)))
-
-    with torch.no_grad():
-        # Collect coefficients, spatial coordinates, and ground truth from actual data samples
-        alphas = []
-        all_xs = []
-        all_us = []
-        for idx in indices:
-            # Get split data from function encoder dataset (for example points)
-            example_xs, example_ys, xs, ys = input_encoder_dataset[idx]
-
-            # Get full spatial coordinates and ground truth from base dataset
-            X, u, Y, s = input_encoder_dataset.dataset[idx]
-
-            # Add batch dimension
-            example_xs = example_xs.unsqueeze(0).to(device)
-            example_ys = example_ys.unsqueeze(0).to(device)
-            X = X.unsqueeze(0).to(device)
-
-            # Compute coefficients from example points
-            alpha, _ = input_function_encoder.compute_coefficients(example_xs, example_ys)
-            alphas.append(alpha)
-            all_xs.append(X)
-            all_us.append(u)
-
-        # Stack all alphas and full spatial coordinates
-        alphas = torch.cat(alphas, dim=0)
-        all_xs = torch.cat(all_xs, dim=0)
-
-        # Evaluate function encoder at full spatial coordinates using computed coefficients
-        functions = input_function_encoder(all_xs, alphas)
-
-    # Convert to numpy for plotting
-    functions_np = functions.cpu().numpy()
-    coords_np = all_xs.cpu().numpy()
-
-    # Extract x coordinates (assuming 1D, shape is [n_samples, n_points, 1])
-    x_coords = coords_np[0, :, 0] if coords_np.shape[2] > 1 else coords_np[0].squeeze()
-
-    # Create 3x3 grid
-    fig, axes = plt.subplots(3, 3, figsize=(12, 10))
-    axes = axes.flatten()
-
-    for idx in range(n_samples):
-        ax = axes[idx]
-        function_values = functions_np[idx].squeeze()
-        ground_truth = all_us[idx].cpu().numpy().squeeze()
-
-        # Compute MSE
-        mse = np.mean((ground_truth - function_values) ** 2)
-
-        # Plot ground truth and reconstruction
-        ax.plot(x_coords, ground_truth, 'b-', label='Ground Truth', linewidth=1.5, alpha=0.7)
-        ax.plot(x_coords, function_values, 'r--', label='Reconstruction', linewidth=1.5, alpha=0.7)
-        ax.set_title(f'Sample {indices[idx]}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('x', fontsize=8)
-        ax.set_ylabel('a(x)', fontsize=8)
-        ax.legend(fontsize=7, loc='best')
-        ax.grid(True, alpha=0.3)
-
-    fig.suptitle(f'Input Function Encoder - Ground Truth vs Reconstruction (seed={seed})',
-                 fontsize=14, fontweight='bold')
-    plt.tight_layout()
-
-    if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"  ✓ Saved: {save_path}")
-
-    plt.close()
-
-
-def plot_output_function_encoder_realizations(
-    output_function_encoder,
     output_encoder_dataset,
-    n_samples=9,
+    test_dataset,
+    n_realizations=3,
     seed=42,
     save_path=None,
 ):
     """
-    Plot realizations from output function encoder using actual dataset samples.
-    Uses the function encoder dataset to properly split example and spatial points.
-    For Darcy (1D): plots 3x3 grid of 1D function realizations.
+    Create publication-quality 4x3 gridspec plot for B2B performance.
+    Each column shows a different random realization.
+    Each row shows: input function encoder, output function encoder, linear B2B, nonlinear B2B.
+
+    Args:
+        input_function_encoder: Input function encoder model
+        output_function_encoder: Output function encoder model
+        linear_forward_model: Linear B2B forward model
+        nonlinear_forward_model: Nonlinear B2B forward model
+        input_encoder_dataset: Input encoder dataset
+        output_encoder_dataset: Output encoder dataset
+        test_dataset: Test dataset
+        n_realizations: Number of random realizations to show (columns)
+        seed: Random seed
+        save_path: Path to save the figure
     """
-    output_function_encoder.eval()
+    # Set random seeds
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
-    # Randomly select samples from output encoder dataset (using same seed as input encoder)
-    indices = random.sample(range(len(output_encoder_dataset)), min(n_samples, len(output_encoder_dataset)))
-
-    with torch.no_grad():
-        # Collect coefficients, spatial coordinates, and ground truth from actual data samples
-        betas = []
-        all_ys = []
-        all_ss = []
-        for idx in indices:
-            # Get split data from function encoder dataset (for example points)
-            example_xs, example_ys, xs, ys = output_encoder_dataset[idx]
-
-            # Get full spatial coordinates and ground truth from base dataset
-            X, u, Y, s = output_encoder_dataset.dataset[idx]
-
-            # Add batch dimension
-            example_xs = example_xs.unsqueeze(0).to(device)
-            example_ys = example_ys.unsqueeze(0).to(device)
-            Y = Y.unsqueeze(0).to(device)
-
-            # Compute coefficients from example points
-            beta, _ = output_function_encoder.compute_coefficients(example_xs, example_ys)
-            betas.append(beta)
-            all_ys.append(Y)
-            all_ss.append(s)
-
-        # Stack all betas and full spatial coordinates
-        betas = torch.cat(betas, dim=0)
-        all_ys = torch.cat(all_ys, dim=0)
-
-        # Evaluate function encoder at full spatial coordinates using computed coefficients
-        functions = output_function_encoder(all_ys, betas)
-
-    # Convert to numpy for plotting
-    functions_np = functions.cpu().numpy()
-    coords_np = all_ys.cpu().numpy()
-
-    # Extract y coordinates (assuming 1D, shape is [n_samples, n_points, 1])
-    y_coords = coords_np[0, :, 0] if coords_np.shape[2] > 1 else coords_np[0].squeeze()
-
-    # Create 3x3 grid
-    fig, axes = plt.subplots(3, 3, figsize=(12, 10))
-    axes = axes.flatten()
-
-    for idx in range(n_samples):
-        ax = axes[idx]
-        function_values = functions_np[idx].squeeze()
-        ground_truth = all_ss[idx].cpu().numpy().squeeze()
-
-        # Compute MSE
-        mse = np.mean((ground_truth - function_values) ** 2)
-
-        # Plot ground truth and reconstruction
-        ax.plot(y_coords, ground_truth, 'b-', label='Ground Truth', linewidth=1.5, alpha=0.7)
-        ax.plot(y_coords, function_values, 'r--', label='Reconstruction', linewidth=1.5, alpha=0.7)
-        ax.set_title(f'Sample {indices[idx]}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('y', fontsize=8)
-        ax.set_ylabel('u(y)', fontsize=8)
-        ax.legend(fontsize=7, loc='best')
-        ax.grid(True, alpha=0.3)
-
-    fig.suptitle(f'Output Function Encoder - Ground Truth vs Reconstruction (seed={seed})',
-                 fontsize=14, fontweight='bold')
-    plt.tight_layout()
-
-    if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"  ✓ Saved: {save_path}")
-
-    plt.close()
-
-
-def plot_forward_model_performance(
-    forward_model,
-    input_function_encoder,
-    output_function_encoder,
-    test_dataset,
-    model_name,
-    n_samples=9,
-    seed=42,
-    save_path=None,
-):
-    """
-    Plot forward model predictions vs true outputs for random test samples in a 3x3 grid.
-    For Darcy (1D): shows 9 samples with predicted vs true output.
-    """
-    forward_model.eval()
+    # Set models to eval mode
     input_function_encoder.eval()
     output_function_encoder.eval()
+    linear_forward_model.eval()
+    nonlinear_forward_model.eval()
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+    # Randomly select samples
+    indices = random.sample(
+        range(len(test_dataset)), min(n_realizations, len(test_dataset))
+    )
 
-    # Randomly select samples from test dataset
-    indices = random.sample(range(len(test_dataset)), min(n_samples, len(test_dataset)))
+    # Set up publication style
+    setup_publication_style()
 
-    # Create 3x3 grid
-    fig, axes = plt.subplots(3, 3, figsize=(15, 12))
-    axes = axes.flatten()
+    # Create figure with constrained layout
+    fig = plt.figure(figsize=(6.5, 4.5), layout="constrained")
+    fig.set_constrained_layout_pads(
+        w_pad=0.5 / 72.0, h_pad=0.5 / 72.0, hspace=0.0, wspace=0.0
+    )
 
-    for plot_idx, sample_idx in enumerate(indices):
-        ax = axes[plot_idx]
+    # Create gridspec: 4 rows x n_realizations columns with minimal spacing
+    gs = fig.add_gridspec(
+        4,
+        n_realizations,
+        hspace=0.1,
+        wspace=0.0,
+        left=0.0,
+        right=1.0,
+        top=1.0,
+        bottom=0.0,
+    )
 
-        # Get sample
-        X, u, Y, s_true = test_dataset[sample_idx]
-        X = X.to(device)
-        u = u.to(device)
-        Y = Y.to(device)
-        s_true = s_true.to(device)
+    # Row titles and labels
+    row_configs = [
+        {
+            "title": "Darcy Dataset Input Function Encoder Reconstructions",
+            "xlabel": r"$x$",
+            "ylabel": r"$a(x)$",
+        },
+        {
+            "title": "Darcy Dataset Output Function Encoder Reconstructions",
+            "xlabel": r"$y$",
+            "ylabel": r"$u(y)$",
+        },
+        {
+            "title": "Darcy Dataset Linear B2B Forward Model",
+            "xlabel": r"$y$",
+            "ylabel": r"$u(y)$",
+        },
+        {
+            "title": "Darcy Dataset Nonlinear B2B Forward Model",
+            "xlabel": r"$y$",
+            "ylabel": r"$u(y)$",
+        },
+    ]
 
-        with torch.no_grad():
+    # Create parent axes for each row
+    parent_axes = []
+    for row_idx, config in enumerate(row_configs):
+        ax_parent = fig.add_subplot(gs[row_idx, :], frameon=False)
+        ax_parent.tick_params(
+            labelcolor="none", top=False, bottom=False, left=False, right=False
+        )
+        ax_parent.set_xlabel(config["xlabel"], labelpad=0 if row_idx == 3 else -8)
+        ax_parent.set_ylabel(config["ylabel"], labelpad=4)
+        ax_parent.set_title(config["title"], pad=4)
+        parent_axes.append(ax_parent)
+
+    # Collect all data for consistent y-limits within each row
+    row_data = [[] for _ in range(4)]
+
+    with torch.no_grad():
+        for col_idx, sample_idx in enumerate(indices):
+            # Get sample
+            X, u, Y, s_true = test_dataset[sample_idx]
+            X = X.to(device)
+            u = u.to(device)
+            Y = Y.to(device)
+            s_true = s_true.to(device)
+
             # Add batch dimension
             X_batch = X.unsqueeze(0)
             u_batch = u.unsqueeze(0)
             Y_batch = Y.unsqueeze(0)
 
-            # Compute alpha coefficients from input
-            alpha, _ = input_function_encoder.compute_coefficients(X_batch, u_batch)
+            # Get input encoder reconstruction
+            example_xs_input, example_ys_input, xs_input, ys_input = (
+                input_encoder_dataset[sample_idx]
+            )
+            example_xs_input = example_xs_input.unsqueeze(0).to(device)
+            example_ys_input = example_ys_input.unsqueeze(0).to(device)
+            alpha, _ = input_function_encoder.compute_coefficients(
+                example_xs_input, example_ys_input
+            )
+            u_recon = input_function_encoder(X_batch, alpha).squeeze(0)
 
-            # Forward pass through model
-            beta_pred = forward_model.forward(alpha)
+            # Get output encoder reconstruction
+            example_xs_output, example_ys_output, xs_output, ys_output = (
+                output_encoder_dataset[sample_idx]
+            )
+            example_xs_output = example_xs_output.unsqueeze(0).to(device)
+            example_ys_output = example_ys_output.unsqueeze(0).to(device)
+            beta, _ = output_function_encoder.compute_coefficients(
+                example_xs_output, example_ys_output
+            )
+            s_recon = output_function_encoder(Y_batch, beta).squeeze(0)
 
-            # Reconstruct predicted output
-            s_pred = output_function_encoder(Y_batch, beta_pred)
-            s_pred = s_pred.squeeze(0)
+            # Get linear B2B prediction
+            beta_linear = linear_forward_model.forward(alpha)
+            s_linear = output_function_encoder(Y_batch, beta_linear).squeeze(0)
 
-        # Convert to numpy
-        s_true_np = s_true.squeeze().cpu().numpy()
-        s_pred_np = s_pred.squeeze().cpu().numpy()
-        Y_np = Y.cpu().numpy()
+            # Get nonlinear B2B prediction
+            beta_nonlinear = nonlinear_forward_model.forward(alpha)
+            s_nonlinear = output_function_encoder(Y_batch, beta_nonlinear).squeeze(0)
 
-        # Extract coordinates
-        y_coords = Y_np[:, 0] if Y_np.shape[1] > 1 else Y_np.squeeze()
+            # Store data for plotting
+            x_coords = X.cpu().numpy().squeeze()
+            y_coords = Y.cpu().numpy().squeeze()
+            u_true_np = u.cpu().numpy().squeeze()
+            s_true_np = s_true.cpu().numpy().squeeze()
+            u_recon_np = u_recon.cpu().numpy().squeeze()
+            s_recon_np = s_recon.cpu().numpy().squeeze()
+            s_linear_np = s_linear.cpu().numpy().squeeze()
+            s_nonlinear_np = s_nonlinear.cpu().numpy().squeeze()
 
-        # Compute error
-        mse = np.mean((s_true_np - s_pred_np) ** 2)
+            row_data[0].append((x_coords, u_true_np, u_recon_np))
+            row_data[1].append((y_coords, s_true_np, s_recon_np))
+            row_data[2].append((y_coords, s_true_np, s_linear_np))
+            row_data[3].append((y_coords, s_true_np, s_nonlinear_np))
 
-        # Plot
-        ax.plot(y_coords, s_true_np, 'b-', label='True', linewidth=1.5, alpha=0.7)
-        ax.plot(y_coords, s_pred_np, 'r--', label='Predicted', linewidth=1.5, alpha=0.7)
-        ax.set_title(f'Sample {sample_idx}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('y', fontsize=8)
-        ax.set_ylabel('u(y)', fontsize=8)
-        ax.legend(fontsize=7, loc='best')
-        ax.grid(True, alpha=0.3)
+    # Compute y-limits for each row
+    row_ylims = []
+    for row_idx in range(4):
+        y_min = float("inf")
+        y_max = float("-inf")
+        for data in row_data[row_idx]:
+            coords, true_vals, pred_vals = data
+            y_min = min(y_min, true_vals.min())
+            y_max = max(y_max, true_vals.max())
+            y_min = min(y_min, pred_vals.min())
+            y_max = max(y_max, pred_vals.max())
+        y_range = y_max - y_min
+        row_ylims.append((y_min - 0.05 * y_range, y_max + 0.05 * y_range))
 
-    fig.suptitle(f'{model_name} Forward Model - Predictions vs True Outputs (seed={seed})',
-                 fontsize=14, fontweight='bold')
-    plt.tight_layout()
+    # Plot all subplots
+    for row_idx in range(4):
+        for col_idx in range(n_realizations):
+            ax = fig.add_subplot(gs[row_idx, col_idx])
+
+            coords, true_vals, pred_vals = row_data[row_idx][col_idx]
+
+            # Plot ground truth as dashed gray line and prediction/reconstruction
+            # Use different color for each row: C0 (input), C1 (output), C2 (linear), C3 (nonlinear)
+            colors = ["C0", "C1", "C2", "C3"]
+            color = colors[row_idx]
+            ax.plot(coords, true_vals, "--", color="gray", linewidth=1.0, alpha=0.8)
+            ax.plot(coords, pred_vals, "-", color=color, linewidth=1.0, alpha=0.8)
+
+            # Compute relative L2 error
+            l2_error = np.linalg.norm(true_vals - pred_vals) / np.linalg.norm(true_vals)
+
+            # Add L2 error text annotation with dark gray background
+            ax.text(
+                0.95,
+                0.95,
+                f"L2: {l2_error:.2e}",
+                transform=ax.transAxes,
+                fontsize=5,
+                color="white",
+                va="top",
+                ha="right",
+                bbox=dict(
+                    boxstyle="round,pad=0.3",
+                    facecolor="#333333",
+                    alpha=0.8,
+                    edgecolor="none",
+                ),
+            )
+
+            # Set limits
+            ax.set_ylim(row_ylims[row_idx])
+            ax.set_xlim(coords.min(), coords.max())
+
+            # Add tick labels only on left column and bottom row
+            show_left = col_idx == 0
+            show_bottom = row_idx == 3
+            ax.tick_params(
+                labelbottom=show_bottom,
+                labelleft=show_left,
+                length=2,
+                width=0.5,
+                labelsize=5,
+            )
+
+            # Add grid
+            ax.grid(True, linestyle="-", linewidth=0.4, alpha=0.6)
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"  ✓ Saved: {save_path}")
+        # Also save as PDF
+        pdf_path = save_path.replace(".png", ".pdf")
+        plt.savefig(pdf_path, dpi=300, bbox_inches="tight")
+        print(f"  ✓ Saved: {pdf_path}")
 
     plt.close()
 
 
 # Parse command line arguments
-parser = argparse.ArgumentParser(description="Plot B2B model performance for Darcy 1D dataset.")
+parser = argparse.ArgumentParser(
+    description="Create publication-quality B2B performance plot for Darcy 1D dataset."
+)
 parser.add_argument(
     "--log_dir",
     type=str,
@@ -305,23 +291,16 @@ parser.add_argument(
     help="Base results directory for saving plots",
 )
 parser.add_argument(
-    "--forward_model",
-    type=str,
-    choices=["b2b_linear", "b2b_nonlinear", "all"],
-    default="all",
-    help="Forward model to plot (default: all)",
-)
-parser.add_argument(
     "--seed",
     type=int,
     default=42,
     help="Random seed for reproducibility",
 )
 parser.add_argument(
-    "--n_samples",
+    "--n_realizations",
     type=int,
-    default=9,
-    help="Number of samples to plot (default: 9 for 3x3 grid)",
+    default=3,
+    help="Number of random realizations to show (columns, default: 3)",
 )
 
 args = parser.parse_args()
@@ -336,7 +315,7 @@ dataset_name = "darcy_1d"
 
 # Construct paths
 shared_log_dir = os.path.join(args.log_dir, dataset_name, "shared", "seed_1")
-shared_results_dir = os.path.join(args.results_dir, dataset_name, "shared")
+shared_results_dir = os.path.join(args.results_dir, dataset_name, "shared", "seed_1")
 
 # Check if shared directory exists
 if not os.path.exists(os.path.join(shared_log_dir, "input_function_encoder.pth")):
@@ -367,56 +346,38 @@ input_function_encoder, output_function_encoder = load_function_encoders(
 )
 print(f"✓ Loaded function encoders")
 
+# Load forward models
+print(f"Loading forward models...")
+linear_forward_model = load_forward_model(
+    log_dir=shared_log_dir,
+    forward_model_name="b2b_linear",
+    device=device,
+)
+print(f"✓ Loaded linear forward model")
+
+nonlinear_forward_model = load_forward_model(
+    log_dir=shared_log_dir,
+    forward_model_name="b2b_nonlinear",
+    device=device,
+)
+print(f"✓ Loaded nonlinear forward model")
+
 # Create results directory
 os.makedirs(shared_results_dir, exist_ok=True)
 
-# Plot input function encoder realizations
-print(f"Generating input function encoder realizations...")
-plot_input_function_encoder_realizations(
+# Generate publication-quality B2B plot
+print(f"Generating publication-quality B2B plot...")
+plot_b2b_publication_grid(
     input_function_encoder=input_function_encoder,
-    input_encoder_dataset=input_encoder_dataset,
-    n_samples=args.n_samples,
-    seed=args.seed,
-    save_path=os.path.join(shared_results_dir, "input_encoder_realizations.png"),
-)
-
-# Plot output function encoder realizations
-print(f"Generating output function encoder realizations...")
-plot_output_function_encoder_realizations(
     output_function_encoder=output_function_encoder,
+    linear_forward_model=linear_forward_model,
+    nonlinear_forward_model=nonlinear_forward_model,
+    input_encoder_dataset=input_encoder_dataset,
     output_encoder_dataset=output_encoder_dataset,
-    n_samples=args.n_samples,
+    test_dataset=test_dataset,
+    n_realizations=args.n_realizations,
     seed=args.seed,
-    save_path=os.path.join(shared_results_dir, "output_encoder_realizations.png"),
+    save_path=os.path.join(shared_results_dir, "darcy_b2b_publication.png"),
 )
 
-# Determine which forward models to plot
-forward_models = ["b2b_linear", "b2b_nonlinear"] if args.forward_model == "all" else [args.forward_model]
-
-# Plot forward model performance
-for forward_model_name in forward_models:
-    try:
-        print(f"Loading {forward_model_name} forward model...")
-        forward_model = load_forward_model(
-            log_dir=shared_log_dir,
-            forward_model_name=forward_model_name,
-            device=device,
-        )
-        print(f"✓ Loaded {forward_model_name}")
-
-        print(f"Generating {forward_model_name} performance plot...")
-        plot_forward_model_performance(
-            forward_model=forward_model,
-            input_function_encoder=input_function_encoder,
-            output_function_encoder=output_function_encoder,
-            test_dataset=test_dataset,
-            model_name=forward_model_name,
-            n_samples=args.n_samples,
-            seed=args.seed,
-            save_path=os.path.join(shared_results_dir, f"{forward_model_name}_performance.png"),
-        )
-    except FileNotFoundError as e:
-        print(f"  ⚠ {forward_model_name} not found, skipping...")
-        continue
-
-print(f"✓ All B2B performance plots generated → {shared_results_dir}")
+print(f"✓ Publication-quality B2B plot generated → {shared_results_dir}")
