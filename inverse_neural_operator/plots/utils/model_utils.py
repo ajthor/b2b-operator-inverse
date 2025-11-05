@@ -163,9 +163,21 @@ def select_models_and_sample(
     )
 
     # Rank models by mean MSE (lower is better)
-    ranked_models = sorted(
-        per_model_mses.keys(), key=lambda k: np.mean(per_model_mses[k])
-    )
+    model_means = {
+        name: float(np.mean(mse_list)) if mse_list else float("inf")
+        for name, mse_list in per_model_mses.items()
+    }
+    ranked_models = sorted(model_means.keys(), key=lambda k: model_means[k])
+
+    if model_means:
+        print("  Mean MSE by model:")
+        for name in ranked_models:
+            score = model_means[name]
+            if np.isfinite(score):
+                print(f"    {name}: {score:.6e}")
+            else:
+                print(f"    {name}: unavailable")
+
     models_to_plot = ranked_models[:max_models]
     print(f"  Selected models: {', '.join(models_to_plot)}")
 

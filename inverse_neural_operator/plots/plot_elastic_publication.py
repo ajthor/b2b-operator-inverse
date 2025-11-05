@@ -141,40 +141,52 @@ def _create_unified_figure():
     return fig, gs, axes_left, axes_right
 
 
-def _plot_force_curve(ax, force_y, force_mag_true, force_mag_pred=None, annotation=None, color="b", linewidth=1.5):
-    """Plot a 1D forcing function along the boundary with ground truth.
+def _plot_force_curve(ax, force_y, force_mag_true, force_mag_samples=None, annotation=None, color="b"):
+    """Plot a 1D forcing function along the boundary with ground truth and samples.
 
     Args:
         ax: Axis to plot on
         force_y: Y coordinates along boundary
         force_mag_true: Ground truth force magnitude values
-        force_mag_pred: Predicted force magnitude values (optional)
+        force_mag_samples: Array of predicted force samples [n_samples, n_points] or single prediction [n_points]
         annotation: Optional text annotation for upper-left corner
         color: Line color for prediction
-        linewidth: Line width
 
     Returns:
-        The prediction line object
+        None
     """
     # Plot ground truth first (gray dashed line)
     ax.plot(force_mag_true, force_y, color=GROUND_TRUTH_COLOR, linewidth=1.0, linestyle="dashed")
 
-    # Plot prediction if provided (colored solid line)
-    line = None
-    if force_mag_pred is not None:
-        line = ax.plot(force_mag_pred, force_y, color=color, linewidth=linewidth)[0]
+    # Plot prediction samples if provided
+    if force_mag_samples is not None:
+        if force_mag_samples.ndim == 1:
+            # Single prediction (deterministic model)
+            ax.plot(force_mag_samples, force_y, color=color, linewidth=1.5)
+        else:
+            # Multiple samples (probabilistic model)
+            for sample in force_mag_samples:
+                ax.plot(sample, force_y, color=color, alpha=0.6, linewidth=0.6)
 
     # Set y limits to match boundary coordinates [0, 1]
     ax.set_ylim(force_y.min(), force_y.max())
 
-    # Clean minimal styling (no aspect - force plots fill their cells)
-    ax.set_xticks([])
-    ax.set_yticks([])
+    # Get current x limits
+    xlim = ax.get_xlim()
+
+    # Set explicit coarse tick positions (3-4 ticks) to match darcy/burgers style
+    ax.set_xticks(np.linspace(xlim[0], xlim[1], 4))
+    ax.set_yticks(np.linspace(force_y.min(), force_y.max(), 4))
+
+    # Add grid styling
+    ax.tick_params(labelbottom=False, labelleft=False, length=0, width=0.5)
+    ax.grid(True, linestyle="-", linewidth=0.4, alpha=0.6)
+
+    # Keep spines and styling
     ax.spines["top"].set_visible(True)
     ax.spines["right"].set_visible(True)
     ax.spines["bottom"].set_visible(True)
     ax.spines["left"].set_visible(True)
-    ax.axvline(x=0, color="k", linestyle=":", alpha=0.3, linewidth=0.5)
 
     # Add annotation if provided
     if annotation:
@@ -191,8 +203,6 @@ def _plot_force_curve(ax, force_y, force_mag_true, force_mag_pred=None, annotati
                 boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
             ),
         )
-
-    return line
 
 
 def _plot_displacement_field(
@@ -423,11 +433,16 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
         s_samples = preds.get("outputs", np.empty((0,)))
 
         if u_samples.size > 0 and s_samples.size > 0:
-            # Average over samples
-            u_mean = u_samples.mean(axis=0)
+            # For force curves: keep all samples for probabilistic models, mean for deterministic
+            if model_name in SAMPLING_MODELS and u_samples.shape[0] > 1:
+                u_data = u_samples  # Keep all samples [n_samples, n_points]
+            else:
+                u_data = u_samples.mean(axis=0)  # Single prediction [n_points]
+
+            # For displacement fields: always use mean
             s_mean = s_samples.mean(axis=0)
 
-            processed_preds[model_name] = (u_mean, s_mean)
+            processed_preds[model_name] = (u_data, s_mean)
 
     # Determine color limits based only on ground truth (like original script)
     # This shows predictions relative to the expected displacement range
@@ -442,12 +457,12 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     for idx, model_name in enumerate(models_to_plot[:MAX_MODELS]):
         ax = axes_left[idx]
         if model_name in processed_preds:
-            u_mean, s_mean = processed_preds[model_name]
+            u_data, s_mean = processed_preds[model_name]
             color = MODEL_CMAP(idx % MODEL_CMAP.N)
 
-            # Force curve with ground truth overlay
+            # Force curve with ground truth overlay (u_data can be samples or mean)
             _plot_force_curve(
-                ax, force_y, u_true, u_mean, annotation=display_name(model_name), color=color, linewidth=1.5
+                ax, force_y, u_true, u_data, annotation=display_name(model_name), color=color
             )
         else:
             # Turn off empty axes
@@ -457,9 +472,9 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     for idx, model_name in enumerate(models_to_plot[:MAX_DISPLACEMENT_MODELS]):
         ax = axes_right[idx]
         if model_name in processed_preds:
-            u_mean, s_mean = processed_preds[model_name]
+            u_data, s_mean = processed_preds[model_name]
 
-            # Displacement field
+            # Displacement field (always uses mean)
             im_right = _plot_displacement_field(
                 ax,
                 y_2d,

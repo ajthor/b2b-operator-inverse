@@ -71,6 +71,14 @@ class WaveScatteringDataset(Dataset):
 
     def get_info(self):
         """Extract info from model dataset."""
+        # Get actual dimensions from data
+        n_input_points = self.X.shape[1]  # Number of input sampling points
+        n_output_points = self.s.shape[1]  # Total output points (flattened if 2D)
+
+        # Infer output spatial dims from flattened size (assume square grid)
+        import math
+        output_grid_size = int(math.sqrt(n_output_points))
+
         return {
             # Basic info (existing)
             "X_size": self.X.shape[-1],
@@ -81,12 +89,12 @@ class WaveScatteringDataset(Dataset):
             "u_len": self.u.shape[0],
             "Y_len": self.Y.shape[0],
             "s_len": self.s.shape[0],
-            # iFNO spatial info (hardcoded for Wave Scattering - asymmetric)
-            "input_spatial_dims": (200,),  # 1D angular domain
-            "output_spatial_dims": (200, 200),  # 2D spatial domain
-            "input_function_channels": 1,  # Scalar wave parameters
-            "output_function_channels": 1,  # Scalar scattered field
-            "coordinate_dim": 2,  # Output coordinates are 2D
+            # iFNO spatial info (derived from actual data - asymmetric)
+            "input_spatial_dims": (n_input_points,),  # 1D angular domain
+            "output_spatial_dims": (output_grid_size, output_grid_size),  # 2D spatial domain
+            "input_function_channels": self.u.shape[-1],  # Actual number of function channels in u
+            "output_function_channels": self.s.shape[-1],  # Actual number of function channels in s
+            "coordinate_dim": 2,  # Coordinates are 2D (x, y)
         }
 
 

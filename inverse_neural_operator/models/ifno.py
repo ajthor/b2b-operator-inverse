@@ -509,17 +509,12 @@ class IFNO(nn.Module):
         # Detect if this is a symmetric vs asymmetric problem
         self.is_symmetric = (input_spatial_dims == output_spatial_dims)
 
-        # For asymmetric problems, input and output may have different coordinate dimensions
-        # Use the actual spatial dimensions to determine coordinate dimensions
-        if self.is_symmetric:
-            # Symmetric: use coordinate_dim for both input and output
-            self.input_coordinate_dim = coordinate_dim
-            self.output_coordinate_dim = coordinate_dim
-        else:
-            # Asymmetric: infer coordinate dimensions from spatial structure
-            # For wave scattering: input is 1D (200,), output is 2D (200, 200)
-            self.input_coordinate_dim = len(input_spatial_dims)
-            self.output_coordinate_dim = len(output_spatial_dims)
+        # Coordinate dimensions represent the physical space (1D, 2D, 3D)
+        # This is independent of how the data is structured (spatial_dims)
+        # For example: elastic_plate has 1D spatial structure but 2D coordinates
+        # Always use the coordinate_dim parameter - it correctly represents the physical space
+        self.input_coordinate_dim = coordinate_dim
+        self.output_coordinate_dim = coordinate_dim
 
         # Derive legacy parameters for compatibility
         self.resolution = resolution or self._get_primary_resolution()
