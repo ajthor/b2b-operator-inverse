@@ -38,6 +38,7 @@ from plots.utils.plot_utils import (
     find_params,
     load_forward_model,
 )
+from models.ifno import create_model as create_ifno_model, load as load_ifno_weights
 
 DEVICE = "cpu"
 
@@ -60,8 +61,9 @@ SAMPLING_MODELS = {
     "cinn_additive",
 }
 
-MAX_MODELS = 6  # Number of models to plot on left (force curves)
-MAX_DISPLACEMENT_MODELS = 5  # Number of model displacement fields (5 models + 1 ground truth)
+MAX_MODELS = 6  # Total number of models evaluated (including IFNO)
+MAX_FORCE_MODELS = 5  # Number of model force curves (5 models including IFNO, plus GT)
+MAX_DISPLACEMENT_MODELS = 5  # Number of model displacement fields (5 models including IFNO, plus GT)
 N_SAMPLES = 8
 
 MODEL_CMAP = mpl.cm.get_cmap("tab10")
@@ -71,6 +73,38 @@ GROUND_TRUTH_COLOR = "#CCCCCC"  # Gray - for ground truth lines
 def create_circular_mask(x, y, center=(0.5, 0.5), radius=0.25):
     """Return True inside the plate's circular void."""
     return (x - center[0]) ** 2 + (y - center[1]) ** 2 <= radius**2
+
+
+def load_ifno_model(dataset_info, device="cpu", ifno_path="logs_ifno/elastic_plate/ifno_model.pth"):
+    """Load IFNO model for elastic plate problem."""
+    if not os.path.exists(ifno_path):
+        print(f"IFNO model not found at {ifno_path}")
+        return None
+
+    # Create IFNO model with dataset-specific configuration
+    ifno_model = create_ifno_model(
+        input_size=None,
+        modes1=16,
+        modes2=16,
+        width=64,
+        beta=2.0,
+        n_layers=3,
+        padding=20,
+        vae_latent_dim=24,
+        intermediate_dim=32,
+        input_spatial_dims=dataset_info["input_spatial_dims"],
+        output_spatial_dims=dataset_info["output_spatial_dims"],
+        input_function_channels=dataset_info["input_function_channels"],
+        output_function_channels=dataset_info["output_function_channels"],
+        coordinate_dim=dataset_info["coordinate_dim"],
+    ).to(device)
+
+    # Load weights
+    load_ifno_weights(ifno_model, ifno_path, device=device)
+    ifno_model.eval()
+
+    print(f"✓ Loaded IFNO model from {ifno_path}")
+    return ifno_model
 
 
 def _create_unified_figure():
@@ -141,122 +175,66 @@ def _create_unified_figure():
     return fig, gs, axes_left, axes_right
 
 
-def _plot_force_curve(ax, force_y, force_mag_true, force_mag_samples=None, annotation=None, color="b"):
-    """Plot a 1D forcing function along the boundary with ground truth and samples.
+def _plot_force_curve(ax, force_y, force_mag_true, force_mag_samples=None, annotation=None, color="b", show_gt_overlay=True):
+    """Plot a 1D forcing function along the boundary with optional ground truth overlay.
 
     Args:
         ax: Axis to plot on
         force_y: Y coordinates along boundary
         force_mag_true: Ground truth force magnitude values
-        force_mag_samples: Array of predicted force samples [n_samples, n_points] or single prediction [n_points]
-        annotation: Optional text annotation for upper-left corner
+        force_mag_samples: Array of predicted force samples or None for GT-only plot
+        annotation: Optional text annotation
         color: Line color for prediction
-
-    Returns:
-        None
+        show_gt_overlay: If True, show gray dashed GT line (for model plots), if False use solid line (for GT-only plot)
     """
-    # Plot ground truth first (gray dashed line)
-    ax.plot(force_mag_true, force_y, color=GROUND_TRUTH_COLOR, linewidth=1.0, linestyle="dashed")
+    # Plot ground truth
+    if show_gt_overlay:
+        ax.plot(force_mag_true, force_y, color=GROUND_TRUTH_COLOR, linewidth=0.5, linestyle="dashed")
+    else:
+        ax.plot(force_mag_true, force_y, color="black", linewidth=0.5)
 
     # Plot prediction samples if provided
     if force_mag_samples is not None:
         if force_mag_samples.ndim == 1:
-            # Single prediction (deterministic model)
-            ax.plot(force_mag_samples, force_y, color=color, linewidth=1.5)
+            ax.plot(force_mag_samples, force_y, color=color, linewidth=0.5)
         else:
-            # Multiple samples (probabilistic model)
             for sample in force_mag_samples:
-                ax.plot(sample, force_y, color=color, alpha=0.6, linewidth=0.6)
+                ax.plot(sample, force_y, color=color, alpha=0.6, linewidth=0.5)
 
-    # Set y limits to match boundary coordinates [0, 1]
+    # Styling
     ax.set_ylim(force_y.min(), force_y.max())
-
-    # Get current x limits
     xlim = ax.get_xlim()
-
-    # Set explicit coarse tick positions (3-4 ticks) to match darcy/burgers style
     ax.set_xticks(np.linspace(xlim[0], xlim[1], 4))
     ax.set_yticks(np.linspace(force_y.min(), force_y.max(), 4))
-
-    # Add grid styling
     ax.tick_params(labelbottom=False, labelleft=False, length=0, width=0.5)
     ax.grid(True, linestyle="-", linewidth=0.4, alpha=0.6)
+    for spine in ax.spines.values():
+        spine.set_visible(True)
 
-    # Keep spines and styling
-    ax.spines["top"].set_visible(True)
-    ax.spines["right"].set_visible(True)
-    ax.spines["bottom"].set_visible(True)
-    ax.spines["left"].set_visible(True)
-
-    # Add annotation if provided
     if annotation:
-        ax.text(
-            0.05,
-            0.95,
-            annotation,
-            transform=ax.transAxes,
-            fontsize=5,
-            color="white",
-            verticalalignment="top",
-            horizontalalignment="left",
-            bbox=dict(
-                boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
-            ),
-        )
+        ax.text(0.05, 0.95, annotation, transform=ax.transAxes, fontsize=5, color="white",
+                va="top", ha="left", bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"))
 
 
-def _plot_displacement_field(
-    ax, coords, displacement, cmap="jet", vmin=None, vmax=None, annotation=None
-):
-    """Plot a 2D displacement field with circular void masked.
-
-    Args:
-        ax: Axis to plot on
-        coords: N×2 array of (x, y) coordinates
-        displacement: N-length array of displacement values
-        cmap: Colormap name
-        vmin, vmax: Color scale limits
-        annotation: Optional text annotation for upper-left corner
-
-    Returns:
-        The contour object
-    """
+def _plot_displacement_field(ax, coords, displacement, cmap="jet", vmin=None, vmax=None, annotation=None):
+    """Plot a 2D displacement field with circular void masked."""
     # Create interpolation grid
     xi = np.linspace(coords[:, 0].min(), coords[:, 0].max(), 150)
     yi = np.linspace(coords[:, 1].min(), coords[:, 1].max(), 150)
     Xi, Yi = np.meshgrid(xi, yi)
     Zi = griddata((coords[:, 0], coords[:, 1]), displacement, (Xi, Yi), method="cubic")
-
-    # Mask circular void
     Zi[create_circular_mask(Xi, Yi)] = np.nan
 
-    # Plot as contour
+    # Plot
     im = ax.contourf(Xi, Yi, Zi, levels=50, cmap=cmap, vmin=vmin, vmax=vmax)
-
-    # Set data limits
     ax.set_xlim(coords[:, 0].min(), coords[:, 0].max())
     ax.set_ylim(coords[:, 1].min(), coords[:, 1].max())
-
-    # Don't set aspect - let gridspec sizing control the shape
-    # Figure dimensions are calculated to create square cells
     ax.set_xticks([])
     ax.set_yticks([])
 
-    # Add annotation if provided
     if annotation:
-        ax.text(
-            0.05,
-            0.95,
-            annotation,
-            transform=ax.transAxes,
-            fontsize=5,
-            color="white",
-            verticalalignment="top",
-            horizontalalignment="left",
-            bbox=dict(
-                boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
-            ),
-        )
+        ax.text(0.05, 0.95, annotation, transform=ax.transAxes, fontsize=5, color="white",
+                va="top", ha="left", bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"))
 
     return im
 
@@ -292,6 +270,7 @@ def collect_elastic_predictions(
     input_function_encoder,
     output_function_encoder,
     forward_model,
+    ifno_model=None,
     n_samples_per_model=8,
     device="cpu",
 ):
@@ -304,6 +283,7 @@ def collect_elastic_predictions(
         input_function_encoder: Input encoder
         output_function_encoder: Output encoder
         forward_model: Forward model for re-simulation
+        ifno_model: Optional IFNO model
         n_samples_per_model: Number of predictions per model
         device: Device for computation
 
@@ -400,6 +380,59 @@ def collect_elastic_predictions(
             "outputs": np.stack(output_samples) if output_samples else np.empty((0,)),
         }
 
+    # Add IFNO predictions if model is provided
+    if ifno_model is not None:
+        with torch.no_grad():
+            # IFNO inverse: s_observed -> u_pred
+            s_input = torch.cat([batch[2], batch[3]], dim=-1)  # [Y, s_observed]
+            result = ifno_model.inverse(s_input)
+
+            # Handle tuple return for symmetric models
+            if isinstance(result, tuple):
+                pred_u_full, _ = result
+            else:
+                pred_u_full = result
+
+            # Extract function values only (last channel)
+            if pred_u_full.shape[-1] > batch[1].shape[-1]:
+                pred_u = pred_u_full[..., -batch[1].shape[-1]:]
+            else:
+                pred_u = pred_u_full
+
+            u_pred_np = pred_u.squeeze(0).squeeze(-1).cpu().numpy()
+
+            # Repeat for consistent interface
+            input_samples = [u_pred_np.copy() for _ in range(n_samples_per_model)]
+
+            # For displacement: use forward model if available, otherwise use IFNO forward
+            output_samples = []
+            if forward_model is not None:
+                # Get alpha coefficients from predicted u
+                alpha_pred, _ = input_function_encoder.compute_coefficients(batch[0], pred_u)
+                beta_resim = forward_model(alpha_pred)
+                s_resim = output_function_encoder(batch[2], beta_resim)
+                s_resim_np = s_resim.squeeze(0).squeeze(-1).cpu().numpy()
+                output_samples = [s_resim_np.copy() for _ in range(n_samples_per_model)]
+            else:
+                # Use IFNO forward pass
+                u_input = torch.cat([batch[0], pred_u], dim=-1)
+                result_fwd = ifno_model(u_input)
+                if isinstance(result_fwd, tuple):
+                    pred_s, _ = result_fwd
+                else:
+                    pred_s = result_fwd
+
+                if pred_s.shape[-1] > batch[3].shape[-1]:
+                    pred_s = pred_s[..., -batch[3].shape[-1]:]
+
+                s_pred_np = pred_s.squeeze(0).squeeze(-1).cpu().numpy()
+                output_samples = [s_pred_np.copy() for _ in range(n_samples_per_model)]
+
+            predictions["ifno"] = {
+                "inputs": np.stack(input_samples),
+                "outputs": np.stack(output_samples),
+            }
+
     return predictions, meta
 
 
@@ -425,8 +458,9 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     # Create figure
     fig, gs, axes_left, axes_right = _create_unified_figure()
 
-    # Process predictions
+    # Process predictions (IFNO is already in models_to_plot if it was loaded)
     processed_preds = {}
+
     for model_name in models_to_plot[:MAX_MODELS]:
         preds = predictions.get(model_name, {})
         u_samples = preds.get("inputs", np.empty((0,)))
@@ -453,52 +487,28 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     # Plot models
     im_right = None
 
-    # Left side: Plot force curves for top 6 models (each with ground truth overlay)
-    for idx, model_name in enumerate(models_to_plot[:MAX_MODELS]):
-        ax = axes_left[idx]
+    # Left side: Force curves (top 5 models + ground truth)
+    for idx, model_name in enumerate(models_to_plot[:MAX_FORCE_MODELS]):
         if model_name in processed_preds:
             u_data, s_mean = processed_preds[model_name]
-            color = MODEL_CMAP(idx % MODEL_CMAP.N)
-
-            # Force curve with ground truth overlay (u_data can be samples or mean)
-            _plot_force_curve(
-                ax, force_y, u_true, u_data, annotation=display_name(model_name), color=color
-            )
+            _plot_force_curve(axes_left[idx], force_y, u_true, u_data,
+                            annotation=display_name(model_name), color=MODEL_CMAP(idx % MODEL_CMAP.N))
         else:
-            # Turn off empty axes
-            ax.axis("off")
+            axes_left[idx].axis("off")
 
-    # Right side: Plot displacement fields for top 5 models
+    _plot_force_curve(axes_left[5], force_y, u_true, annotation="Ground Truth", show_gt_overlay=False)
+
+    # Right side: Displacement fields (top 5 models + ground truth)
     for idx, model_name in enumerate(models_to_plot[:MAX_DISPLACEMENT_MODELS]):
-        ax = axes_right[idx]
         if model_name in processed_preds:
             u_data, s_mean = processed_preds[model_name]
-
-            # Displacement field (always uses mean)
-            im_right = _plot_displacement_field(
-                ax,
-                y_2d,
-                s_mean,
-                cmap="jet",
-                vmin=s_min,
-                vmax=s_max,
-                annotation=display_name(model_name),
-            )
+            im_right = _plot_displacement_field(axes_right[idx], y_2d, s_mean, vmin=s_min, vmax=s_max,
+                                               annotation=display_name(model_name))
         else:
-            # Turn off empty axes
-            ax.axis("off")
+            axes_right[idx].axis("off")
 
-    # 6th position on right: ground truth displacement field
-    ax = axes_right[5]
-    im_right = _plot_displacement_field(
-        ax,
-        y_2d,
-        s_true,
-        cmap="jet",
-        vmin=s_min,
-        vmax=s_max,
-        annotation="Ground Truth",
-    )
+    im_right = _plot_displacement_field(axes_right[5], y_2d, s_true, vmin=s_min, vmax=s_max,
+                                        annotation="Ground Truth")
 
     # Add colorbar for displacement fields
     if im_right is not None:
@@ -567,16 +577,83 @@ def main():
 
     forward_model = load_forward_model(log_dir, args.seed, device=DEVICE)
 
-    # Evaluate models and select best performers
+    # Load IFNO model
+    print("\nLoading IFNO model...")
+    ifno_model = load_ifno_model(dataset_info, device=DEVICE)
+
+    # Evaluate models and select best performers (get top MAX_MODELS to have room for IFNO)
     models_to_plot, sample_idx = select_models_and_sample(
         test_dataset,
         models_dict,
         input_enc,
         output_enc,
-        max_models=MAX_MODELS,
+        max_models=MAX_MODELS,  # Get top MAX_MODELS models
         sample_index=args.sample_index,
         device=DEVICE,
     )
+
+    # Evaluate IFNO and insert it into the sorted list based on accuracy
+    if ifno_model is not None:
+        print("\nEvaluating IFNO performance...")
+        from plots.utils.model_utils import evaluate_models_on_subset
+
+        # Evaluate IFNO on test dataset
+        ifno_errors = []
+        ifno_model.eval()
+        with torch.no_grad():
+            for sample in test_dataset:
+                X, u_true, Y, s_observed = sample
+                X = X.to(DEVICE).unsqueeze(0)
+                u_true = u_true.to(DEVICE).unsqueeze(0)
+                Y = Y.to(DEVICE).unsqueeze(0)
+                s_observed = s_observed.to(DEVICE).unsqueeze(0)
+
+                # IFNO inverse: s_observed -> u_pred
+                s_input = torch.cat([Y, s_observed], dim=-1)
+                result = ifno_model.inverse(s_input)
+
+                if isinstance(result, tuple):
+                    pred_u, _ = result
+                else:
+                    pred_u = result
+
+                # Extract function values only
+                if pred_u.shape[-1] > u_true.shape[-1]:
+                    pred_u = pred_u[..., -u_true.shape[-1]:]
+
+                # Compute MSE (to match other models' evaluation)
+                error = ((pred_u - u_true) ** 2).mean()
+                ifno_errors.append(error.item())
+
+        ifno_mse = np.mean(ifno_errors)
+        print(f"  IFNO MSE: {ifno_mse:.6e}")
+
+        # Re-evaluate all selected models to get their errors
+        per_model_mses, _ = evaluate_models_on_subset(
+            test_dataset,
+            {name: models_dict[name] for name in models_to_plot if name in models_dict},
+            input_enc,
+            output_enc,
+            max_samples=len(test_dataset),
+            device=DEVICE,
+        )
+
+        # Compute mean MSE for each model
+        model_errors = {
+            name: float(np.mean(mse_list)) if mse_list else float("inf")
+            for name, mse_list in per_model_mses.items()
+        }
+
+        # Insert IFNO into the sorted list based on its error
+        models_with_errors = [(name, error) for name, error in model_errors.items()]
+        models_with_errors.append(("ifno", ifno_mse))
+        models_with_errors.sort(key=lambda x: x[1])  # Sort by error (ascending)
+
+        # Take top MAX_MODELS models including IFNO
+        models_to_plot = [name for name, _ in models_with_errors[:MAX_MODELS]]
+        print(f"\nTop {MAX_MODELS} models (including IFNO):")
+        for name, error in models_with_errors[:MAX_MODELS]:
+            print(f"  {display_name(name)}: {error:.6e}")
 
     print("Collecting predictions...")
     predictions, meta = collect_elastic_predictions(
@@ -586,6 +663,7 @@ def main():
         input_enc,
         output_enc,
         forward_model,
+        ifno_model=ifno_model,
         n_samples_per_model=N_SAMPLES,
         device=DEVICE,
     )

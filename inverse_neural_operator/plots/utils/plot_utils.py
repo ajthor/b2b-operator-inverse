@@ -23,6 +23,7 @@ DISPLAY_NAMES = {
     "variational_autoencoder": "cVAE",
     "conditional_realnvp": "RealNVP",
     "mixture_density_network": "MDN",
+    "ifno": "IFNO",
 }
 
 
