@@ -1,448 +1,332 @@
 #!/usr/bin/env python
-"""
-Fixed plotting script for Elastic Plate results.
-Creates plots with 4 subplots: forcing function, prediction, ground truth, and absolute error.
-"""
+"""Plot Elastic Plate displacement fields and inferred boundary forces."""
 
-import os
+import argparse
+import random
 import sys
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
-import random
 import torch
 from scipy.interpolate import griddata
 
-# Add path for imports
-sys.path.insert(0, 'inverse_neural_operator')
+sys.path.insert(0, "inverse_neural_operator")
 
-from b2b.function_encoder import (
-    create_model as create_function_encoder,
-    load as load_function_encoder,
-    memory_efficient_inner_product,
-)
 from data.load_dataset import load_dataset
 from models.load_model import load_models
+from b2b.load_model import load_forward_model
 
-device = "cpu"
-torch.manual_seed(42)
-random.seed(42)
-np.random.seed(42)
+DEVICE = "cpu"
+DEFAULT_SAMPLE_COUNT = 10
+SAMPLING_MODELS = {
+    "variational_autoencoder", "mixture_density_network",
+    "inn_affine", "cinn_affine", "cinn_additive"
+}
+ALL_MODELS = [
+    "linear", "linear_inverse", "nonlinear", "variational_autoencoder",
+    "inn_additive", "cinn_additive", "inn_affine", "cinn_affine",
+    "cinn_additive_probabilistic", "cinn_affine_probabilistic",
+    "mixture_density_network"
+]
+
+def set_seeds(seed):
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+set_seeds(42)
 
 
-def create_circular_mask(x, y, center_x=0.5, center_y=0.5, radius=0.25):
-    """Create a circular mask for the hole in the plate."""
-    return (x - center_x)**2 + (y - center_y)**2 <= radius**2
+def create_circular_mask(x, y, center=(0.5, 0.5), radius=0.25):
+    """Return True inside the plate's circular void."""
+    return (x - center[0]) ** 2 + (y - center[1]) ** 2 <= radius**2
 
 
-def plot_displacement_field(coords, displacement, title, ax, colorbar_label='x-displacement',
-                           add_colorbar=True, vmin=None, vmax=None, cax=None, scaling_order=None):
-    """Plot displacement field with circular hole."""
-    # Extract coordinates
-    x_coords = coords[:, 0]
-    y_coords = coords[:, 1]
+def add_colorbar(im, ax, label, scaling_order=None, cax=None):
+    """Add formatted colorbar to plot."""
+    kwargs = {"format": "%.1f", "ax": ax, "fraction": 0.046, "pad": 0.04} if cax is None else {"cax": cax, "format": "%.1f"}
+    cbar = plt.colorbar(im, **kwargs)
+    cbar.set_label(label, rotation=270, labelpad=20, fontsize=16)
+    cbar.ax.tick_params(labelsize=16)
+    cbar.ax.yaxis.get_offset_text().set_size(16)
+    if scaling_order is not None:
+        cbar.ax.set_title(f"10^{int(scaling_order)}", fontsize=16, pad=10)
+    return cbar
 
-    # Create regular grid for interpolation
-    x_min, x_max = x_coords.min(), x_coords.max()
-    y_min, y_max = y_coords.min(), y_coords.max()
 
-    # Create dense grid for smooth visualization
-    xi = np.linspace(x_min, x_max, 200)
-    yi = np.linspace(y_min, y_max, 200)
+def plot_displacement_field(coords, displacement, title, ax, colorbar_label="x-displacement",
+                           add_cbar=True, vmin=None, vmax=None, cax=None, scaling_order=None):
+    """Smoothly interpolate and plot a displacement field with the central hole masked."""
+    # Create interpolation grid
+    xi = np.linspace(coords[:, 0].min(), coords[:, 0].max(), 200)
+    yi = np.linspace(coords[:, 1].min(), coords[:, 1].max(), 200)
     Xi, Yi = np.meshgrid(xi, yi)
+    Zi = griddata((coords[:, 0], coords[:, 1]), displacement, (Xi, Yi), method="cubic")
 
-    # Interpolate displacement values onto regular grid
-    Zi = griddata((x_coords, y_coords), displacement, (Xi, Yi), method='cubic')
-
-    # Scale data if scaling_order provided
+    # Apply scaling
     if scaling_order is not None:
         scale = 10 ** -scaling_order
-        Zi *= scale
-        if vmin is not None:
-            vmin *= scale
-        if vmax is not None:
-            vmax *= scale
+        Zi, vmin, vmax = Zi * scale, vmin * scale if vmin else None, vmax * scale if vmax else None
 
-    # Create circular mask for the hole
-    hole_mask = create_circular_mask(Xi, Yi)
+    # Mask circular void and plot
+    Zi[create_circular_mask(Xi, Yi)] = np.nan
+    im = ax.contourf(Xi, Yi, Zi, levels=100, cmap="jet", vmin=vmin, vmax=vmax)
+    if add_cbar:
+        add_colorbar(im, ax, colorbar_label, scaling_order, cax)
 
-    # Set hole region to NaN so it appears empty
-    Zi[hole_mask] = np.nan
-
-    # Plot displacement field with optional vmin/vmax
-    im = ax.contourf(Xi, Yi, Zi, levels=100, cmap='jet', vmin=vmin, vmax=vmax)
-
-    # Set color limits if provided
-    if vmin is not None and vmax is not None:
-        im.set_clim(vmin, vmax)
-
-    if cax is not None:
-        cbar = plt.colorbar(im, cax=cax, format='%.1f')
-        cbar.set_label(colorbar_label, rotation=270, labelpad=20, fontsize=16)
-        cbar.ax.tick_params(labelsize=16)
-        cbar.ax.yaxis.get_offset_text().set_size(16)
-        if scaling_order is not None:
-            cbar.ax.set_title('10^{%d}' % scaling_order, fontsize=16, pad=10)
-    elif add_colorbar:
-        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, format='%.1f')
-        cbar.set_label(colorbar_label, rotation=270, labelpad=20, fontsize=16)
-        cbar.ax.tick_params(labelsize=16)
-        cbar.ax.yaxis.get_offset_text().set_size(16)
-        if scaling_order is not None:
-            cbar.ax.set_title('10^{%d}' % scaling_order, fontsize=16, pad=10)
-
-    # Set equal aspect ratio and add axes
-    ax.set_aspect('equal')
-    ax.set_xlim(x_min, x_max)
-    ax.set_ylim(y_min, y_max)
-    ax.set_xlabel('x', fontsize=16)
-    ax.set_ylabel('y', fontsize=16)
+    # Format axes
+    ax.set_aspect("equal")
+    ax.set_xlim(coords[:, 0].min(), coords[:, 0].max())
+    ax.set_ylim(coords[:, 1].min(), coords[:, 1].max())
+    ax.set_xlabel("x", fontsize=16)
+    ax.set_ylabel("y", fontsize=16)
     ax.set_title(title, fontsize=18, pad=15)
-    ax.tick_params(axis='both', which='major', labelsize=14)
+    ax.tick_params(axis="both", which="major", labelsize=14)
 
 
-def plot_forcing_function(force_coords, force_values, title, ax):
-    """Plot the forcing function as a 1D plot."""
-    # Extract y-coordinates and force values
-    force_y = force_coords[:, 1]  # y-coordinates of force points
-    force_x = force_values  # force magnitudes
+def sample_alpha(model_name, model, beta, device, dtype, num_samples):
+    """Sample alpha coefficients from model-specific inverse mappings."""
+    beta_rep = beta.expand(num_samples, -1)
 
-    # Plot force as horizontal line plot
-    ax.plot(force_x, force_y, 'r-', linewidth=2)
+    if model_name == "variational_autoencoder":
+        z = model.sample_prior(num_samples, device=device)
+        return model.inverse(beta_rep, z)
 
-    # Set up force subplot
-    ax.set_ylim(force_y.min(), force_y.max())
-    ax.set_xlabel('Force value', fontsize=16)
-    ax.set_ylabel('y', fontsize=16)
-    ax.set_title(title, fontsize=16)
-    ax.grid(True, alpha=0.3)
-    ax.tick_params(axis='both', which='major', labelsize=14)
+    if model_name == "mixture_density_network":
+        return torch.stack([model.inverse(beta).squeeze(0) for _ in range(num_samples)])
 
-    # Invert x-axis so zero is at the right (force applied from right side)
-    ax.invert_xaxis()
+    if model_name == "inn_affine":
+        z_size = model.coupling_layers[0].input_size - model.output_size
+        z = torch.randn(num_samples, z_size, device=device, dtype=dtype)
+        return model.inverse(beta=beta_rep, z=z)
 
-    # Add vertical line at zero force
-    ax.axvline(x=0, color='k', linestyle='--', alpha=0.5)
+    if model_name in {"cinn_affine", "cinn_additive"}:
+        alpha_dim = model.coupling_layers[0].input_size
+        z = torch.randn(num_samples, alpha_dim, device=device, dtype=dtype)
+        return model.inverse(z, beta_rep)
+
+    return None
 
 
+def predict_forces(model_name, model, evaluate_fn, input_function_encoder,
+                   output_function_encoder, batch, num_samples=DEFAULT_SAMPLE_COUNT):
+    """Predict boundary forces from observed displacement field."""
+    X, _, Y, s_observed = batch
 
-def plot_elastic_sample(
-    model,
-    evaluate_fn,
-    input_function_encoder,
-    output_function_encoder,
-    sample,
-    sample_idx,
-    model_name,
-    save_dir=None,
-):
-    """Plot Elastic Plate inverse problem: observed displacement and predicted vs true forcing."""
-    model.eval()
+    # Deterministic models - single prediction
+    if model_name not in SAMPLING_MODELS:
+        u_pred, alpha_pred = evaluate_fn(model, batch, input_function_encoder, output_function_encoder)
+        return u_pred.squeeze(0), alpha_pred, None
 
-    X, u_true, Y, s_observed = sample
+    # Sampling models - generate multiple predictions
+    beta, _ = output_function_encoder.compute_coefficients(Y, s_observed)
+    alpha_samples = sample_alpha(model_name, model, beta, X.device, beta.dtype, num_samples)
 
-    # Ensure tensors are on correct device
-    X = X.to(device)
-    u_true = u_true.to(device)
-    Y = Y.to(device)
-    s_observed = s_observed.to(device)
+    if alpha_samples is None:
+        u_pred, alpha_pred = evaluate_fn(model, batch, input_function_encoder, output_function_encoder)
+        return u_pred.squeeze(0), alpha_pred, None
 
-    # Get model prediction for input (inverse problem: predict force from displacement)
-    # For stochastic models, draw multiple samples and plot overlays
-    sampled_predictions_np = None
-    with torch.no_grad():
-        point = (
-            X.unsqueeze(0),
-            u_true.unsqueeze(0),
-            Y.unsqueeze(0),
-            s_observed.unsqueeze(0),
-        )
+    # Reconstruct forces from sampled alpha coefficients
+    X_rep = X.repeat(alpha_samples.size(0), 1, 1)
+    u_samples = input_function_encoder(X_rep, alpha_samples)
+    return u_samples.mean(dim=0), alpha_samples.mean(dim=0, keepdim=True), u_samples.squeeze(-1).cpu().numpy()
 
-        if model_name == "variational_autoencoder":
-            num_samples = 10
-            # Compute beta coefficients from observed displacement
-            beta, _ = output_function_encoder.compute_coefficients(point[2], point[3])
-            # Sample z ~ N(0, I)
-            z = model.sample_prior(num_samples, device=X.device)
-            # Repeat beta along batch to match z samples
-            beta_rep = beta.expand(num_samples, -1)
-            # Invert to alpha for each sample and decode to u on X grid
-            alpha_samples = model.inverse(beta_rep, z)
-            X_rep = X.unsqueeze(0).repeat(num_samples, 1, 1)
-            u_pred_samples = input_function_encoder(X_rep, alpha_samples)  # [S, N, 1]
-            sampled_predictions_np = u_pred_samples.squeeze(-1).cpu().numpy()      # [S, N]
-            # Use the mean as the representative single prediction
-            u_pred = u_pred_samples.mean(dim=0)  # [N, 1]
-        elif model_name in [
-            "mixture_density_network",
-            "inn_affine",
-            "cinn_affine",
-            "cinn_additive",
-        ]:
-            num_samples = 10
-            # Compute beta coefficients from observed displacement
-            beta, _ = output_function_encoder.compute_coefficients(point[2], point[3])  # [1, B]
 
-            if model_name == "mixture_density_network":
-                # MDN samples by calling inverse(beta) repeatedly
-                alpha_list = []
-                for _ in range(num_samples):
-                    alpha_i = model.inverse(beta)  # [1, A]
-                    alpha_list.append(alpha_i.squeeze(0))  # [A]
-                alpha_samples = torch.stack(alpha_list, dim=0)  # [S, A]
-            elif model_name == "inn_affine":
-                # Build batch of z and beta to sample in one call
-                input_size = model.coupling_layers[0].input_size
-                z_size = input_size - model.output_size
-                z = torch.randn(num_samples, z_size, device=X.device, dtype=beta.dtype)
-                beta_rep = beta.expand(num_samples, -1)
-                alpha_samples = model.inverse(beta=beta_rep, z=z)  # [S, A]
-            else:  # cinn_affine or cinn_additive
-                # Sample z with alpha dimensionality
-                alpha_dim = model.coupling_layers[0].input_size
-                z = torch.randn(num_samples, alpha_dim, device=X.device, dtype=beta.dtype)
-                beta_rep = beta.expand(num_samples, -1)
-                alpha_samples = model.inverse(z, beta_rep)  # [S, A]
-
-            # Decode all alpha samples on X grid
-            X_rep = X.unsqueeze(0).repeat(num_samples, 1, 1)  # [S, N, d]
-            u_pred_samples = input_function_encoder(X_rep, alpha_samples)  # [S, N, 1]
-            sampled_predictions_np = u_pred_samples.squeeze(-1).cpu().numpy()  # [S, N]
-            # Mean prediction across samples
-            u_pred = u_pred_samples.mean(dim=0)  # [N, 1]
-        else:
-            u_pred, _ = evaluate_fn(
-                model, point, input_function_encoder, output_function_encoder
-            )
-            u_pred = u_pred.squeeze(0)
-
-    # Convert to numpy
-    u_true_np = u_true.squeeze(-1).cpu().numpy()
-    u_pred_np = u_pred.squeeze(-1).cpu().numpy()
-    s_observed_np = s_observed.squeeze(-1).cpu().numpy()
-    X_np = X.cpu().numpy()
-    Y_np = Y.cpu().numpy()
-
-    # Calculate force prediction error
-    force_mse = np.mean((u_true_np - u_pred_np) ** 2)
-    force_mae = np.mean(np.abs(u_true_np - u_pred_np))
-
-    # Create figure with 2 subplots
-    fig = plt.figure(figsize=(16, 7))
-
-    # Use GridSpec for better control - increased spacing
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.2, 0.8], wspace=0.4)
-
-    # Subplot 1: Observed Displacement Field (what we measure)
-    ax1 = fig.add_subplot(gs[0])
-
-    # Compute scaling for displacement
-    disp_vabs = np.max(np.abs(s_observed_np))
-    disp_order = np.floor(np.log10(disp_vabs)) if disp_vabs > 0 else 0
-
-    # Plot displacement field with circular hole
-    plot_displacement_field(Y_np, s_observed_np, 'Observed Displacement Field', ax1,
-                           colorbar_label='Displacement', add_colorbar=True,
-                           scaling_order=disp_order)
-
-    # Subplot 2: Forcing Function Comparison (what we want to predict)
-    ax2 = fig.add_subplot(gs[1])
-
-    # Extract y-coordinates for force points
-    force_y = X_np[:, 1]
-
-    # Plot true and predicted forces
-    ax2.plot(u_true_np, force_y, 'b-', linewidth=3, label='True Force', alpha=0.8)
+def plot_force_comparison(ax, u_true_np, u_pred_np, force_y, sampled_predictions_np=None):
+    """Plot true vs predicted boundary forces."""
+    ax.plot(u_true_np, force_y, "b-", linewidth=3, label="True Force", alpha=0.8)
 
     if sampled_predictions_np is not None:
-        # Plot individual sampled predictions (thin, transparent)
-        for i in range(sampled_predictions_np.shape[0]):
-            ax2.plot(
-                sampled_predictions_np[i],
-                force_y,
-                color='r',
-                linewidth=1,
-                alpha=0.25,
-                label='Samples' if i == 0 else None,
-            )
-        # Plot the mean prediction prominently
-        ax2.plot(u_pred_np, force_y, 'r--', linewidth=3, label='Mean', alpha=0.9)
+        for i, sample_vals in enumerate(sampled_predictions_np):
+            label = "Samples" if i == 0 else None
+            ax.plot(sample_vals, force_y, color="r", linewidth=1, alpha=0.25, label=label)
+        ax.plot(u_pred_np, force_y, "r--", linewidth=3, label="Mean", alpha=0.9)
     else:
-        ax2.plot(u_pred_np, force_y, 'r--', linewidth=3, label='Predicted Force', alpha=0.8)
+        ax.plot(u_pred_np, force_y, "r--", linewidth=3, label="Predicted Force", alpha=0.8)
 
-    # Formatting
-    ax2.set_ylim(force_y.min(), force_y.max())
-    ax2.set_xlabel('Force Magnitude', fontsize=16)
-    ax2.set_ylabel('Position along Boundary (y)', fontsize=16)
-    ax2.set_title('Forcing Function Comparison', fontsize=18, pad=15)
-    ax2.grid(True, alpha=0.3)
-    ax2.tick_params(axis='both', which='major', labelsize=14)
-    ax2.legend(fontsize=14, loc='best')
+    ax.set_ylim(force_y.min(), force_y.max())
+    ax.set_xlabel("Force Magnitude", fontsize=16)
+    ax.set_ylabel("Position along Boundary (y)", fontsize=16)
+    ax.set_title("Forcing Function Comparison", fontsize=18, pad=15)
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis="both", which="major", labelsize=14)
+    ax.legend(fontsize=14, loc="best")
+    ax.axvline(x=0, color="k", linestyle=":", alpha=0.3)
 
-    # Add vertical line at zero
-    ax2.axvline(x=0, color='k', linestyle=':', alpha=0.3)
 
-    # Adjust layout
+def compute_resimulation(forward_model, alpha_pred, output_function_encoder, Y_batch):
+    """Compute re-simulated displacement field using forward model."""
+    if forward_model is None or alpha_pred is None:
+        return None
+    beta_resim = forward_model(alpha_pred)
+    resim_disp = output_function_encoder(Y_batch, beta_resim)
+    return resim_disp.squeeze(0).squeeze(-1).cpu().numpy()
+
+
+def plot_elastic_sample(model, evaluate_fn, input_function_encoder, output_function_encoder,
+                       sample, model_name, forward_model=None, save_path=None):
+    """Plot a single test sample with force prediction and displacement fields."""
+    model.eval()
+    batch = tuple(t.to(DEVICE).unsqueeze(0) for t in sample)
+    X, u_true, Y, s_observed = (t.squeeze(0) for t in batch)
+
+    # Predict forces and compute re-simulation
+    with torch.no_grad():
+        u_pred, alpha_pred, sampled_predictions_np = predict_forces(
+            model_name, model, evaluate_fn, input_function_encoder, output_function_encoder, batch)
+        resim_disp_np = compute_resimulation(forward_model, alpha_pred, output_function_encoder, batch[2])
+
+    # Convert to numpy
+    u_true_np, u_pred_np = u_true.squeeze(-1).cpu().numpy(), u_pred.squeeze(-1).cpu().numpy()
+    s_observed_np, Y_np = s_observed.squeeze(-1).cpu().numpy(), Y.cpu().numpy()
+    force_y = X.cpu().numpy()[:, 1]
+
+    # Compute displacement scaling
+    disp_vabs = max(np.max(np.abs(s_observed_np)),
+                    np.max(np.abs(resim_disp_np)) if resim_disp_np is not None else 0)
+    disp_order = int(np.floor(np.log10(disp_vabs))) if disp_vabs > 0 else 0
+    vmin, vmax = (-disp_vabs, disp_vabs) if disp_vabs > 0 else (None, None)
+
+    # Create figure
+    fig = plt.figure(figsize=(22, 7))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.1, 1.1], wspace=0.4)
+
+    # Plot force comparison
+    plot_force_comparison(fig.add_subplot(gs[0, 0]), u_true_np, u_pred_np, force_y, sampled_predictions_np)
+
+    # Plot observed displacement
+    plot_displacement_field(Y_np, s_observed_np, "Observed Displacement Field",
+                           fig.add_subplot(gs[0, 1]), "Displacement", scaling_order=disp_order, vmin=vmin, vmax=vmax)
+
+    # Plot re-simulated displacement
+    ax_resim = fig.add_subplot(gs[0, 2])
+    if resim_disp_np is not None:
+        plot_displacement_field(Y_np, resim_disp_np, "Re-simulated Displacement Field",
+                               ax_resim, "Displacement", scaling_order=disp_order, vmin=vmin, vmax=vmax)
+    else:
+        ax_resim.axis("off")
+        ax_resim.set_title("Re-simulated Displacement Unavailable", fontsize=18, pad=15)
+
+    # Align subplots - match force plot height to displacement plots
     plt.tight_layout()
+    fig.canvas.draw()
+    force_ax = fig.axes[0]
+    disp_ax = fig.axes[1]
+    disp_bbox = disp_ax.get_position()
+    force_bbox = force_ax.get_position()
+    force_ax.set_position([force_bbox.x0, disp_bbox.y0, force_bbox.width, disp_bbox.height])
+    fig.canvas.draw()
 
-    # Save plot
-    if save_dir:
-        # Create subdirectory for this model
-        model_save_dir = os.path.join(save_dir, model_name)
-        os.makedirs(model_save_dir, exist_ok=True)
-        save_path = os.path.join(model_save_dir, f"sample_{sample_idx}.png")
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"    → Saved: {save_path}")
-
     plt.close()
 
 
+def list_models_to_plot(requested_model, log_dir, seed):
+    """Return list of models to plot."""
+    if requested_model:
+        return [requested_model]
+
+    available = [m for m in ALL_MODELS if (log_dir / m / f"seed_{seed}" / "params.pth").exists()]
+    if not available:
+        print(f"ERROR: No trained models found in {log_dir}\nTo train models, run: ./run_all.sh")
+        sys.exit(1)
+
+    print(f"Found {len(available)} trained models: {', '.join(available)}")
+    return available
+
+
+def load_test_dataset(models_to_plot, log_dir, seed):
+    """Load test dataset from first available model."""
+    params_path = log_dir / models_to_plot[0] / f"seed_{seed}" / "params.pth"
+    params = torch.load(params_path, weights_only=False)
+    print("Loading dataset...")
+    test_dataset, dataset_info = load_dataset(params.dataset, params, DEVICE, split="test", return_info=True)
+    print(f"  Test samples: {len(test_dataset)}")
+    return test_dataset, dataset_info
+
+
+def process_model(model_name, log_dir, seed, test_dataset, test_indices, dataset_info, results_root):
+    """Process and plot a single model."""
+    model_log_dir = log_dir / model_name / f"seed_{seed}"
+    params_path = model_log_dir / "params.pth"
+
+    if not params_path.exists():
+        print(f"ERROR: Model '{model_name}' not found at {params_path}")
+        return False
+
+    try:
+        params = torch.load(params_path, weights_only=False)
+        print(f"Loading {model_name}...")
+        input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
+            log_dir=str(model_log_dir), dataset_info=dataset_info, params=params, device=DEVICE)
+
+        # Load forward model if available
+        forward_model = None
+        if forward_model_name := getattr(params, "forward_model", None):
+            try:
+                forward_model = load_forward_model(str(model_log_dir), forward_model_name=forward_model_name, device=DEVICE)
+            except Exception as exc:
+                print(f"  Warning: forward model unavailable ({exc})")
+
+        # Plot samples
+        model_results_dir = results_root / model_name
+        print(f"Plotting {len(test_indices)} samples...")
+        for idx_num, sample_idx in enumerate(test_indices, start=1):
+            print(f"  Processing sample {idx_num}/{len(test_indices)} (index {sample_idx})...")
+            plot_elastic_sample(model, evaluate_fn, input_function_encoder, output_function_encoder,
+                              test_dataset[sample_idx], model_name, forward_model,
+                              save_path=model_results_dir / f"sample_{sample_idx}.png")
+
+        print(f"✓ Successfully plotted {model_name}")
+        return True
+
+    except Exception as exc:
+        print(f"✗ Failed to plot {model_name}: {exc}")
+        return False
+
+
 def main():
-    import argparse
-
     parser = argparse.ArgumentParser(description="Plot Elastic Plate results.")
-    parser.add_argument(
-        "--model",
-        type=str,
-        required=False,
-        default=None,
-        help="Model name to plot. If not specified, plots all available models. "
-             "Available models: b2b_linear, b2b_nonlinear, variational_autoencoder, "
-             "inn_additive, cinn_additive, inn_affine, cinn_affine, mixture_density_network"
-    )
-    parser.add_argument("--log_dir", type=str, default="logs", help="Base log directory")
-    parser.add_argument("--results_dir", type=str, default="results/elastic_plots", help="Results directory")
-    parser.add_argument("--n_samples", type=int, default=3, help="Number of samples to plot")
-    parser.add_argument("--seed", type=int, default=1, help="Random seed")
-
+    parser.add_argument("--model", type=str, default=None,
+                       help="Model name to plot. If omitted, plot all trained models.")
+    parser.add_argument("--log_dir", type=str, default="logs", help="Base log directory.")
+    parser.add_argument("--results_dir", type=str, default="results/elastic_plots", help="Output directory.")
+    parser.add_argument("--n_samples", type=int, default=7, help="Number of samples to plot.")
+    parser.add_argument("--seed", type=int, default=1, help="Random seed.")
     args = parser.parse_args()
 
-    # Set random seeds
-    torch.manual_seed(args.seed)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
+    set_seeds(args.seed)
 
-    dataset = "elastic_plate"
+    # Setup paths and load data
+    log_dir = Path(args.log_dir) / "elastic_plate"
+    models_to_plot = list_models_to_plot(args.model, log_dir, args.seed)
+    test_dataset, dataset_info = load_test_dataset(models_to_plot, log_dir, args.seed)
 
-    # List of all possible models that can be trained
-    # These are the models supported by the training pipeline
-    ALL_MODELS = [
-        "b2b_linear",
-        "b2b_nonlinear",
-        "variational_autoencoder",
-        "inn_additive",
-        "cinn_additive",
-        "inn_affine",
-        "cinn_affine",
-        "mixture_density_network"
-    ]
-
-    # Construct paths
-    log_dir = os.path.join(args.log_dir, dataset)
-    shared_dir = os.path.join(log_dir, "shared", f"seed_{args.seed}")
-
-    # Determine which models to plot
-    if args.model:
-        # Single model specified
-        models_to_plot = [args.model]
-    else:
-        # No model specified - find all available trained models
-        models_to_plot = []
-        if os.path.exists(log_dir):
-            for model_name in ALL_MODELS:
-                model_path = os.path.join(log_dir, model_name, f"seed_{args.seed}", "params.pth")
-                if os.path.exists(model_path):
-                    models_to_plot.append(model_name)
-
-        if not models_to_plot:
-            print(f"ERROR: No trained models found in {log_dir}")
-            print("\nTo train models, run: ./run_all.sh")
-            exit(1)
-
-        print(f"Found {len(models_to_plot)} trained models: {', '.join(models_to_plot)}")
-
-    # Load dataset once (use first model's params)
-    first_model_path = os.path.join(log_dir, models_to_plot[0], f"seed_{args.seed}", "params.pth")
-    temp_params = torch.load(first_model_path, weights_only=False)
-
-    print("Loading dataset...")
-    test_dataset, dataset_info = load_dataset(
-        temp_params.dataset, temp_params, device, split="test", return_info=True
-    )
-    print(f"  Test samples: {len(test_dataset)}")
-
-
-    # Generate random sample indices once for consistency across models
-    test_indices = random.sample(
-        range(len(test_dataset)), min(args.n_samples, len(test_dataset))
-    )
+    # Select random test samples
+    sample_count = min(args.n_samples, len(test_dataset))
+    test_indices = random.sample(range(len(test_dataset)), sample_count)
+    results_root = Path(args.results_dir)
 
     # Process each model
-    successful_models = []
-    failed_models = []
-
+    successful_models, failed_models = [], []
     for model_name in models_to_plot:
-        print(f"\n{'='*50}")
-        print(f"Processing model: {model_name}")
-        print('='*50)
-
-        model_log_dir = os.path.join(log_dir, model_name, f"seed_{args.seed}")
-        params_path = os.path.join(model_log_dir, "params.pth")
-
-        # Check if model exists
-        if not os.path.exists(params_path):
-            print(f"ERROR: Model '{model_name}' not found at {params_path}")
-            failed_models.append(model_name)
-            continue
-
-        try:
-            # Load model parameters
-            params = torch.load(params_path, weights_only=False)
-
-            # Load the model
-            print(f"Loading {model_name}...")
-            input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
-                log_dir=model_log_dir,
-                dataset_info=dataset_info,
-                params=params,
-                device=device,
-            )
-
-            # Plot samples for this model
-            print(f"Plotting {args.n_samples} samples...")
-            for i, idx in enumerate(test_indices):
-                print(f"  Processing sample {i+1}/{args.n_samples} (index {idx})...")
-                sample = test_dataset[idx]
-                plot_elastic_sample(
-                    model,
-                    evaluate_fn,
-                    input_function_encoder,
-                    output_function_encoder,
-                    sample,
-                    idx,
-                    model_name,
-                    args.results_dir,
-                )
-
-            successful_models.append(model_name)
-            print(f"✓ Successfully plotted {model_name}")
-
-        except Exception as e:
-            print(f"✗ Failed to plot {model_name}: {e}")
-            failed_models.append(model_name)
+        print(f"\n{'=' * 50}\nProcessing model: {model_name}\n{'=' * 50}")
+        success = process_model(model_name, log_dir, args.seed, test_dataset, test_indices, dataset_info, results_root)
+        (successful_models if success else failed_models).append(model_name)
 
     # Print summary
-    print(f"\n{'='*50}")
-    print("SUMMARY")
-    print('='*50)
+    print(f"\n{'=' * 50}\nSUMMARY\n{'=' * 50}")
     if successful_models:
         print(f"✓ Successfully plotted {len(successful_models)} model(s): {', '.join(successful_models)}")
+        print(f"\n  Results saved to: {results_root}/")
+        for model in successful_models:
+            print(f"    └── {model}/sample_*.png")
     if failed_models:
         print(f"✗ Failed to plot {len(failed_models)} model(s): {', '.join(failed_models)}")
-    print(f"\n  Results saved to: {args.results_dir}/")
-    print(f"  Directory structure:")
-    for model in successful_models:
-        print(f"    └── {model}/")
-        print(f"        └── sample_*.png")
 
 
 if __name__ == "__main__":
