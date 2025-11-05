@@ -18,8 +18,8 @@ import os
 import random
 import sys
 
-import matplotlib.pyplot as plt
 import matplotlib as mpl
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from scipy.interpolate import griddata
@@ -60,8 +60,12 @@ SAMPLING_MODELS = {
     "cinn_additive",
 }
 
-MAX_MODELS = 5
+MAX_MODELS = 6  # Number of models to plot on left (force curves)
+MAX_DISPLACEMENT_MODELS = 5  # Number of model displacement fields (5 models + 1 ground truth)
 N_SAMPLES = 8
+
+MODEL_CMAP = mpl.cm.get_cmap("tab10")
+GROUND_TRUTH_COLOR = "#CCCCCC"  # Gray - for ground truth lines
 
 
 def create_circular_mask(x, y, center=(0.5, 0.5), radius=0.25):
@@ -137,21 +141,28 @@ def _create_unified_figure():
     return fig, gs, axes_left, axes_right
 
 
-def _plot_force_curve(ax, force_y, force_mag, annotation=None, color="b", linewidth=1.5):
-    """Plot a 1D forcing function along the boundary.
+def _plot_force_curve(ax, force_y, force_mag_true, force_mag_pred=None, annotation=None, color="b", linewidth=1.5):
+    """Plot a 1D forcing function along the boundary with ground truth.
 
     Args:
         ax: Axis to plot on
         force_y: Y coordinates along boundary
-        force_mag: Force magnitude values
+        force_mag_true: Ground truth force magnitude values
+        force_mag_pred: Predicted force magnitude values (optional)
         annotation: Optional text annotation for upper-left corner
-        color: Line color
+        color: Line color for prediction
         linewidth: Line width
 
     Returns:
-        The line object
+        The prediction line object
     """
-    line = ax.plot(force_mag, force_y, color=color, linewidth=linewidth)[0]
+    # Plot ground truth first (gray dashed line)
+    ax.plot(force_mag_true, force_y, color=GROUND_TRUTH_COLOR, linewidth=1.0, linestyle="dashed")
+
+    # Plot prediction if provided (colored solid line)
+    line = None
+    if force_mag_pred is not None:
+        line = ax.plot(force_mag_pred, force_y, color=color, linewidth=linewidth)[0]
 
     # Set y limits to match boundary coordinates [0, 1]
     ax.set_ylim(force_y.min(), force_y.max())
@@ -185,7 +196,7 @@ def _plot_force_curve(ax, force_y, force_mag, annotation=None, color="b", linewi
 
 
 def _plot_displacement_field(
-    ax, coords, displacement, cmap="RdBu_r", vmin=None, vmax=None, annotation=None
+    ax, coords, displacement, cmap="jet", vmin=None, vmax=None, annotation=None
 ):
     """Plot a 2D displacement field with circular void masked.
 
@@ -404,9 +415,6 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     # Create figure
     fig, gs, axes_left, axes_right = _create_unified_figure()
 
-    # Collect all displacement values for consistent colormap
-    all_s_values = [s_true]
-
     # Process predictions
     processed_preds = {}
     for model_name in models_to_plot[:MAX_MODELS]:
@@ -420,51 +428,58 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
             s_mean = s_samples.mean(axis=0)
 
             processed_preds[model_name] = (u_mean, s_mean)
-            all_s_values.append(s_mean)
 
-    # Determine consistent value limits for displacement fields
-    s_abs_max = max(np.max(np.abs(v)) for v in all_s_values)
+    # Determine color limits based only on ground truth (like original script)
+    # This shows predictions relative to the expected displacement range
+    s_abs_max = np.max(np.abs(s_true))
     s_min = -s_abs_max
     s_max = s_abs_max
 
-    # Plot models (top 5)
+    # Plot models
     im_right = None
+
+    # Left side: Plot force curves for top 6 models (each with ground truth overlay)
     for idx, model_name in enumerate(models_to_plot[:MAX_MODELS]):
+        ax = axes_left[idx]
+        if model_name in processed_preds:
+            u_mean, s_mean = processed_preds[model_name]
+            color = MODEL_CMAP(idx % MODEL_CMAP.N)
+
+            # Force curve with ground truth overlay
+            _plot_force_curve(
+                ax, force_y, u_true, u_mean, annotation=display_name(model_name), color=color, linewidth=1.5
+            )
+        else:
+            # Turn off empty axes
+            ax.axis("off")
+
+    # Right side: Plot displacement fields for top 5 models
+    for idx, model_name in enumerate(models_to_plot[:MAX_DISPLACEMENT_MODELS]):
+        ax = axes_right[idx]
         if model_name in processed_preds:
             u_mean, s_mean = processed_preds[model_name]
 
-            # Force curve (left)
-            ax = axes_left[idx]
-            _plot_force_curve(
-                ax, force_y, u_mean, annotation=display_name(model_name), color="r"
-            )
-
-            # Displacement field (right)
-            ax = axes_right[idx]
+            # Displacement field
             im_right = _plot_displacement_field(
                 ax,
                 y_2d,
                 s_mean,
-                cmap="RdBu_r",
+                cmap="jet",
                 vmin=s_min,
                 vmax=s_max,
                 annotation=display_name(model_name),
             )
         else:
             # Turn off empty axes
-            axes_left[idx].axis("off")
-            axes_right[idx].axis("off")
+            ax.axis("off")
 
-    # 6th position: ground truth
-    ax = axes_left[5]
-    _plot_force_curve(ax, force_y, u_true, annotation="Ground Truth", color="b")
-
+    # 6th position on right: ground truth displacement field
     ax = axes_right[5]
     im_right = _plot_displacement_field(
         ax,
         y_2d,
         s_true,
-        cmap="RdBu_r",
+        cmap="jet",
         vmin=s_min,
         vmax=s_max,
         annotation="Ground Truth",

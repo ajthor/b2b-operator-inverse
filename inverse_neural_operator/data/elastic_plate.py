@@ -119,7 +119,7 @@ def normalize_data(data, axis=None):
 
 def download_matlab_data(data_path):
     """Download the elastic plate dataset from Google Drive."""
-    url = "https://drive.usercontent.google.com/download?id=1CJXMQ2FzzIwcL5BUOrqTQlCEuWilSDAD&export=download&authuser=0&confirm=t&uuid=4ab97221-0d32-4285-bf8a-ef150f572ac8&at=AN8xHopOmjMllrtBjPR474oXYJxq:1752211533661"
+    url = "https://drive.usercontent.google.com/download?id=1m7cjNjyVJG2sNvpDnsKXw51HVOY8liDs&export=download&authuser=0&confirm=t&uuid=6f2a5c6b-b75e-4a54-acc3-53240983f7a1&at=AKSUxGNxL9MgUY7SlGHH_1kG9n60:1761768154410"
     
     print(f"Downloading elastic plate dataset to {data_path}...")
     os.makedirs(os.path.dirname(data_path), exist_ok=True)
