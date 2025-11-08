@@ -263,3 +263,5 @@ results/
 *.3
 *.4
 *.arrow
+
+evaluation/

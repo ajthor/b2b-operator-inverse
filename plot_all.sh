@@ -5,9 +5,9 @@ set -euo pipefail
 # Same datasets and models as in run_all.sh
 
 # DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d)
-# MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
-DATASETS=(burgers_1d darcy_1d wave_scattering fwi)
-MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
+# MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine conditional_realnvp mixture_density_network)
+DATASETS=(fwi)
+MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine conditional_realnvp mixture_density_network)
 
 # Base directory for experiment logs - same as in run_all.sh
 LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
@@ -64,6 +64,117 @@ echo "  Starting plot generation"
 echo "  Datasets: ${DATASETS[*]}"
 echo "  Models: ${MODELS[*]}"
 echo "  Total jobs: $TOTAL_JOBS"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+#── B2B PERFORMANCE PLOTS ────────────────────────────────────
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Generating B2B model performance plots"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+# Generate B2B performance plots for each dataset (once per dataset, not per model)
+for dataset in "${DATASETS[@]}"; do
+  echo "───────────────────────────────────────────────────────────────"
+  echo "Processing B2B plots for: $dataset"
+  echo "───────────────────────────────────────────────────────────────"
+
+  # Check if shared directory exists
+  SHARED_LOG_DIR="$LOG_BASE_DIR/$dataset/shared/seed_1"
+  if [ ! -f "$SHARED_LOG_DIR/input_function_encoder.pth" ]; then
+    echo "  ⚠ Skipping: Function encoders not found at $SHARED_LOG_DIR"
+    echo ""
+    continue
+  fi
+
+  # Construct paths
+  SHARED_RESULTS_DIR="$RESULTS_BASE_DIR/$dataset/shared"
+
+  # Create results directory if it doesn't exist
+  if [ ! -d "$SHARED_RESULTS_DIR" ]; then
+    mkdir -p "$SHARED_RESULTS_DIR"
+    echo "  ✓ Created shared results directory: $SHARED_RESULTS_DIR"
+  fi
+
+  # Select plotting script based on dataset
+  case "$dataset" in
+    burgers_1d)
+      echo "  → Generating B2B performance plots..."
+      if python inverse_neural_operator/plots/plot_burgers_b2b.py \
+        --log_dir "$LOG_BASE_DIR" \
+        --results_dir "$RESULTS_BASE_DIR" \
+        --forward_model all 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ B2B plots completed"
+      else
+        echo "  ✗ B2B plots failed"
+      fi
+      ;;
+    chladni_2d)
+      echo "  → Generating B2B performance plots..."
+      if python inverse_neural_operator/plots/plot_chladni_b2b.py \
+        --log_dir "$LOG_BASE_DIR" \
+        --results_dir "$RESULTS_BASE_DIR" \
+        --forward_model all 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ B2B plots completed"
+      else
+        echo "  ✗ B2B plots failed"
+      fi
+      ;;
+    darcy_1d)
+      echo "  → Generating B2B performance plots..."
+      if python inverse_neural_operator/plots/plot_darcy_b2b.py \
+        --log_dir "$LOG_BASE_DIR" \
+        --results_dir "$RESULTS_BASE_DIR" \
+        --forward_model all 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ B2B plots completed"
+      else
+        echo "  ✗ B2B plots failed"
+      fi
+      ;;
+    fwi)
+      echo "  → Generating B2B performance plots..."
+      if python inverse_neural_operator/plots/plot_fwi_b2b.py \
+        --log_dir "$LOG_BASE_DIR" \
+        --results_dir "$RESULTS_BASE_DIR" \
+        --forward_model all 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ B2B plots completed"
+      else
+        echo "  ✗ B2B plots failed"
+      fi
+      ;;
+    parametric_heat)
+      echo "  → Generating B2B performance plots..."
+      if python inverse_neural_operator/plots/plot_parametric_heat_b2b.py \
+        --log_dir "$LOG_BASE_DIR" \
+        --results_dir "$RESULTS_BASE_DIR" \
+        --forward_model all 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ B2B plots completed"
+      else
+        echo "  ✗ B2B plots failed"
+      fi
+      ;;
+    wave_scattering)
+      echo "  → Generating B2B performance plots..."
+      if python inverse_neural_operator/plots/plot_wave_scattering_b2b.py \
+        --log_dir "$LOG_BASE_DIR" \
+        --results_dir "$RESULTS_BASE_DIR" \
+        --forward_model all 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ B2B plots completed"
+      else
+        echo "  ✗ B2B plots failed"
+      fi
+      ;;
+    *)
+      echo "  ⚠ B2B plots not available for dataset: $dataset"
+      ;;
+  esac
+
+  echo ""
+done
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Generating model-specific plots"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 
@@ -231,7 +342,8 @@ done
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
-echo "  Plot generation completed"
-echo "  Processed $CURRENT_JOB/$TOTAL_JOBS jobs"
+echo "  All plot generation completed"
+echo "  Generated B2B plots for ${#DATASETS[@]} dataset(s)"
+echo "  Processed $CURRENT_JOB model-specific jobs"
 echo "  Results saved to: $RESULTS_BASE_DIR"
 echo "═══════════════════════════════════════════════════════════════"

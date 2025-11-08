@@ -34,6 +34,7 @@ from plots.utils.plot_utils import (
     load_forward_model,
     make_output_transform,
 )
+from plots.utils.ifno_utils import load_ifno_model, collect_ifno_predictions
 
 device = "cpu"
 
@@ -48,7 +49,7 @@ INVERSE_MODELS = (
     "mixture_density_network",
 )
 
-MAX_MODELS = 6
+MAX_MODELS = 5
 N_SAMPLES = 8
 
 MODEL_CMAP = mpl.cm.get_cmap("tab10")
@@ -121,7 +122,9 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     im_right = None
 
     # Plot inputs (left grid - force fields)
-    for idx, model_name in enumerate(models_to_plot):
+    panel_models = list(models_to_plot[:5])
+
+    for idx, model_name in enumerate(panel_models):
         i = idx // 3
         j = idx % 3
         ax = fig.add_subplot(gs[i, j])
@@ -163,7 +166,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
             ax.axis("off")
 
     # Plot outputs (right grid - Chladni patterns)
-    for idx, model_name in enumerate(models_to_plot):
+    for idx, model_name in enumerate(panel_models):
         i = idx // 3
         j = idx % 3
         ax = fig.add_subplot(gs[i, j + 4])
@@ -204,6 +207,61 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
         else:
             ax.axis("off")
 
+    # Ground truth occupies last slot (index 5)
+    gt_idx = len(panel_models)
+    gt_row = gt_idx // 3
+    gt_col = gt_idx % 3
+
+    ax_gt_input = fig.add_subplot(gs[gt_row, gt_col])
+    im_left = ax_gt_input.imshow(
+        u_true_2d,
+        cmap="RdBu_r",
+        vmin=u_min,
+        vmax=u_max,
+        origin="lower",
+        aspect="equal",
+    )
+    ax_gt_input.set_xticks([])
+    ax_gt_input.set_yticks([])
+    ax_gt_input.text(
+        0.05,
+        0.95,
+        "Ground Truth",
+        transform=ax_gt_input.transAxes,
+        fontsize=5,
+        color="white",
+        va="top",
+        ha="left",
+        bbox=dict(
+            boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
+        ),
+    )
+
+    ax_gt_output = fig.add_subplot(gs[gt_row, gt_col + 4])
+    im_right = ax_gt_output.imshow(
+        s_true_2d,
+        cmap="viridis",
+        vmin=s_min,
+        vmax=s_max,
+        origin="lower",
+        aspect="equal",
+    )
+    ax_gt_output.set_xticks([])
+    ax_gt_output.set_yticks([])
+    ax_gt_output.text(
+        0.05,
+        0.95,
+        "Ground Truth",
+        transform=ax_gt_output.transAxes,
+        fontsize=5,
+        color="white",
+        va="top",
+        ha="left",
+        bbox=dict(
+            boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
+        ),
+    )
+
     # Add colorbars
     if im_left is not None:
         cax_left = fig.add_subplot(gs[:, 3])
@@ -233,6 +291,12 @@ def main():
     parser.add_argument("--results_dir", type=str, default="results/chladni_2d")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--sample_index", type=int, default=None)
+    parser.add_argument(
+        "--ifno_checkpoint",
+        type=str,
+        default="logs_ifno/chladni_2d/ifno_model.pth",
+        help="Path to trained IFNO weights (set empty to skip).",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -273,10 +337,20 @@ def main():
         device=device,
     )
 
+    ifno_checkpoint = args.ifno_checkpoint.strip() if args.ifno_checkpoint else ""
+    include_ifno = bool(ifno_checkpoint)
+    if include_ifno and not os.path.exists(ifno_checkpoint):
+        print(f"  Warning: IFNO checkpoint not found at {ifno_checkpoint}. Skipping IFNO panel.")
+        include_ifno = False
+
+    b2b_models_to_plot = list(models_to_plot)
+    if include_ifno and len(b2b_models_to_plot) >= MAX_MODELS:
+        b2b_models_to_plot = b2b_models_to_plot[:-1]
+
     print("Collecting predictions...")
     predictions, meta = collect_predictions(
         test_dataset[sample_idx],
-        models_to_plot,
+        b2b_models_to_plot,
         models_dict,
         input_enc,
         output_enc,
@@ -285,8 +359,20 @@ def main():
         device=device,
     )
 
+    final_model_order = list(b2b_models_to_plot)
+    if include_ifno:
+        try:
+            print("Evaluating IFNO model for visualization...")
+            ifno_model = load_ifno_model(dataset_info, ifno_checkpoint, device=device)
+            predictions["ifno"] = collect_ifno_predictions(
+                ifno_model, test_dataset[sample_idx], device=device
+            )
+            final_model_order.append("ifno")
+        except Exception as exc:
+            print(f"  Warning: Unable to evaluate IFNO checkpoint ({exc}). Skipping IFNO panel.")
+
     print("Rendering figure...")
-    plot_comparison(sample_idx, models_to_plot, predictions, meta, args.results_dir)
+    plot_comparison(sample_idx, final_model_order, predictions, meta, args.results_dir)
     print(f"SUCCESS: Created publication figure → {args.results_dir}")
 
 

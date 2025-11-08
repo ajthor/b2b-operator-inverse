@@ -13,8 +13,9 @@ import numpy as np
 import random
 
 import torch
+from skimage.metrics import structural_similarity as compute_ssim
 
-from inverse_neural_operator.b2b.load_model import (
+from b2b.load_model import (
     load_function_encoders,
     load_forward_model,
 )
@@ -45,7 +46,9 @@ def plot_input_function_encoder_realizations(
     random.seed(seed)
 
     # Randomly select samples from input encoder dataset
-    indices = random.sample(range(len(input_encoder_dataset)), min(n_samples, len(input_encoder_dataset)))
+    indices = random.sample(
+        range(len(input_encoder_dataset)), min(n_samples, len(input_encoder_dataset))
+    )
 
     with torch.no_grad():
         # Collect coefficients, spatial coordinates, and ground truth from actual data samples
@@ -65,7 +68,9 @@ def plot_input_function_encoder_realizations(
             X = X.unsqueeze(0).to(device)
 
             # Compute coefficients from example points
-            alpha, _ = input_function_encoder.compute_coefficients(example_xs, example_ys)
+            alpha, _ = input_function_encoder.compute_coefficients(
+                example_xs, example_ys
+            )
             alphas.append(alpha)
             all_xs.append(X)
             all_us.append(u)
@@ -81,7 +86,9 @@ def plot_input_function_encoder_realizations(
     functions_np = functions.cpu().numpy()
 
     # Denormalize: add gradient and scale back to original range
-    gradient_flat_np = gradient_flat.cpu().numpy() if torch.is_tensor(gradient_flat) else gradient_flat
+    gradient_flat_np = (
+        gradient_flat.cpu().numpy() if torch.is_tensor(gradient_flat) else gradient_flat
+    )
 
     # Create 3x3 grid for difference maps
     fig, axes = plt.subplots(3, 3, figsize=(12, 10))
@@ -100,28 +107,47 @@ def plot_input_function_encoder_realizations(
         denorm_recon = (function_values + gradient_flat_np) * (vmax - vmin) + vmin
         denorm_gt = (ground_truth + gradient_flat_np) * (vmax - vmin) + vmin
 
-        # Compute MSE in denormalized space
-        mse = np.mean((denorm_gt - denorm_recon) ** 2)
+        denorm_recon_2d = denorm_recon.reshape(grid_height, grid_width)
+        denorm_gt_2d = denorm_gt.reshape(grid_height, grid_width)
+
+        # Compute SSIM in denormalized space
+        data_range = max(denorm_gt_2d.max(), denorm_recon_2d.max()) - min(
+            denorm_gt_2d.min(), denorm_recon_2d.min()
+        )
+        if data_range == 0:
+            data_range = 1.0
+        ssim_val = compute_ssim(
+            denorm_gt_2d, denorm_recon_2d, data_range=data_range, channel_axis=None
+        )
 
         # Compute difference and reshape
-        diff = (denorm_gt - denorm_recon).reshape(grid_height, grid_width)
+        diff = denorm_gt_2d - denorm_recon_2d
         vmax_diff = max(abs(diff.min()), abs(diff.max()))
 
         # Plot difference map
-        im = ax.imshow(diff, cmap='seismic', origin='lower', extent=[0, 1, 0, 1],
-                      vmin=-vmax_diff, vmax=vmax_diff)
-        ax.set_title(f'Sample {indices[idx]}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('x', fontsize=8)
-        ax.set_ylabel('z', fontsize=8)
+        im = ax.imshow(
+            diff,
+            cmap="seismic",
+            origin="lower",
+            extent=[0, 1, 0, 1],
+            vmin=-vmax_diff,
+            vmax=vmax_diff,
+        )
+        ax.set_title(f"Sample {indices[idx]}\nSSIM: {ssim_val:.3f}", fontsize=9)
+        ax.set_xlabel("x", fontsize=8)
+        ax.set_ylabel("z", fontsize=8)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle(f'Input Function Encoder - Reconstruction Error (GT - Recon) (seed={seed})',
-                 fontsize=14, fontweight='bold')
+    fig.suptitle(
+        f"Input Function Encoder - Reconstruction Error (GT - Recon) (seed={seed})",
+        fontsize=14,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"  ✓ Saved: {save_path}")
 
     plt.close()
@@ -145,7 +171,9 @@ def plot_output_function_encoder_realizations(
     random.seed(seed)
 
     # Randomly select samples from output encoder dataset (using same seed as input encoder)
-    indices = random.sample(range(len(output_encoder_dataset)), min(n_samples, len(output_encoder_dataset)))
+    indices = random.sample(
+        range(len(output_encoder_dataset)), min(n_samples, len(output_encoder_dataset))
+    )
 
     with torch.no_grad():
         # Collect coefficients, spatial coordinates, and ground truth from actual data samples
@@ -165,7 +193,9 @@ def plot_output_function_encoder_realizations(
             Y = Y.unsqueeze(0).to(device)
 
             # Compute coefficients from example points
-            beta, _ = output_function_encoder.compute_coefficients(example_xs, example_ys)
+            beta, _ = output_function_encoder.compute_coefficients(
+                example_xs, example_ys
+            )
             betas.append(beta)
             all_ys.append(Y)
             all_ss.append(s)
@@ -189,30 +219,51 @@ def plot_output_function_encoder_realizations(
         function_values = functions_np[idx].squeeze()
         ground_truth = all_ss[idx].cpu().numpy().squeeze()
 
-        # Compute MSE
-        mse = np.mean((ground_truth - function_values) ** 2)
-
-        # Reshape to 2D seismogram (400x76 grid)
         output_height = 400
         output_width = 76
-        diff = (ground_truth - function_values).reshape(output_height, output_width)
+        ground_truth_2d = ground_truth.reshape(output_height, output_width)
+        function_values_2d = function_values.reshape(output_height, output_width)
+
+        # Compute SSIM
+        data_range = max(ground_truth_2d.max(), function_values_2d.max()) - min(
+            ground_truth_2d.min(), function_values_2d.min()
+        )
+        if data_range == 0:
+            data_range = 1.0
+        ssim_val = compute_ssim(
+            ground_truth_2d,
+            function_values_2d,
+            data_range=data_range,
+            channel_axis=None,
+        )
+
+        diff = ground_truth_2d - function_values_2d
         vmax_diff = max(abs(diff.min()), abs(diff.max()))
 
         # Plot difference map
-        im = ax.imshow(diff, cmap='seismic', origin='lower', aspect='auto',
-                      vmin=-vmax_diff, vmax=vmax_diff)
-        ax.set_title(f'Sample {indices[idx]}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('Time', fontsize=8)
-        ax.set_ylabel('Receiver', fontsize=8)
+        im = ax.imshow(
+            diff,
+            cmap="seismic",
+            origin="lower",
+            aspect="auto",
+            vmin=-vmax_diff,
+            vmax=vmax_diff,
+        )
+        ax.set_title(f"Sample {indices[idx]}\nSSIM: {ssim_val:.3f}", fontsize=9)
+        ax.set_xlabel("Time", fontsize=8)
+        ax.set_ylabel("Receiver", fontsize=8)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle(f'Output Function Encoder - Reconstruction Error (GT - Recon) (seed={seed})',
-                 fontsize=14, fontweight='bold')
+    fig.suptitle(
+        f"Output Function Encoder - Reconstruction Error (GT - Recon) (seed={seed})",
+        fontsize=14,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"  ✓ Saved: {save_path}")
 
     plt.close()
@@ -281,38 +332,51 @@ def plot_forward_model_performance(
         s_true_np = s_true.squeeze().cpu().numpy()
         s_pred_np = s_pred.squeeze().cpu().numpy()
 
-        # Compute error
-        mse = np.mean((s_true_np - s_pred_np) ** 2)
-
         # Reshape to seismogram
         s_true_2d = s_true_np.reshape(output_height, output_width)
         s_pred_2d = s_pred_np.reshape(output_height, output_width)
+
+        # Compute SSIM between ground truth and prediction
+        data_range = max(s_true_2d.max(), s_pred_2d.max()) - min(
+            s_true_2d.min(), s_pred_2d.min()
+        )
+        if data_range == 0:
+            data_range = 1.0
+        ssim_val = compute_ssim(
+            s_true_2d, s_pred_2d, data_range=data_range, channel_axis=None
+        )
 
         # Plot difference
         diff = s_true_2d - s_pred_2d
         vmax = max(abs(diff.min()), abs(diff.max()))
 
-        im = ax.imshow(diff, cmap='seismic', origin='lower', aspect='auto',
-                      vmin=-vmax, vmax=vmax)
-        ax.set_title(f'Sample {sample_idx}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('Time', fontsize=8)
-        ax.set_ylabel('Receiver', fontsize=8)
+        im = ax.imshow(
+            diff, cmap="seismic", origin="lower", aspect="auto", vmin=-vmax, vmax=vmax
+        )
+        ax.set_title(f"Sample {sample_idx}\nSSIM: {ssim_val:.3f}", fontsize=9)
+        ax.set_xlabel("Time", fontsize=8)
+        ax.set_ylabel("Receiver", fontsize=8)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle(f'{model_name} Forward Model - Prediction Error (True - Pred) (seed={seed})',
-                 fontsize=14, fontweight='bold')
+    fig.suptitle(
+        f"{model_name} Forward Model - Prediction Error (True - Pred) (seed={seed})",
+        fontsize=14,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"  ✓ Saved: {save_path}")
 
     plt.close()
 
 
 # Parse command line arguments
-parser = argparse.ArgumentParser(description="Plot B2B model performance for FWI dataset.")
+parser = argparse.ArgumentParser(
+    description="Plot B2B model performance for FWI dataset."
+)
 parser.add_argument(
     "--log_dir",
     type=str,
@@ -384,6 +448,7 @@ print(f"✓ Loaded normalization stats: velocity range [{vmin:.2f}, {vmax:.2f}]"
 
 # Create gradient for reconstruction
 from data.fwi_data import _create_linear_gradient
+
 gradient = _create_linear_gradient()
 gradient_flat = gradient.flatten()
 print(f"✓ Created gradient for reconstruction")
@@ -429,7 +494,11 @@ plot_output_function_encoder_realizations(
 )
 
 # Determine which forward models to plot
-forward_models = ["b2b_linear", "b2b_nonlinear"] if args.forward_model == "all" else [args.forward_model]
+forward_models = (
+    ["b2b_linear", "b2b_nonlinear"]
+    if args.forward_model == "all"
+    else [args.forward_model]
+)
 
 # Plot forward model performance
 for forward_model_name in forward_models:
@@ -451,7 +520,9 @@ for forward_model_name in forward_models:
             model_name=forward_model_name,
             n_samples=args.n_samples,
             seed=args.seed,
-            save_path=os.path.join(shared_results_dir, f"{forward_model_name}_performance.png"),
+            save_path=os.path.join(
+                shared_results_dir, f"{forward_model_name}_performance.png"
+            ),
         )
     except FileNotFoundError as e:
         print(f"  ⚠ {forward_model_name} not found, skipping...")

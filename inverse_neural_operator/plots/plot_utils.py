@@ -7,7 +7,8 @@ across all test data based on re-simulation error.
 
 import torch
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Optional
+from skimage.metrics import structural_similarity as compute_ssim
 
 
 def find_best_worst_samples(
@@ -18,13 +19,15 @@ def find_best_worst_samples(
     forward_model,
     test_dataset,
     device="cpu",
+    metric: str = "mse",
+    output_shape: Optional[Tuple[int, ...]] = None,
 ) -> Tuple[int, int, float, float]:
     """
-    Find the best and worst performing samples based on re-simulation MSE.
+    Find the best and worst performing samples based on a chosen metric.
 
-    Evaluates the model on all test samples and computes the MSE between
-    observed output and re-simulated output. Returns the indices of the
-    best (lowest MSE) and worst (highest MSE) samples.
+    Evaluates the model on all test samples and computes the similarity/error
+    between observed output and re-simulated output. Returns the indices of the
+    best and worst samples according to the selected metric.
 
     Args:
         model: The trained inverse model
@@ -34,16 +37,22 @@ def find_best_worst_samples(
         forward_model: Forward model for re-simulation
         test_dataset: Test dataset to evaluate
         device: Device to use for computation (default: "cpu")
+        metric: Metric to use ("mse" or "ssim")
+        output_shape: Desired reshape for outputs when computing SSIM
 
     Returns:
-        Tuple of (best_idx, worst_idx, best_mse, worst_mse)
+        Tuple of (best_idx, worst_idx, best_score, worst_score)
     """
     model.eval()
     forward_model.eval()
 
     sample_errors = []
 
-    print(f"  Evaluating {len(test_dataset)} samples to find best/worst cases...")
+    metric = metric.lower()
+    if metric not in {"mse", "ssim"}:
+        raise ValueError(f"Unsupported metric '{metric}'. Use 'mse' or 'ssim'.")
+
+    print(f"  Evaluating {len(test_dataset)} samples to find best/worst cases ({metric.upper()})...")
 
     with torch.no_grad():
         for idx, sample in enumerate(test_dataset):
@@ -82,21 +91,51 @@ def find_best_worst_samples(
             s_resim = output_function_encoder(Y_batch, beta_pred)
             s_resim = s_resim.squeeze(0)
 
-            # Compute MSE for this sample
-            mse = torch.mean((s_observed - s_resim) ** 2).item()
-            sample_errors.append((idx, mse))
+            if metric == "mse":
+                score = torch.mean((s_observed - s_resim) ** 2).item()
+            else:  # metric == "ssim"
+                s_obs_np = s_observed.squeeze(-1).detach().cpu().numpy()
+                s_resim_np = s_resim.squeeze(-1).detach().cpu().numpy()
+
+                if output_shape is not None:
+                    s_obs_np = s_obs_np.reshape(output_shape)
+                    s_resim_np = s_resim_np.reshape(output_shape)
+                else:
+                    # Fallback to 2D reshape if possible, else keep 1D
+                    if s_obs_np.ndim == 1:
+                        s_obs_np = s_obs_np.reshape(1, -1)
+                        s_resim_np = s_resim_np.reshape(1, -1)
+
+                data_range = max(s_obs_np.max(), s_resim_np.max()) - min(
+                    s_obs_np.min(), s_resim_np.min()
+                )
+                if data_range == 0:
+                    data_range = 1.0
+                score = compute_ssim(
+                    s_obs_np,
+                    s_resim_np,
+                    data_range=data_range,
+                    channel_axis=None,
+                )
+
+            sample_errors.append((idx, score))
 
             # Print progress every 100 samples
             if (idx + 1) % 100 == 0:
                 print(f"    Processed {idx + 1}/{len(test_dataset)} samples...")
 
-    # Sort by error to find best and worst
-    sample_errors.sort(key=lambda x: x[1])
+    # Sort to find best and worst based on metric
+    if metric == "mse":
+        sample_errors.sort(key=lambda x: x[1])  # lower is better
+    else:  # SSIM
+        sample_errors.sort(key=lambda x: x[1], reverse=True)  # higher is better
 
-    best_idx, best_mse = sample_errors[0]
-    worst_idx, worst_mse = sample_errors[-1]
+    best_idx, best_score = sample_errors[0]
+    worst_idx, worst_score = sample_errors[-1]
 
-    print(f"  Best sample: idx={best_idx}, MSE={best_mse:.6e}")
-    print(f"  Worst sample: idx={worst_idx}, MSE={worst_mse:.6e}")
+    metric_label = "MSE" if metric == "mse" else "SSIM"
+    score_fmt = "{:.6e}" if metric == "mse" else "{:.4f}"
+    print(f"  Best sample: idx={best_idx}, {metric_label}={score_fmt.format(best_score)}")
+    print(f"  Worst sample: idx={worst_idx}, {metric_label}={score_fmt.format(worst_score)}")
 
-    return best_idx, worst_idx, best_mse, worst_mse
+    return best_idx, worst_idx, best_score, worst_score

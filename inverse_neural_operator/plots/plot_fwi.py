@@ -2,13 +2,14 @@ import os
 import argparse
 import json
 import random
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
 
 import torch
 
-from inverse_neural_operator.b2b.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
@@ -160,27 +161,22 @@ def plot_fwi_sample(
     u_pred_np = u_pred.squeeze(-1).cpu().numpy()
     s_observed_np = s_observed.squeeze(-1).cpu().numpy()
 
-    # Denormalize velocity residuals from [-1, 1] back to residual range
-    # Then add gradient to get original velocities
-    # Residual normalization range: [vmin - 900, vmax - 100]
+    # Denormalize velocity fields from [-1, 1] to physical units (m/s)
+    # Residual normalization range used during training: [vmin - 900, vmax - 100]
     residual_min = vmin - 900.0
     residual_max = vmax - 100.0
 
-    # Denormalize residuals
-    u_true_residual = ((u_true_np + 1) / 2) * (
+    # Denormalize to velocity units (no gradient re-addition needed)
+    u_true_velocity = ((u_true_np + 1) / 2) * (
         residual_max - residual_min
     ) + residual_min
-    u_pred_residual = ((u_pred_np + 1) / 2) * (
+    u_pred_velocity = ((u_pred_np + 1) / 2) * (
         residual_max - residual_min
     ) + residual_min
-
-    # # Add gradient back to get original velocities
-    # u_true_np = u_true_residual + gradient_flat
-    # u_pred_np = u_pred_residual + gradient_flat
 
     # Reshape velocity models from flattened (1152,) to 2D (24, 48)
-    u_true_2d = u_true_np.reshape(24, 48)
-    u_pred_2d = u_pred_np.reshape(24, 48)
+    u_true_2d = u_true_velocity.reshape(24, 48)
+    u_pred_2d = u_pred_velocity.reshape(24, 48)
 
     # Reshape seismic transforms from flattened (30400,) to 2D (400, 76)
     s_observed_2d = s_observed_np.reshape(400, 76)
@@ -212,36 +208,28 @@ def plot_fwi_sample(
     ax_error = fig.add_subplot(gs[0, 8])
     ax_error_cbar = fig.add_subplot(gs[0, 9])
 
-    # Panel 1 & 2: Velocity Models (Contour Plots with shared scale)
-    x_coords = np.arange(48)
-    y_coords = np.arange(24)
-    X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+    # Panel 1 & 2: Velocity Models with fixed absolute color scale
+    norm_velocity = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
 
-    # Use shared vmin/vmax from both true and predicted for consistent color scale
-    shared_vmin = min(u_true_2d.min(), u_pred_2d.min())
-    shared_vmax = max(u_true_2d.max(), u_pred_2d.max())
-
-    contour1 = ax_vel_true.contourf(
-        X_grid,
-        Y_grid,
+    im_vel_true = ax_vel_true.imshow(
         u_true_2d,
-        levels=20,
-        cmap="magma",
-        vmin=shared_vmin,
-        vmax=shared_vmax,
+        cmap="magma_r",
+        vmin=vmin,
+        vmax=vmax,
+        origin="upper",
+        aspect="equal",
     )
     ax_vel_true.set_title("True Velocity Model u(x,y)", fontsize=13, fontweight="bold")
     ax_vel_true.set_xlabel("x", fontsize=11)
     ax_vel_true.set_ylabel("y", fontsize=11)
 
-    contour2 = ax_vel_pred.contourf(
-        X_grid,
-        Y_grid,
+    im_vel_pred = ax_vel_pred.imshow(
         u_pred_2d,
-        levels=20,
-        cmap="magma",
-        vmin=shared_vmin,
-        vmax=shared_vmax,
+        cmap="magma_r",
+        vmin=vmin,
+        vmax=vmax,
+        origin="upper",
+        aspect="equal",
     )
     ax_vel_pred.set_title(
         "Predicted Velocity Model û(x,y)", fontsize=13, fontweight="bold"
@@ -250,8 +238,11 @@ def plot_fwi_sample(
     ax_vel_pred.set_ylabel("y", fontsize=11)
 
     # Add colorbar for velocity panels in dedicated axis
-    cbar1 = fig.colorbar(contour2, cax=ax_vel_cbar)
+    scalar_mappable = mpl.cm.ScalarMappable(norm=norm_velocity, cmap="magma_r")
+    scalar_mappable.set_array([])
+    cbar1 = fig.colorbar(scalar_mappable, cax=ax_vel_cbar)
     cbar1.set_label("Velocity (m/s)", fontsize=10)
+    cbar1.ax.invert_yaxis()
 
     # Panel 3 & 4: Seismic Transforms with shared scale
     seismic_vmin = min(s_observed_2d.min(), s_resim_2d.min())
@@ -260,7 +251,7 @@ def plot_fwi_sample(
     # Panel 3: Measured Seismic Transform
     im3 = ax_seismic_obs.imshow(
         s_observed_2d,
-        cmap="viridis",
+        cmap="turbo",
         aspect="auto",
         origin="lower",
         vmin=seismic_vmin,
@@ -275,7 +266,7 @@ def plot_fwi_sample(
     # Panel 4: Re-simulated Seismic Transform
     im4 = ax_seismic_resim.imshow(
         s_resim_2d,
-        cmap="viridis",
+        cmap="turbo",
         aspect="auto",
         origin="lower",
         vmin=seismic_vmin,
@@ -375,13 +366,13 @@ plot_multiple_samples(
     model_name=model_name,
     vmin=vmin,
     vmax=vmax,
-    n_samples=3,
+    n_samples=10,
     save_dir=results_dir,
 )
 
 # Find and plot best/worst case samples
 print(f"Finding best and worst case samples for {model_name}...")
-best_idx, worst_idx, best_mse, worst_mse = find_best_worst_samples(
+best_idx, worst_idx, best_ssim, worst_ssim = find_best_worst_samples(
     model=model,
     evaluate_fn=evaluate_fn,
     input_function_encoder=input_function_encoder,
@@ -389,10 +380,12 @@ best_idx, worst_idx, best_mse, worst_mse = find_best_worst_samples(
     forward_model=forward_model,
     test_dataset=test_dataset,
     device=device,
+    metric="ssim",
+    output_shape=dataset_info.get("output_spatial_dims", None),
 )
 
 # Plot best case
-print(f"Plotting best case (MSE: {best_mse:.6e})...")
+print(f"Plotting best case (SSIM: {best_ssim:.4f})...")
 best_sample = test_dataset[best_idx]
 plot_fwi_sample(
     model=model,
@@ -409,7 +402,7 @@ plot_fwi_sample(
 )
 
 # Plot worst case
-print(f"Plotting worst case (MSE: {worst_mse:.6e})...")
+print(f"Plotting worst case (SSIM: {worst_ssim:.4f})...")
 worst_sample = test_dataset[worst_idx]
 plot_fwi_sample(
     model=model,

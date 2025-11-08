@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from models.load_model import load_models
+from utils.imports import import_model_functions
 
 
 def load_all_models(
@@ -65,63 +66,89 @@ def load_all_models(
     return models_dict, input_function_encoder, output_function_encoder
 
 
-def evaluate_models_on_subset(
+def evaluate_models(
     test_dataset,
     models_dict: Dict[str, Tuple[torch.nn.Module, callable]],
     input_function_encoder,
     output_function_encoder,
-    max_samples: int = 32,
+    forward_model,
     device: str = "cpu",
-) -> Tuple[Dict[str, List[float]], List[Tuple[int, float]]]:
-    """Evaluate models on a subset of the test dataset.
+) -> Tuple[Dict[str, Dict[str, List[float]]], List[Tuple[int, float]]]:
+    """Evaluate models on the entire test dataset using proper resimulation loss.
 
     Args:
         test_dataset: Test dataset to evaluate on
         models_dict: Dictionary of loaded models
         input_function_encoder: Input encoder
         output_function_encoder: Output encoder
-        max_samples: Maximum number of samples to evaluate
+        forward_model: Forward model for re-simulation
         device: Device for computation
 
     Returns:
-        per_model_mses: {model_name: [mse_per_sample]}
-        sample_scores: [(sample_idx, median_mse_across_models)]
+        per_model_losses: {model_name: {"coeff_loss": [...], "pred_loss": [...]}}
+        sample_scores: [(sample_idx, median_pred_loss_across_models)]
     """
-    per_model_mses = {name: [] for name in models_dict.keys()}
+    per_model_losses = {
+        name: {"coeff_loss": [], "pred_loss": []} for name in models_dict.keys()
+    }
     sample_scores = []
 
-    n_eval = min(max_samples, len(test_dataset))
+    # Import resimulation_loss functions for each model
+    resim_loss_fns = {}
+    for model_name in models_dict.keys():
+        try:
+            resim_loss_fns[model_name] = import_model_functions(
+                model_name, "resimulation_loss"
+            )
+        except (ValueError, AttributeError) as e:
+            print(
+                f"  Warning: Could not import resimulation_loss for {model_name}: {e}"
+            )
+            continue
 
-    for idx in range(n_eval):
+    print(f"  Evaluating on {len(test_dataset)} test samples...")
+
+    for idx in range(len(test_dataset)):
         X, u_true, Y, s_observed = test_dataset[idx]
         X = X.to(device)
         u_true = u_true.to(device)
         Y = Y.to(device)
         s_observed = s_observed.to(device)
 
-        point = (
+        batch = (
             X.unsqueeze(0),
             u_true.unsqueeze(0),
             Y.unsqueeze(0),
             s_observed.unsqueeze(0),
         )
 
-        sample_mses = []
-        for model_name, (model, evaluate_fn) in models_dict.items():
+        sample_pred_losses = []
+        for model_name, (model, _) in models_dict.items():
+            if model_name not in resim_loss_fns:
+                continue
+
             model.eval()
+            if forward_model is not None:
+                forward_model.eval()
+
             with torch.no_grad():
-                u_pred, _ = evaluate_fn(
-                    model, point, input_function_encoder, output_function_encoder
+                coeff_loss, pred_loss = resim_loss_fns[model_name](
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                    forward_model=forward_model,
+                    n_samples=1,  # Deterministic evaluation
                 )
-                mse = torch.mean((u_pred.squeeze(0) - u_true) ** 2).item()
 
-            per_model_mses[model_name].append(mse)
-            sample_mses.append(mse)
+            per_model_losses[model_name]["coeff_loss"].append(coeff_loss)
+            per_model_losses[model_name]["pred_loss"].append(pred_loss)
+            sample_pred_losses.append(pred_loss)
 
-        if sample_mses:
-            sample_scores.append((idx, float(np.median(sample_mses))))
+        if sample_pred_losses:
+            sample_scores.append((idx, float(np.median(sample_pred_losses))))
 
-    return per_model_mses, sample_scores
+    return per_model_losses, sample_scores
 
 
 def select_models_and_sample(
@@ -129,65 +156,70 @@ def select_models_and_sample(
     models_dict: Dict[str, Tuple[torch.nn.Module, callable]],
     input_function_encoder,
     output_function_encoder,
+    forward_model,
     max_models: int = 6,
-    max_eval_samples: int = 32,
     sample_index: int | None = None,
     device: str = "cpu",
 ) -> Tuple[List[str], int]:
-    """Evaluate models, rank by performance, and select a representative sample.
-
-    This encapsulates the common workflow used by all publication plotting scripts.
+    """Evaluate models on entire test set, rank by re-simulation performance, and select median sample.
 
     Args:
         test_dataset: Test dataset
         models_dict: Dictionary of loaded models
         input_function_encoder: Input encoder
         output_function_encoder: Output encoder
+        forward_model: Forward model for re-simulation
         max_models: Maximum number of top-performing models to return
-        max_eval_samples: Number of samples to evaluate for ranking
-        sample_index: Specific sample to use (if None, selects median sample)
+        sample_index: Specific sample to use (if None, selects median-performing sample)
         device: Device for computation
 
     Returns:
         models_to_plot: List of model names to plot (top performers)
         sample_index: Index of the representative sample
     """
-    print("Evaluating models to select top performers...")
-    per_model_mses, sample_scores = evaluate_models_on_subset(
+    print("Evaluating models on full test set using re-simulation loss...")
+    per_model_losses, sample_scores = evaluate_models(
         test_dataset,
         models_dict,
         input_function_encoder,
         output_function_encoder,
-        max_samples=max_eval_samples,
+        forward_model,
         device=device,
     )
 
-    # Rank models by mean MSE (lower is better)
-    model_means = {
-        name: float(np.mean(mse_list)) if mse_list else float("inf")
-        for name, mse_list in per_model_mses.items()
-    }
-    ranked_models = sorted(model_means.keys(), key=lambda k: model_means[k])
-
-    if model_means:
-        print("  Mean MSE by model:")
-        for name in ranked_models:
-            score = model_means[name]
-            if np.isfinite(score):
-                print(f"    {name}: {score:.6e}")
-            else:
-                print(f"    {name}: unavailable")
-
+    # Rank models by mean pred_loss (re-simulation error, lower is better)
+    ranked_models = sorted(
+        per_model_losses.keys(),
+        key=lambda k: (
+            np.mean(per_model_losses[k]["pred_loss"])
+            if per_model_losses[k]["pred_loss"]
+            else float("inf")
+        ),
+    )
     models_to_plot = ranked_models[:max_models]
-    print(f"  Selected models: {', '.join(models_to_plot)}")
 
-    # Select representative sample
+    # Print model rankings with mean pred_loss
+    print(f"  Top {max_models} models by mean re-simulation loss:")
+    for i, model_name in enumerate(models_to_plot, 1):
+        pred_losses = per_model_losses[model_name]["pred_loss"]
+        if pred_losses:
+            mean_pred_loss = np.mean(pred_losses)
+            print(f"    {i}. {model_name}: {mean_pred_loss:.6e}")
+        else:
+            print(f"    {i}. {model_name}: N/A")
+
+    # Select representative sample (median-performing across all models by pred_loss)
     if sample_index is None:
         if not sample_scores:
             raise ValueError("Unable to score samples - no sample scores available")
-        median_idx = len(sample_scores) // 2
-        sample_index = sample_scores[median_idx][0]
-        print(f"  Selected representative sample: {sample_index}")
+        # Sort by median pred_loss to find the sample with median performance
+        sample_scores_sorted = sorted(sample_scores, key=lambda x: x[1])
+        median_idx = len(sample_scores_sorted) // 2
+        sample_index = sample_scores_sorted[median_idx][0]
+        median_pred_loss = sample_scores_sorted[median_idx][1]
+        print(
+            f"  Selected median-performing sample: {sample_index} (median pred_loss: {median_pred_loss:.6e})"
+        )
     else:
         print(f"  Using provided sample: {sample_index}")
 
@@ -273,7 +305,9 @@ def collect_predictions(
                     if output_transform is not None:
                         try:
                             s_resim = output_transform(second, Y)
-                            s_resim_np = s_resim.squeeze(0).detach().cpu().numpy().flatten()
+                            s_resim_np = (
+                                s_resim.squeeze(0).detach().cpu().numpy().flatten()
+                            )
                             output_samples.append(s_resim_np)
                             continue
                         except Exception:

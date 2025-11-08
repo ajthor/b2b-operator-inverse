@@ -23,7 +23,7 @@ DISPLAY_NAMES = {
     "variational_autoencoder": "cVAE",
     "conditional_realnvp": "RealNVP",
     "mixture_density_network": "MDN",
-    "ifno": "IFNO",
+    "ifno": "iFNO",
 }
 
 
@@ -71,7 +71,12 @@ def find_params(log_dir: str, model_names, seed: int = 1):
     raise FileNotFoundError(f"No trained models found under {log_dir}")
 
 
-def load_forward_model(log_dir: str, seed: int, forward_model_name: str = "b2b_nonlinear", device: str = "cpu"):
+def load_forward_model(
+    log_dir: str,
+    seed: int,
+    forward_model_name: str = "b2b_nonlinear",
+    device: str = "cpu",
+):
     """Load a forward model for re-simulations."""
     shared_log_dir = os.path.join(log_dir, "shared", f"seed_{seed}")
     try:

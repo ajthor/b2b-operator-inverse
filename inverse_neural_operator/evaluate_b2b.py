@@ -23,13 +23,12 @@ from tabulate import tabulate
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import warnings
+import math
 
 from data.load_dataset import load_dataset
-from data.process_data import InputFunctionEncoderDataset, OutputFunctionEncoderDataset
 from b2b.load_model import load_function_encoders, load_forward_model
-from b2b.function_encoder import test_model as test_function_encoder
-from b2b.b2b_linear import test_model as test_linear_forward
-from b2b.b2b_nonlinear import test_model as test_nonlinear_forward
+from data.process_data import InputFunctionEncoderDataset, OutputFunctionEncoderDataset
+from b2b.function_encoder import evaluate as evaluate_function_encoder
 
 # Try to import tensorboard for reading event files
 try:
@@ -88,7 +87,7 @@ def evaluate_function_encoders(
         return_info=True,
     )
 
-    # Create function encoder test datasets
+    # Create function encoder test datasets (match training procedure)
     input_test_dataset = InputFunctionEncoderDataset(test_dataset, device=device)
     output_test_dataset = OutputFunctionEncoderDataset(test_dataset, device=device)
 
@@ -137,21 +136,56 @@ def evaluate_function_encoders(
                 device=device,
             )
 
-            # Evaluate input encoder
+            # Evaluate encoders on full test set with global relative L2 errors
             input_encoder.eval()
-            input_loss = test_function_encoder(
-                model=input_encoder, test_dataloader=input_test_dataloader
-            )
-            results["input"][seed] = input_loss
-            print(f"    Input Encoder Test Loss: {input_loss:.6e}")
-
-            # Evaluate output encoder
             output_encoder.eval()
-            output_loss = test_function_encoder(
-                model=output_encoder, test_dataloader=output_test_dataloader
+            total_input_sq_error = 0.0
+            total_input_sq_target = 0.0
+            total_output_sq_error = 0.0
+            total_output_sq_target = 0.0
+
+            with torch.no_grad():
+                for batch in input_test_dataloader:
+                    example_xs, example_ys, xs, ys = batch
+                    example_xs = example_xs.to(device)
+                    example_ys = example_ys.to(device)
+                    xs = xs.to(device)
+                    ys = ys.to(device)
+
+                    u_pred = evaluate_function_encoder(
+                        input_encoder, (example_xs, example_ys, xs, ys)
+                    )
+                    total_input_sq_error += torch.sum((u_pred - ys) ** 2).item()
+                    total_input_sq_target += torch.sum(ys ** 2).item()
+
+                for batch in output_test_dataloader:
+                    example_xs, example_ys, xs, ys = batch
+                    example_xs = example_xs.to(device)
+                    example_ys = example_ys.to(device)
+                    xs = xs.to(device)
+                    ys = ys.to(device)
+
+                    s_pred = evaluate_function_encoder(
+                        output_encoder, (example_xs, example_ys, xs, ys)
+                    )
+                    total_output_sq_error += torch.sum((s_pred - ys) ** 2).item()
+                    total_output_sq_target += torch.sum(ys ** 2).item()
+
+            input_l2_error = (
+                math.sqrt(total_input_sq_error / total_input_sq_target)
+                if total_input_sq_target > 0
+                else float("nan")
             )
-            results["output"][seed] = output_loss
-            print(f"    Output Encoder Test Loss: {output_loss:.6e}")
+            output_l2_error = (
+                math.sqrt(total_output_sq_error / total_output_sq_target)
+                if total_output_sq_target > 0
+                else float("nan")
+            )
+
+            results["input"][seed] = input_l2_error
+            print(f"    Input Encoder Test Relative L2 Error: {input_l2_error:.6e}")
+            results["output"][seed] = output_l2_error
+            print(f"    Output Encoder Test Relative L2 Error: {output_l2_error:.6e}")
 
         except Exception as e:
             print(f"  ✗ Error evaluating seed {seed}: {e}")
@@ -246,25 +280,31 @@ def evaluate_forward_models(
                     log_dir=seed_log_dir, forward_model_name=model_name, device=device
                 )
 
-                # Select appropriate test function based on model type
-                if model_name == "b2b_linear":
-                    test_fn = test_linear_forward
-                elif model_name == "b2b_nonlinear":
-                    test_fn = test_nonlinear_forward
-                else:
-                    print(f"    ⚠ Unknown model type: {model_name}, skipping")
-                    continue
-
-                # Evaluate forward model
+                # Evaluate forward model on full test set with global relative L2 error
                 forward_model.eval()
-                test_loss = test_fn(
-                    model=forward_model,
-                    test_dataloader=test_dataloader,
-                    input_function_encoder=input_encoder,
-                    output_function_encoder=output_encoder,
-                )
-                results[model_name][seed] = test_loss
-                print(f"      Test Loss: {test_loss:.6e}")
+                input_encoder.eval()
+                output_encoder.eval()
+                total_sq_error = 0.0
+                total_sq_target = 0.0
+
+                with torch.no_grad():
+                    for batch in test_dataloader:
+                        X, u, Y, s = batch
+                        # Compute input coefficients
+                        alpha, _ = input_encoder.compute_coefficients(X, u)
+                        # Get predicted output coefficients
+                        beta_pred = forward_model(alpha)
+                        # Decode to output
+                        s_pred = output_encoder(Y, beta_pred)
+                        total_sq_error += torch.sum((s_pred - s) ** 2).item()
+                        total_sq_target += torch.sum(s ** 2).item()
+
+                if total_sq_target > 0:
+                    test_l2_error = math.sqrt(total_sq_error / total_sq_target)
+                else:
+                    test_l2_error = float("nan")
+                results[model_name][seed] = test_l2_error
+                print(f"      Test Relative L2 Error: {test_l2_error:.6e}")
 
             except Exception as e:
                 print(f"    ✗ Error evaluating seed {seed}: {e}")
@@ -416,7 +456,7 @@ def print_results_tables(function_encoder_results, forward_model_results):
         table_data.append(["Min", f"{stats['min']:.6e}"])
         table_data.append(["Max", f"{stats['max']:.6e}"])
 
-        print(tabulate(table_data, headers=["Seed", "Test Loss"], tablefmt="grid"))
+        print(tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid"))
     else:
         print("\n--- Input Function Encoder ---")
         print("  No results available")
@@ -438,7 +478,7 @@ def print_results_tables(function_encoder_results, forward_model_results):
         table_data.append(["Min", f"{stats['min']:.6e}"])
         table_data.append(["Max", f"{stats['max']:.6e}"])
 
-        print(tabulate(table_data, headers=["Seed", "Test Loss"], tablefmt="grid"))
+        print(tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid"))
     else:
         print("\n--- Output Function Encoder ---")
         print("  No results available")
@@ -461,7 +501,7 @@ def print_results_tables(function_encoder_results, forward_model_results):
             table_data.append(["Min", f"{stats['min']:.6e}"])
             table_data.append(["Max", f"{stats['max']:.6e}"])
 
-            print(tabulate(table_data, headers=["Seed", "Test Loss"], tablefmt="grid"))
+            print(tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid"))
         else:
             print(f"\n--- Forward Model: {model_name} ---")
             print("  No results available")
@@ -613,7 +653,7 @@ def save_csv_results(function_encoder_results, forward_model_results, output_dir
         csv_path = os.path.join(output_dir, "input_encoder_results.csv")
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Seed", "Test Loss"])
+            writer.writerow(["Seed", "Relative L2 Error"])
             for seed in sorted(function_encoder_results["input"].keys()):
                 writer.writerow([seed, function_encoder_results["input"][seed]])
 
@@ -632,7 +672,7 @@ def save_csv_results(function_encoder_results, forward_model_results, output_dir
         csv_path = os.path.join(output_dir, "output_encoder_results.csv")
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Seed", "Test Loss"])
+            writer.writerow(["Seed", "Relative L2 Error"])
             for seed in sorted(function_encoder_results["output"].keys()):
                 writer.writerow([seed, function_encoder_results["output"][seed]])
 
@@ -652,7 +692,7 @@ def save_csv_results(function_encoder_results, forward_model_results, output_dir
             csv_path = os.path.join(output_dir, f"{model_name}_results.csv")
             with open(csv_path, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow(["Seed", "Test Loss"])
+                writer.writerow(["Seed", "Relative L2 Error"])
                 for seed in sorted(forward_model_results[model_name].keys()):
                     writer.writerow([seed, forward_model_results[model_name][seed]])
 
