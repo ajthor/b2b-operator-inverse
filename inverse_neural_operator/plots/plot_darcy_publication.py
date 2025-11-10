@@ -15,7 +15,6 @@ import argparse
 import os
 import random
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -29,6 +28,7 @@ from plots.utils.model_utils import (
 from plots.utils.plot_utils import (
     setup_publication_style,
     display_name,
+    get_model_color,
     find_params,
     load_forward_model,
     make_output_transform,
@@ -51,7 +51,6 @@ INVERSE_MODELS = (
 MAX_MODELS = 8
 N_SAMPLES = 8
 
-MODEL_CMAP = mpl.cm.get_cmap("tab10")
 GROUND_TRUTH_COLOR = "#CCCCCC"  # Black - distinct from tab10 model colors
 
 
@@ -81,7 +80,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     )
     ax_left.set_xlabel(r"$x$", labelpad=-8)
     ax_left.set_ylabel(r"$f(x)$", labelpad=-8)
-    ax_left.set_title("Input Reconstructions")
+    ax_left.set_title("Darcy Input Reconstructions")
 
     ax_right = fig.add_subplot(gs[:, 5:9], frameon=False)
     ax_right.tick_params(
@@ -89,7 +88,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     )
     ax_right.set_xlabel(r"$y$", labelpad=-8)
     ax_right.set_ylabel(r"$s(y)$", labelpad=-8)
-    ax_right.set_title("Output Predictions")
+    ax_right.set_title("Darcy Output Re-Simulations")
 
     # Spacers
     fig.add_subplot(gs[:, 4]).axis("off")
@@ -128,7 +127,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
         preds = predictions.get(model_name, {})
         u_samples = preds.get("inputs", np.empty((0,)))
-        color = MODEL_CMAP(idx % MODEL_CMAP.N)
+        color = get_model_color(model_name, idx)
 
         ax.plot(x, u_true, color=GROUND_TRUTH_COLOR, linewidth=1.0, linestyle="dashed")
 
@@ -163,7 +162,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
         preds = predictions.get(model_name, {})
         s_samples = preds.get("outputs", np.empty((0,)))
-        color = MODEL_CMAP(idx % MODEL_CMAP.N)
+        color = get_model_color(model_name, idx)
 
         if s_samples.size > 0:
             ax.plot(
@@ -291,7 +290,7 @@ def main():
             print("Evaluating IFNO model for visualization...")
             ifno_model = load_ifno_model(dataset_info, ifno_checkpoint, device=device)
             predictions["ifno"] = collect_ifno_predictions(
-                ifno_model, test_dataset[sample_idx], device=device
+                ifno_model, test_dataset[sample_idx], device=device, n_samples=N_SAMPLES
             )
             final_model_order.append("ifno")
         except Exception as exc:

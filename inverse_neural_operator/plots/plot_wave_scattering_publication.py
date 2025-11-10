@@ -615,7 +615,10 @@ def main():
             print("Evaluating IFNO model for visualization...")
             ifno_model = load_ifno_model(dataset_info, ifno_checkpoint, device=device)
             predictions["ifno"] = collect_ifno_predictions(
-                ifno_model, test_dataset[sample_idx], device=device
+                ifno_model,
+                test_dataset[sample_idx],
+                device=device,
+                n_samples=N_SAMPLES,
             )
             final_model_order.append("ifno")
         except Exception as exc:

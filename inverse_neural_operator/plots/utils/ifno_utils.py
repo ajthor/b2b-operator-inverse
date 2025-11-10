@@ -85,9 +85,16 @@ def _trim_function_channels(pred: torch.Tensor, target: torch.Tensor) -> torch.T
 
 
 def collect_ifno_predictions(
-    model: torch.nn.Module, sample: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], device: str = "cpu"
+    model: torch.nn.Module,
+    sample: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    device: str = "cpu",
+    n_samples: int = 1,
 ) -> Dict[str, np.ndarray]:
-    """Run IFNO inverse+forward passes for a single dataset sample."""
+    """Run IFNO inverse+forward passes for a single dataset sample.
+
+    Generates multiple predictions (with repeated stochastic sampling if present)
+    so downstream plots can visualize uncertainty just like other inverse models.
+    """
     model.eval()
 
     X, u_true, Y, s_true = sample
@@ -96,30 +103,34 @@ def collect_ifno_predictions(
     Y = Y.to(device)
     s_true = s_true.to(device)
 
-    with torch.no_grad():
-        # Reconstruct input function from observed output (inverse pass)
-        s_input = torch.cat([Y.unsqueeze(0), s_true.unsqueeze(0)], dim=-1)
-        inverse_result = model.inverse(s_input)
-        if isinstance(inverse_result, (tuple, list)):
-            u_pred = inverse_result[0]
-        else:
-            u_pred = inverse_result
-        u_pred = _trim_function_channels(u_pred, u_true.unsqueeze(0))
+    num_runs = max(1, int(n_samples or 1))
+    input_samples = []
+    output_samples = []
 
-        # Forward simulate from predicted input to obtain comparable output
-        u_input = torch.cat([X.unsqueeze(0), u_pred], dim=-1)
-        forward_result = model(u_input)
-        if isinstance(forward_result, (tuple, list)):
-            s_pred = forward_result[0]
-        else:
-            s_pred = forward_result
-        s_pred = _trim_function_channels(s_pred, s_true.unsqueeze(0))
+    for _ in range(num_runs):
+        with torch.no_grad():
+            # Reconstruct input function from observed output (inverse pass)
+            s_input = torch.cat([Y.unsqueeze(0), s_true.unsqueeze(0)], dim=-1)
+            inverse_result = model.inverse(s_input)
+            if isinstance(inverse_result, (tuple, list)):
+                u_pred = inverse_result[0]
+            else:
+                u_pred = inverse_result
+            u_pred = _trim_function_channels(u_pred, u_true.unsqueeze(0))
 
-    u_np = u_pred.squeeze(0).detach().cpu().numpy().flatten()
-    s_np = s_pred.squeeze(0).detach().cpu().numpy().flatten()
+            # Forward simulate from predicted input to obtain comparable output
+            u_input = torch.cat([X.unsqueeze(0), u_pred], dim=-1)
+            forward_result = model(u_input)
+            if isinstance(forward_result, (tuple, list)):
+                s_pred = forward_result[0]
+            else:
+                s_pred = forward_result
+            s_pred = _trim_function_channels(s_pred, s_true.unsqueeze(0))
+
+        input_samples.append(u_pred.squeeze(0).detach().cpu().numpy().flatten())
+        output_samples.append(s_pred.squeeze(0).detach().cpu().numpy().flatten())
 
     return {
-        "inputs": np.expand_dims(u_np, axis=0),
-        "outputs": np.expand_dims(s_np, axis=0),
+        "inputs": np.stack(input_samples, axis=0),
+        "outputs": np.stack(output_samples, axis=0),
     }
-

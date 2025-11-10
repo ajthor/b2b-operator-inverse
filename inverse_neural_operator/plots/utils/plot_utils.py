@@ -2,6 +2,7 @@
 Shared plotting utilities for publication-quality figures.
 """
 
+import hashlib
 import os
 
 import matplotlib as mpl
@@ -24,6 +25,25 @@ DISPLAY_NAMES = {
     "conditional_realnvp": "RealNVP",
     "mixture_density_network": "MDN",
     "ifno": "iFNO",
+}
+
+MODEL_COLOR_SEQUENCE = tuple(mpl.cm.get_cmap("tab10").colors)
+MODEL_COLOR_ORDER = (
+    "linear",
+    "linear_inverse",
+    "nonlinear",
+    "inn_affine",
+    "inn_additive",
+    "cinn_affine",
+    "cinn_additive",
+    "variational_autoencoder",
+    "conditional_realnvp",
+    "mixture_density_network",
+    "ifno",
+)
+MODEL_COLORS = {
+    name: MODEL_COLOR_SEQUENCE[idx % len(MODEL_COLOR_SEQUENCE)]
+    for idx, name in enumerate(MODEL_COLOR_ORDER)
 }
 
 
@@ -60,6 +80,17 @@ def setup_publication_style(figsize=(6.5, 1.5)):
 def display_name(model_name: str) -> str:
     """Convert internal model name to display name."""
     return DISPLAY_NAMES.get(model_name, model_name.replace("_", " ").title())
+
+
+def get_model_color(model_name: str, idx=None):
+    """Return a consistent color for the given model name."""
+    if model_name in MODEL_COLORS:
+        return MODEL_COLORS[model_name]
+    if idx is not None:
+        return MODEL_COLOR_SEQUENCE[idx % len(MODEL_COLOR_SEQUENCE)]
+
+    digest = hashlib.sha1(model_name.encode("utf-8")).digest()
+    return MODEL_COLOR_SEQUENCE[digest[0] % len(MODEL_COLOR_SEQUENCE)]
 
 
 def find_params(log_dir: str, model_names, seed: int = 1):

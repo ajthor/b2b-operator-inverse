@@ -18,7 +18,6 @@ import os
 import random
 import sys
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -35,6 +34,7 @@ from plots.utils.model_utils import (
 from plots.utils.plot_utils import (
     setup_publication_style,
     display_name,
+    get_model_color,
     find_params,
     load_forward_model,
 )
@@ -66,7 +66,6 @@ MAX_FORCE_MODELS = 5  # Number of model force curves (5 models including IFNO, p
 MAX_DISPLACEMENT_MODELS = 5  # Number of model displacement fields (5 models including IFNO, plus GT)
 N_SAMPLES = 8
 
-MODEL_CMAP = mpl.cm.get_cmap("tab10")
 GROUND_TRUTH_COLOR = "#CCCCCC"  # Gray - for ground truth lines
 
 
@@ -491,8 +490,14 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     for idx, model_name in enumerate(models_to_plot[:MAX_FORCE_MODELS]):
         if model_name in processed_preds:
             u_data, s_mean = processed_preds[model_name]
-            _plot_force_curve(axes_left[idx], force_y, u_true, u_data,
-                            annotation=display_name(model_name), color=MODEL_CMAP(idx % MODEL_CMAP.N))
+            _plot_force_curve(
+                axes_left[idx],
+                force_y,
+                u_true,
+                u_data,
+                annotation=display_name(model_name),
+                color=get_model_color(model_name, idx),
+            )
         else:
             axes_left[idx].axis("off")
 
