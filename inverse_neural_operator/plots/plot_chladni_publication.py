@@ -368,7 +368,7 @@ def main():
                 ifno_model,
                 test_dataset[sample_idx],
                 device=device,
-                n_samples=N_SAMPLES,
+                n_samples=1,
             )
             final_model_order.append("ifno")
         except Exception as exc:

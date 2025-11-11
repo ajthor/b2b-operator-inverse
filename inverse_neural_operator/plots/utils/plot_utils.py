@@ -27,19 +27,33 @@ DISPLAY_NAMES = {
     "ifno": "iFNO",
 }
 
-MODEL_COLOR_SEQUENCE = tuple(mpl.cm.get_cmap("tab10").colors)
+# Colorblind-friendly, high-contrast palette (Okabe-Ito + Tol extensions)
+MODEL_COLOR_SEQUENCE = (
+    "#0072B2",  # deep blue
+    "#E69F00",  # orange
+    "#009E73",  # green
+    "#D55E00",  # vermillion
+    "#CC79A7",  # magenta
+    "#56B4E9",  # sky blue
+    "#F0E442",  # yellow
+    "#332288",  # navy
+    "#44AA99",  # teal
+    "#AA4499",  # mauve
+    "#117733",  # dark green
+    "#999999",  # gray
+)
 MODEL_COLOR_ORDER = (
     "linear",
-    "linear_inverse",
+    "variational_autoencoder",
     "nonlinear",
+    "conditional_realnvp",
     "inn_affine",
     "inn_additive",
     "cinn_affine",
-    "cinn_additive",
-    "variational_autoencoder",
-    "conditional_realnvp",
     "mixture_density_network",
     "ifno",
+    "cinn_additive",
+    "linear_inverse",
 )
 MODEL_COLORS = {
     name: MODEL_COLOR_SEQUENCE[idx % len(MODEL_COLOR_SEQUENCE)]

@@ -103,6 +103,46 @@ def collect_ifno_predictions(
     Y = Y.to(device)
     s_true = s_true.to(device)
 
+    input_spatial_dims = getattr(model, "input_spatial_dims", None)
+    output_spatial_dims = getattr(model, "output_spatial_dims", None)
+
+    def _reshape_to_spatial(tensor: torch.Tensor, spatial_dims):
+        """Ensure tensor matches IFNO's expected spatial shape."""
+        if spatial_dims is None:
+            return tensor
+
+        if tensor.dim() == 0:
+            return tensor
+        if tensor.dim() == 1:
+            tensor = tensor.unsqueeze(-1)
+        spatial_rank = len(spatial_dims)
+        spatial_size = int(np.prod(spatial_dims))
+
+        if tensor.dim() == spatial_rank and tensor.shape == tuple(spatial_dims):
+            tensor = tensor.unsqueeze(-1)
+
+        if (
+            tensor.dim() == spatial_rank + 1
+            and tuple(tensor.shape[:spatial_rank]) == tuple(spatial_dims)
+        ):
+            return tensor
+
+        feature_dim = tensor.shape[-1]
+
+        flattened = tensor
+        if tensor.dim() != 2:
+            flattened = tensor.reshape(-1, feature_dim)
+
+        if flattened.shape[0] == spatial_size:
+            return flattened.reshape(*spatial_dims, feature_dim)
+
+        return tensor
+
+    X_spatial = _reshape_to_spatial(X, input_spatial_dims)
+    u_true_spatial = _reshape_to_spatial(u_true, input_spatial_dims)
+    Y_spatial = _reshape_to_spatial(Y, output_spatial_dims)
+    s_true_spatial = _reshape_to_spatial(s_true, output_spatial_dims)
+
     num_runs = max(1, int(n_samples or 1))
     input_samples = []
     output_samples = []
@@ -110,22 +150,24 @@ def collect_ifno_predictions(
     for _ in range(num_runs):
         with torch.no_grad():
             # Reconstruct input function from observed output (inverse pass)
-            s_input = torch.cat([Y.unsqueeze(0), s_true.unsqueeze(0)], dim=-1)
+            s_input = torch.cat(
+                [Y_spatial.unsqueeze(0), s_true_spatial.unsqueeze(0)], dim=-1
+            )
             inverse_result = model.inverse(s_input)
             if isinstance(inverse_result, (tuple, list)):
                 u_pred = inverse_result[0]
             else:
                 u_pred = inverse_result
-            u_pred = _trim_function_channels(u_pred, u_true.unsqueeze(0))
+            u_pred = _trim_function_channels(u_pred, u_true_spatial.unsqueeze(0))
 
             # Forward simulate from predicted input to obtain comparable output
-            u_input = torch.cat([X.unsqueeze(0), u_pred], dim=-1)
+            u_input = torch.cat([X_spatial.unsqueeze(0), u_pred], dim=-1)
             forward_result = model(u_input)
             if isinstance(forward_result, (tuple, list)):
                 s_pred = forward_result[0]
             else:
                 s_pred = forward_result
-            s_pred = _trim_function_channels(s_pred, s_true.unsqueeze(0))
+            s_pred = _trim_function_channels(s_pred, s_true_spatial.unsqueeze(0))
 
         input_samples.append(u_pred.squeeze(0).detach().cpu().numpy().flatten())
         output_samples.append(s_pred.squeeze(0).detach().cpu().numpy().flatten())
