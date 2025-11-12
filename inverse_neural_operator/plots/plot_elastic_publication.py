@@ -51,6 +51,7 @@ INVERSE_MODELS = (
     "variational_autoencoder",
     "conditional_realnvp",
     "mixture_density_network",
+    "cinn_additive",
 )
 
 SAMPLING_MODELS = {
@@ -58,7 +59,6 @@ SAMPLING_MODELS = {
     "mixture_density_network",
     "inn_affine",
     "cinn_affine",
-    "cinn_additive",
 }
 
 MAX_MODELS = 6  # Total number of models evaluated (including IFNO)
@@ -254,7 +254,7 @@ def sample_alpha(model_name, model, beta, device, dtype, num_samples):
         z = torch.randn(num_samples, z_size, device=device, dtype=dtype)
         return model.inverse(beta=beta_rep, z=z)
 
-    if model_name in {"cinn_affine", "cinn_additive"}:
+    if model_name == "cinn_affine":
         alpha_dim = model.coupling_layers[0].input_size
         z = torch.randn(num_samples, alpha_dim, device=device, dtype=dtype)
         return model.inverse(z, beta_rep)

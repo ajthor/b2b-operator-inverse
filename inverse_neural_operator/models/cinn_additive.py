@@ -14,6 +14,7 @@ class ConditionalAdditiveCoupling(torch.nn.Module):
         hidden_sizes=[128, 128],
         split_dim=None,
         activation=torch.nn.ReLU(),
+        swap=False,
     ):
         super(ConditionalAdditiveCoupling, self).__init__()
 
@@ -23,6 +24,7 @@ class ConditionalAdditiveCoupling(torch.nn.Module):
             self.split_dim = input_size // 2
         else:
             self.split_dim = split_dim
+        self.swap = swap
 
         # Neural network to transform the second part conditioned on [x1, y]
         # We keep x1 unchanged and transform x2 using f(x1, y):
@@ -50,10 +52,14 @@ class ConditionalAdditiveCoupling(torch.nn.Module):
         Implements the conditional additive coupling layer: y1 = x1, y2 = x2 + f(x1, condition)
         """
         x1, x2 = torch.split(x, [self.split_dim, x.size(-1) - self.split_dim], dim=-1)
+        if self.swap:
+            x1, x2 = x2, x1
         y1 = x1
         # Concatenate x1 and condition for the neural network input
         net_input = torch.cat([x1, condition], dim=-1)
         y2 = x2 + self.net(net_input)
+        if self.swap:
+            y1, y2 = y2, y1
         return torch.cat([y1, y2], dim=-1)
 
     def inverse(self, y, condition):
@@ -62,10 +68,14 @@ class ConditionalAdditiveCoupling(torch.nn.Module):
         Implements the inverse of conditional additive coupling: x1 = y1, x2 = y2 - f(y1, condition)
         """
         y1, y2 = torch.split(y, [self.split_dim, y.size(-1) - self.split_dim], dim=-1)
+        if self.swap:
+            y1, y2 = y2, y1
         x1 = y1
         # Concatenate y1 and condition for the neural network input
         net_input = torch.cat([y1, condition], dim=-1)
         x2 = y2 - self.net(net_input)
+        if self.swap:
+            x1, x2 = x2, x1
         return torch.cat([x1, x2], dim=-1)
 
 
@@ -151,6 +161,7 @@ def create_model(
             condition_size=condition_size,
             hidden_sizes=hidden_sizes,
             split_dim=split_dim,
+            swap=(i % 2 == 1),
         )
         coupling_layers.append(layer)
 
