@@ -326,3 +326,54 @@ def collect_predictions(
         }
 
     return predictions, meta
+
+
+def evaluate_models_on_subset(
+    dataset,
+    models_dict: Dict[str, Tuple[torch.nn.Module, callable]],
+    input_function_encoder,
+    output_function_encoder,
+    max_samples: int | None = None,
+    device: str = "cpu",
+):
+    """Compute simple MSE scores for a subset of samples to compare inverse models."""
+    per_model_mses = {name: [] for name in models_dict.keys()}
+    per_sample_metrics = []
+
+    if max_samples is None or max_samples <= 0:
+        max_samples = len(dataset)
+
+    n_samples = min(len(dataset), max_samples)
+
+    for idx in range(n_samples):
+        X, u_true, Y, s_observed = dataset[idx]
+        batch = (
+            X.unsqueeze(0).to(device),
+            u_true.unsqueeze(0).to(device),
+            Y.unsqueeze(0).to(device),
+            s_observed.unsqueeze(0).to(device),
+        )
+
+        sample_metrics = {}
+        for model_name, (model, evaluate_fn) in models_dict.items():
+            model.eval()
+            with torch.no_grad():
+                eval_out = evaluate_fn(
+                    model,
+                    batch,
+                    input_function_encoder,
+                    output_function_encoder,
+                )
+
+                if isinstance(eval_out, (tuple, list)):
+                    u_pred = eval_out[0]
+                else:
+                    u_pred = eval_out
+
+                mse = torch.mean((u_pred - batch[1]) ** 2).item()
+                per_model_mses[model_name].append(mse)
+                sample_metrics[model_name] = mse
+
+        per_sample_metrics.append((idx, sample_metrics))
+
+    return per_model_mses, per_sample_metrics

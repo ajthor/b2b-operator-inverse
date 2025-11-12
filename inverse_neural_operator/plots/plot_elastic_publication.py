@@ -155,7 +155,7 @@ def _create_unified_figure():
     )
     ax_right_parent.set_xlabel(r"$x$", labelpad=-8)
     ax_right_parent.set_ylabel(r"$y$", labelpad=-8)
-    ax_right_parent.set_title("Re-simulated Displacement Fields")
+    ax_right_parent.set_title("Elastic Plate Re-simulated Displacement Fields")
 
     # Create subplot axes for left grid (force plots)
     axes_left = []
@@ -545,6 +545,15 @@ def main():
     parser.add_argument("--results_dir", type=str, default="results/elastic_plate")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--sample_index", type=int, default=None)
+    parser.add_argument(
+        "--num_random_plots",
+        type=int,
+        default=5,
+        help=(
+            "Number of random samples to plot when --sample_index is not provided "
+            "(default: 5; each sample yields both PDF and PNG outputs)."
+        ),
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -592,6 +601,7 @@ def main():
         models_dict,
         input_enc,
         output_enc,
+        forward_model,
         max_models=MAX_MODELS,  # Get top MAX_MODELS models
         sample_index=args.sample_index,
         device=DEVICE,
@@ -660,22 +670,41 @@ def main():
         for name, error in models_with_errors[:MAX_MODELS]:
             print(f"  {display_name(name)}: {error:.6e}")
 
-    print("Collecting predictions...")
-    predictions, meta = collect_elastic_predictions(
-        test_dataset[sample_idx],
-        models_to_plot,
-        models_dict,
-        input_enc,
-        output_enc,
-        forward_model,
-        ifno_model=ifno_model,
-        n_samples_per_model=N_SAMPLES,
-        device=DEVICE,
-    )
+    num_plots = max(1, args.num_random_plots)
+    if args.sample_index is not None:
+        sample_indices = [args.sample_index]
+    elif num_plots > 1:
+        total_samples = len(test_dataset)
+        if num_plots > total_samples:
+            print(
+                f"  Warning: Requested {num_plots} plots but only {total_samples} samples available. "
+                f"Using {total_samples} unique samples instead."
+            )
+        k = min(num_plots, total_samples)
+        sample_indices = random.sample(range(total_samples), k=k)
+        sample_indices.sort()
+        print(f"Randomly selected sample indices: {sample_indices}")
+    else:
+        sample_indices = [sample_idx]
 
-    print("Rendering figure...")
-    plot_comparison(sample_idx, models_to_plot, predictions, meta, args.results_dir)
-    print(f"SUCCESS: Created publication figure → {args.results_dir}")
+    for idx in sample_indices:
+        print(f"\nCollecting predictions for sample {idx}...")
+        predictions, meta = collect_elastic_predictions(
+            test_dataset[idx],
+            models_to_plot,
+            models_dict,
+            input_enc,
+            output_enc,
+            forward_model,
+            ifno_model=ifno_model,
+            n_samples_per_model=N_SAMPLES,
+            device=DEVICE,
+        )
+
+        print("Rendering figure...")
+        plot_comparison(idx, models_to_plot, predictions, meta, args.results_dir)
+
+    print(f"SUCCESS: Created publication figure(s) → {args.results_dir}")
 
 
 if __name__ == "__main__":
