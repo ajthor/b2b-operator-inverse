@@ -1,23 +1,23 @@
 """
 Multi-sample publication-quality plotting script for the FWI inverse problem.
 
-Creates a single figure that stacks three instances of the standard FWI
-publication layout vertically, each showcasing a different test sample.
+Creates a single figure with a unified gridspec showing multiple test samples.
+Each row displays all model predictions for one sample, with horizontal colorbars at the bottom.
 """
 
 import argparse
 import json
 import os
 import random
-from typing import Iterable, List, Tuple
+from typing import Iterable, Tuple
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from skimage.metrics import structural_similarity as compute_ssim
 
 from data.load_dataset import load_dataset
-from plots.plot_fwi_publication import compute_sample_ssim_scores
 from plots.utils.model_utils import load_all_models
 from plots.utils.plot_utils import (
     setup_publication_style,
@@ -35,8 +35,13 @@ MODELS_TO_PLOT = [
     "conditional_realnvp",
 ]
 
+# Temporary static samples used while SSIM-based selection is disabled.
+STATIC_SAMPLE_INDICES = [9012, 42, 2, 666, 890]
 
-def denormalize_velocity(u_normalized: torch.Tensor, residual_min: float, residual_max: float) -> np.ndarray:
+
+def denormalize_velocity(
+    u_normalized: torch.Tensor, residual_min: float, residual_max: float
+) -> np.ndarray:
     """Map normalized velocity residuals back to physical units (m/s)."""
     u_np = u_normalized.squeeze(-1).cpu().numpy()
     u_velocity = ((u_np + 1) / 2) * (residual_max - residual_min) + residual_min
@@ -49,10 +54,8 @@ def reshape_seismic(s: torch.Tensor, output_shape: Tuple[int, int]) -> np.ndarra
     return s_np.reshape(*output_shape)
 
 
-def render_sample_panel(
-    subfig: mpl.figure.SubFigure,
+def compute_predictions_for_sample(
     sample_idx: int,
-    sample_label: str,
     models_to_plot: Iterable[str],
     models_dict,
     test_dataset,
@@ -62,35 +65,7 @@ def render_sample_panel(
     stats,
     output_shape: Tuple[int, int],
 ):
-    """Render a single FWI sample using the publication layout into the provided subfigure."""
-    subfig.set_constrained_layout(True)
-    subfig.set_constrained_layout_pads(w_pad=0.5 / 72.0, h_pad=0.5 / 72.0, hspace=0.0, wspace=0.0)
-
-    gs = subfig.add_gridspec(
-        2,
-        6,
-        width_ratios=[1.2, 1.2, 0.05, 0.8, 0.8, 0.05],
-        hspace=0.0,
-        wspace=0.0,
-        left=0,
-        right=1,
-        top=1,
-        bottom=0,
-    )
-
-    # Parent axes for shared labels
-    ax_left_parent = subfig.add_subplot(gs[:, 0:2], frameon=False)
-    ax_left_parent.tick_params(labelcolor="none", top=False, bottom=False, left=False, right=False)
-    ax_left_parent.set_xlabel("x", labelpad=-8)
-    ax_left_parent.set_ylabel("y", labelpad=-8)
-    ax_left_parent.set_title("Velocity Model Reconstructions")
-
-    ax_right_parent = subfig.add_subplot(gs[:, 3:5], frameon=False)
-    ax_right_parent.tick_params(labelcolor="none", top=False, bottom=False, left=False, right=False)
-    ax_right_parent.set_xlabel("Frequency", labelpad=-8)
-    ax_right_parent.set_ylabel("Time", labelpad=-8)
-    ax_right_parent.set_title("Seismic Transform Predictions")
-
+    """Compute predictions for a single sample and return denormalized results with SSIM scores."""
     # Retrieve sample tensors
     X, u_true, Y, s_observed = test_dataset[sample_idx]
     X = X.to(device)
@@ -109,6 +84,8 @@ def render_sample_panel(
 
     predictions_velocity = []
     predictions_seismic = []
+    ssim_scores_velocity = []
+    ssim_scores_seismic = []
 
     point = (
         X.unsqueeze(0),
@@ -132,102 +109,53 @@ def render_sample_panel(
             u_pred_2d = denormalize_velocity(u_pred, residual_min, residual_max)
             predictions_velocity.append((model_name, u_pred_2d))
 
+            # Compute SSIM for velocity models
+            vel_data_range = max(u_true_2d.max(), u_pred_2d.max()) - min(
+                u_true_2d.min(), u_pred_2d.min()
+            )
+            if vel_data_range == 0:
+                vel_data_range = 1.0
+            vel_ssim = compute_ssim(
+                u_true_2d,
+                u_pred_2d,
+                data_range=vel_data_range,
+                channel_axis=None,
+            )
+            ssim_scores_velocity.append((model_name, vel_ssim))
+
             if forward_model is not None:
                 forward_model.eval()
-                alpha, _ = input_enc.compute_coefficients(X.unsqueeze(0), u_pred.unsqueeze(0))
+                alpha, _ = input_enc.compute_coefficients(
+                    X.unsqueeze(0), u_pred.unsqueeze(0)
+                )
                 beta_pred = forward_model.forward(alpha)
                 s_resim = output_enc(Y.unsqueeze(0), beta_pred)
                 s_resim_2d = reshape_seismic(s_resim.squeeze(0), output_shape)
                 predictions_seismic.append((model_name, s_resim_2d))
 
+                # Compute SSIM for seismic transforms
+                seis_data_range = max(s_observed_2d.max(), s_resim_2d.max()) - min(
+                    s_observed_2d.min(), s_resim_2d.min()
+                )
+                if seis_data_range == 0:
+                    seis_data_range = 1.0
+                seis_ssim = compute_ssim(
+                    s_observed_2d,
+                    s_resim_2d,
+                    data_range=seis_data_range,
+                    channel_axis=None,
+                )
+                ssim_scores_seismic.append((model_name, seis_ssim))
+
     predictions_velocity.append(("Ground Truth", u_true_2d))
     predictions_seismic.append(("Ground Truth", s_observed_2d))
 
-    # Fixed velocity scale and shared seismic limits
-    vel_min = 100.0
-    vel_max = 900.0
-
-    seismic_min = s_observed_2d.min()
-    seismic_max = s_observed_2d.max()
-    for _, s_resim_2d in predictions_seismic:
-        seismic_min = min(seismic_min, s_resim_2d.min())
-        seismic_max = max(seismic_max, s_resim_2d.max())
-
-    # Velocity panels
-    norm_velocity = mpl.colors.Normalize(vmin=vel_min, vmax=vel_max)
-
-    for idx, (model_name, u_2d) in enumerate(predictions_velocity):
-        i = idx // 2
-        j = idx % 2
-        ax = subfig.add_subplot(gs[i, j])
-        im = ax.imshow(
-            u_2d,
-            cmap="magma_r",
-            vmin=vel_min,
-            vmax=vel_max,
-            origin="upper",
-            aspect="equal",
-        )
-        ax.set_xticks([])
-        ax.set_yticks([])
-
-        ax.text(
-            0.05,
-            0.95,
-            display_name(model_name),
-            transform=ax.transAxes,
-            fontsize=6,
-            color="white",
-            verticalalignment="top",
-            horizontalalignment="left",
-            bbox=dict(
-                boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
-            ),
-        )
-
-    cax_left = subfig.add_subplot(gs[:, 2])
-    scalar_mappable = mpl.cm.ScalarMappable(norm=norm_velocity, cmap="magma_r")
-    scalar_mappable.set_array([])
-    cbar_left = subfig.colorbar(scalar_mappable, cax=cax_left, use_gridspec=True)
-    cbar_left.set_label("Velocity (m/s)")
-    cbar_left.ax.invert_yaxis()
-
-    # Seismic panels
-    for idx, (model_name, s_2d) in enumerate(predictions_seismic):
-        i = idx // 2
-        j = idx % 2
-        ax = subfig.add_subplot(gs[i, j + 3])
-        im = ax.imshow(
-            s_2d,
-            cmap="turbo",
-            aspect="auto",
-            origin="lower",
-            vmin=seismic_min,
-            vmax=seismic_max,
-        )
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_aspect("auto")
-
-        ax.text(
-            0.05,
-            0.95,
-            display_name(model_name),
-            transform=ax.transAxes,
-            fontsize=6,
-            color="white",
-            verticalalignment="top",
-            horizontalalignment="left",
-            bbox=dict(
-                boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
-            ),
-        )
-
-    cax_right = subfig.add_subplot(gs[:, 5])
-    cbar_right = subfig.colorbar(im, cax=cax_right, use_gridspec=True)
-    cbar_right.set_label("Amplitude")
-
-    subfig.suptitle(sample_label, fontsize=7, y=1.02)
+    return (
+        predictions_velocity,
+        predictions_seismic,
+        ssim_scores_velocity,
+        ssim_scores_seismic,
+    )
 
 
 def main():
@@ -250,7 +178,7 @@ def main():
     parser.add_argument(
         "--num_samples",
         type=int,
-        default=3,
+        default=5,
         help="Number of samples to plot when sample_indices not provided.",
     )
     args = parser.parse_args()
@@ -292,16 +220,7 @@ def main():
     )
 
     output_shape = dataset_info.get("output_spatial_dims", (400, 76))
-    sample_scores = compute_sample_ssim_scores(
-        test_dataset,
-        models_dict,
-        input_enc,
-        output_enc,
-        forward_model,
-        output_shape,
-        device=device,
-    )
-    score_dict = {idx: score for idx, score in sample_scores}
+    score_dict = {}
 
     if args.sample_indices:
         sample_indices = args.sample_indices
@@ -311,54 +230,219 @@ def main():
                 f"Using provided indices and ignoring num_samples."
             )
     else:
-        if not sample_scores:
-            raise ValueError("Unable to compute SSIM-based sample selection.")
-        sorted_scores = sorted(sample_scores, key=lambda x: x[1], reverse=True)
-        num = min(args.num_samples, len(sorted_scores))
-        if num == 1:
-            sample_indices = [sorted_scores[0][0]]
-        elif num == 2:
-            sample_indices = [sorted_scores[0][0], sorted_scores[-1][0]]
-        else:
-            best = sorted_scores[0][0]
-            worst = sorted_scores[-1][0]
-            median = sorted_scores[len(sorted_scores) // 2][0]
-            sample_indices = [best, median, worst][:num]
+        sample_indices = STATIC_SAMPLE_INDICES[: args.num_samples]
+        if len(sample_indices) < args.num_samples:
+            raise ValueError(
+                f"Requested num_samples={args.num_samples}, "
+                f"but only {len(STATIC_SAMPLE_INDICES)} static indices are configured."
+            )
+
+    # Ensure indices are within dataset bounds to avoid indexing errors.
+    invalid_indices = [idx for idx in sample_indices if idx >= len(test_dataset)]
+    if invalid_indices:
+        raise ValueError(
+            f"Static sample indices {invalid_indices} exceed dataset size ({len(test_dataset)}). "
+            "Update STATIC_SAMPLE_INDICES to valid values."
+        )
 
     print(f"✓ Selected samples: {sample_indices}")
 
-    # Prepare labels for each sample
-    sample_labels = []
-    for idx in sample_indices:
-        ssim_val = score_dict.get(idx, None)
-        if ssim_val is not None:
-            label = f"Sample {idx} • median SSIM={ssim_val:.4f}"
-        else:
-            label = f"Sample {idx}"
-        sample_labels.append(label)
+    # Compute all predictions
+    all_predictions = []
+    global_seismic_min = float("inf")
+    global_seismic_max = float("-inf")
 
-    # Create figure with stacked subfigures
-    n_samples = len(sample_indices)
-    height_per_sample = 1.9
-    fig_height = height_per_sample * n_samples + 0.3 * (n_samples - 1)
-    fig = plt.figure(figsize=(6.5, fig_height), layout="constrained")
-    outer_gs = fig.add_gridspec(n_samples, 1, hspace=0.4)
-
-    for row, (sample_idx, label) in enumerate(zip(sample_indices, sample_labels)):
-        subfig = fig.add_subfigure(outer_gs[row, 0])
-        render_sample_panel(
-            subfig=subfig,
-            sample_idx=sample_idx,
-            sample_label=label,
-            models_to_plot=MODELS_TO_PLOT,
-            models_dict=models_dict,
-            test_dataset=test_dataset,
-            input_enc=input_enc,
-            output_enc=output_enc,
-            forward_model=forward_model,
-            stats=stats,
-            output_shape=output_shape,
+    for sample_idx in sample_indices:
+        pred_vel, pred_seis, ssim_vel, ssim_seis = compute_predictions_for_sample(
+            sample_idx,
+            MODELS_TO_PLOT,
+            models_dict,
+            test_dataset,
+            input_enc,
+            output_enc,
+            forward_model,
+            stats,
+            output_shape,
         )
+        all_predictions.append((pred_vel, pred_seis, ssim_vel, ssim_seis))
+
+        # Track global seismic limits
+        for _, s_2d in pred_seis:
+            global_seismic_min = min(global_seismic_min, s_2d.min())
+            global_seismic_max = max(global_seismic_max, s_2d.max())
+
+    # Fixed velocity scale
+    vel_min = 100.0
+    vel_max = 900.0
+
+    # Create figure with unified gridspec
+    n_samples = len(sample_indices)
+    fig_height = 3.6
+
+    fig = plt.figure(figsize=(6.5, fig_height), layout="constrained")
+    fig.set_constrained_layout_pads(
+        w_pad=0.5 / 72.0, h_pad=0.5 / 72.0, hspace=0.0, wspace=0.0
+    )
+
+    # Gridspec: n_samples rows + 1 colorbar row, 8 columns (4 velocity + 4 seismic)
+    gs = fig.add_gridspec(
+        n_samples + 1,
+        8,
+        width_ratios=[1.2, 1.2, 1.2, 1.2, 0.8, 0.8, 0.8, 0.8],
+        height_ratios=[1.0] * n_samples + [0.1],
+        hspace=0.04,
+        wspace=0.02,
+        left=0.02,
+        right=0.98,
+        top=0.96,
+        bottom=0.02,
+    )
+
+    # Create parent axes for shared labels (velocity models)
+    ax_vel_parent = fig.add_subplot(gs[:-1, 0:4], frameon=False)
+    ax_vel_parent.tick_params(
+        labelcolor="none", top=False, bottom=False, left=False, right=False
+    )
+    ax_vel_parent.set_xlabel("Width (m)", labelpad=-8)
+    ax_vel_parent.set_ylabel("Depth (m)", labelpad=-8)
+    ax_vel_parent.set_title("FWI Velocity Model Reconstructions", pad=12)
+
+    # Create parent axes for shared labels (seismic transforms)
+    ax_seis_parent = fig.add_subplot(gs[:-1, 4:8], frameon=False)
+    ax_seis_parent.tick_params(
+        labelcolor="none", top=False, bottom=False, left=False, right=False
+    )
+    ax_seis_parent.set_xlabel("Frequency", labelpad=-8)
+    ax_seis_parent.set_ylabel("Time", labelpad=-8)
+    ax_seis_parent.set_title("FWI Seismic Transform Re-simulations", pad=12)
+
+    # Plot all samples
+    for row_idx, (pred_vel, pred_seis, ssim_vel, ssim_seis) in enumerate(
+        all_predictions
+    ):
+        # Create SSIM lookup dicts for this sample
+        ssim_vel_dict = {name: score for name, score in ssim_vel}
+        ssim_seis_dict = {name: score for name, score in ssim_seis}
+
+        # Plot velocity models
+        for col_idx, (model_name, u_2d) in enumerate(pred_vel):
+            ax = fig.add_subplot(gs[row_idx, col_idx])
+            ax.imshow(
+                u_2d,
+                cmap="magma_r",
+                vmin=vel_min,
+                vmax=vel_max,
+                origin="upper",
+                aspect="equal",
+            )
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            # Add model label only on first row
+            if row_idx == 0:
+                ax.text(
+                    0.5,
+                    1.05,
+                    display_name(model_name),
+                    transform=ax.transAxes,
+                    fontsize=6,
+                    ha="center",
+                    va="bottom",
+                )
+
+            # Add SSIM annotation (skip ground truth)
+            # if model_name != "Ground Truth":
+            #     ssim_val = ssim_vel_dict.get(model_name, None)
+            #     if ssim_val is not None:
+            #         ax.text(
+            #             0.95,
+            #             0.95,
+            #             f"SSIM: {ssim_val:.3f}",
+            #             transform=ax.transAxes,
+            #             fontsize=5,
+            #             color="white",
+            #             verticalalignment="top",
+            #             horizontalalignment="right",
+            #             bbox=dict(
+            #                 boxstyle="round,pad=0.3",
+            #                 facecolor="black",
+            #                 alpha=0.7,
+            #                 edgecolor="none",
+            #             ),
+            #         )
+
+        # Plot seismic transforms
+        for col_idx, (model_name, s_2d) in enumerate(pred_seis):
+            ax = fig.add_subplot(gs[row_idx, col_idx + 4])
+            ax.imshow(
+                s_2d,
+                cmap="turbo",
+                aspect="auto",
+                origin="lower",
+                vmin=global_seismic_min,
+                vmax=global_seismic_max,
+            )
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_aspect("auto")
+
+            # Add model label only on first row
+            if row_idx == 0:
+                ax.text(
+                    0.5,
+                    1.05,
+                    display_name(model_name),
+                    transform=ax.transAxes,
+                    fontsize=6,
+                    ha="center",
+                    va="bottom",
+                )
+
+            # Add SSIM annotation (skip ground truth)
+            # if model_name != "Ground Truth":
+            #     ssim_val = ssim_seis_dict.get(model_name, None)
+            #     if ssim_val is not None:
+            #         ax.text(
+            #             0.95,
+            #             0.95,
+            #             f"SSIM: {ssim_val:.3f}",
+            #             transform=ax.transAxes,
+            #             fontsize=5,
+            #             color="white",
+            #             verticalalignment="top",
+            #             horizontalalignment="right",
+            #             bbox=dict(
+            #                 boxstyle="round,pad=0.3",
+            #                 facecolor="black",
+            #                 alpha=0.7,
+            #                 edgecolor="none",
+            #             ),
+            #         )
+
+    # Add horizontal colorbars at the bottom
+    # Velocity colorbar
+    cax_vel = fig.add_subplot(gs[-1, 0:4])
+    norm_velocity = mpl.colors.Normalize(vmin=vel_min, vmax=vel_max)
+    scalar_mappable_vel = mpl.cm.ScalarMappable(norm=norm_velocity, cmap="magma_r")
+    scalar_mappable_vel.set_array([])
+    cbar_vel = fig.colorbar(
+        scalar_mappable_vel, cax=cax_vel, orientation="horizontal", use_gridspec=True
+    )
+    cbar_vel.set_label("Velocity (m/s)")
+    # cbar_vel.ax.invert_xaxis()
+
+    # Seismic colorbar
+    cax_seis = fig.add_subplot(gs[-1, 4:8])
+    norm_seismic = mpl.colors.Normalize(
+        vmin=global_seismic_min, vmax=global_seismic_max
+    )
+    scalar_mappable_seis = mpl.cm.ScalarMappable(norm=norm_seismic, cmap="turbo")
+    scalar_mappable_seis.set_array([])
+    cbar_seis = fig.colorbar(
+        scalar_mappable_seis, cax=cax_seis, orientation="horizontal", use_gridspec=True
+    )
+    cbar_seis.set_label("Amplitude")
+    cbar_seis.ax.invert_xaxis()
 
     # Save outputs
     if args.results_dir:

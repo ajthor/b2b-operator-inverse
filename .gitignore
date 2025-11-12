@@ -265,3 +265,4 @@ results/
 *.arrow
 
 evaluation/
+logs_ifno/
