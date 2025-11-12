@@ -79,28 +79,67 @@ class ConditionalAdditiveCoupling(torch.nn.Module):
         return torch.cat([x1, x2], dim=-1)
 
 
+class ActNorm1d(torch.nn.Module):
+    def __init__(self, num_features: int, eps: float = 1e-6):
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.log_scale = torch.nn.Parameter(torch.zeros(num_features))
+        self.bias = torch.nn.Parameter(torch.zeros(num_features))
+
+    def forward(self, x: torch.Tensor):
+        """
+        Per-dimension affine transform with learnable scale and bias.
+        Returns: (y, log_det) where log_det is per-sample scalar.
+        """
+        y = x * torch.exp(self.log_scale) + self.bias
+        log_det = torch.sum(self.log_scale).expand(x.shape[0])
+        return y, log_det
+
+    def inverse(self, y: torch.Tensor):
+        x = (y - self.bias) * torch.exp(-self.log_scale)
+        return x
+
+
 class ConditionalInvertibleNeuralNetworkProbabilistic(torch.nn.Module):
-    def __init__(self, coupling_layers):
+    def __init__(self, layers):
         super(ConditionalInvertibleNeuralNetworkProbabilistic, self).__init__()
-        self.coupling_layers = torch.nn.ModuleList(coupling_layers)
+        # Interleaved sequence of coupling and normalization layers
+        self.layers = torch.nn.ModuleList(layers)
+        # Convenience list for code that inspects coupling layers (e.g., to read input_size)
+        self.coupling_layers = torch.nn.ModuleList(
+            [m for m in self.layers if isinstance(m, ConditionalAdditiveCoupling)]
+        )
 
     def forward(self, alpha, beta):
         """
-        Forward transformation: transform alpha to latent z conditioned on beta
-        This is the key difference from standard INN - we transform x to z given y
+        Forward transformation: transform alpha to latent z conditioned on beta.
+        Accumulates log-determinant from normalization layers.
         """
         x = alpha
-        for layer in self.coupling_layers:
-            x = layer.forward(x, beta)
-        return x
+        log_det_total = torch.zeros(alpha.shape[0], dtype=alpha.dtype, device=alpha.device)
+        for layer in self.layers:
+            if isinstance(layer, ConditionalAdditiveCoupling):
+                x = layer.forward(x, beta)
+            elif isinstance(layer, ActNorm1d):
+                x, log_det = layer.forward(x)
+                log_det_total = log_det_total + log_det
+            else:
+                raise TypeError(f"Unsupported layer type: {type(layer)}")
+        return x, log_det_total
 
     def inverse(self, z, beta):
         """
         Inverse transformation: transform latent z back to alpha conditioned on beta
         """
         y = z
-        for layer in reversed(self.coupling_layers):
-            y = layer.inverse(y, beta)
+        for layer in reversed(self.layers):
+            if isinstance(layer, ConditionalAdditiveCoupling):
+                y = layer.inverse(y, beta)
+            elif isinstance(layer, ActNorm1d):
+                y = layer.inverse(y)
+            else:
+                raise TypeError(f"Unsupported layer type: {type(layer)}")
         return y
 
     def sample_posterior(self, beta, n_samples):
@@ -133,7 +172,7 @@ class ConditionalInvertibleNeuralNetworkProbabilistic(torch.nn.Module):
 
 
 def create_model(
-    input_size, condition_size, hidden_sizes=[128, 128], n_coupling_layers=2
+    input_size, condition_size, hidden_sizes=[128, 128], n_coupling_layers=6
 ):
     """
     Create a conditional invertible neural network model.
@@ -147,7 +186,7 @@ def create_model(
     Returns:
         ConditionalInvertibleNeuralNetworkProbabilistic instance
     """
-    coupling_layers = []
+    layers = []
 
     for i in range(n_coupling_layers):
         # Alternate between splitting at different positions for better flow
@@ -163,9 +202,11 @@ def create_model(
             split_dim=split_dim,
             swap=(i % 2 == 1),
         )
-        coupling_layers.append(layer)
+        layers.append(layer)
+        # Insert ActNorm after each coupling layer to enable non-zero log|det J|
+        layers.append(ActNorm1d(num_features=input_size))
 
-    return ConditionalInvertibleNeuralNetworkProbabilistic(coupling_layers=coupling_layers)
+    return ConditionalInvertibleNeuralNetworkProbabilistic(layers=layers)
 
 
 def save(model, path):
@@ -212,13 +253,12 @@ def load_checkpoint(
 
 def loss_function(model, batch, input_function_encoder, output_function_encoder):
     """
-    Canonical cINN training via maximum likelihood (NLL loss).
+    cINN training via maximum likelihood (NLL loss).
 
     Train the model to maximize p(alpha | beta) by minimizing the negative log-likelihood:
-    -log p(alpha | beta) = -log p(z) - log |det J|
-                         = 0.5 * ||z||^2 + 0.5 * log(2π) * dim(z) - 0
+    -log p(alpha | beta) = 0.5 * ||z||^2 - log |det J| + const
 
-    For additive coupling, log|det J| = 0, so we only need the Gaussian prior term.
+    With additive coupling layers, log|det J| = 0; ActNorm contributes non-zero log|det J|.
     """
     X, u, Y, s = batch
 
@@ -226,15 +266,13 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     alpha_gt, _ = input_function_encoder.compute_coefficients(X, u)
     beta_gt, _ = output_function_encoder.compute_coefficients(Y, s)
 
-    # Forward pass: alpha -> z conditioned on beta
-    z = model.forward(alpha_gt, beta_gt)
+    # Forward pass: alpha -> z conditioned on beta (with log-det)
+    z, log_det = model.forward(alpha_gt, beta_gt)
 
     # Negative log-likelihood loss
-    # log p(z) for standard normal: -0.5 * ||z||^2 - 0.5 * dim * log(2π)
-    # We minimize -log p(z) = 0.5 * ||z||^2 + constant
-    # For additive coupling, log|det J| = 0, so no change-of-variables term
-    # Sum over latent dimensions so the prior keeps its intended scale
-    nll_loss = 0.5 * torch.mean(torch.sum(z ** 2, dim=-1))
+    latent_term = 0.5 * torch.mean(torch.sum(z ** 2, dim=-1))
+    change_of_vars = -torch.mean(log_det)
+    nll_loss = latent_term + change_of_vars
 
     return nll_loss
 
