@@ -14,6 +14,7 @@ class ConditionalAffineCoupling(torch.nn.Module):
         hidden_sizes=[128, 128],
         split_dim=None,
         activation=torch.nn.ReLU(),
+        swap=False,
     ):
         super(ConditionalAffineCoupling, self).__init__()
 
@@ -23,6 +24,7 @@ class ConditionalAffineCoupling(torch.nn.Module):
             self.split_dim = input_size // 2
         else:
             self.split_dim = split_dim
+        self.swap = swap
 
         # Neural network to compute scale and translation conditioned on [x2, condition]
         # Input: [x2, condition] where x2 has size (input_size - split_dim) and condition has size condition_size
@@ -47,6 +49,8 @@ class ConditionalAffineCoupling(torch.nn.Module):
         Returns: (z, log_det_jacobian)
         """
         x1, x2 = torch.split(x, [self.split_dim, x.size(-1) - self.split_dim], dim=-1)
+        if self.swap:
+            x1, x2 = x2, x1
 
         # Concatenate x2 and condition for the neural network input
         net_input = torch.cat([x2, condition], dim=-1)
@@ -64,6 +68,9 @@ class ConditionalAffineCoupling(torch.nn.Module):
         # Log determinant of Jacobian
         log_det_J = torch.sum(s, dim=-1)
 
+        if self.swap:
+            z1, z2 = z2, z1
+
         return torch.cat([z1, z2], dim=-1), log_det_J
 
     def inverse(self, z, condition):
@@ -72,6 +79,8 @@ class ConditionalAffineCoupling(torch.nn.Module):
         Implements inverse conditional affine coupling: x1 = (z1 - t(z2, condition)) / exp(s(z2, condition)), x2 = z2
         """
         z1, z2 = torch.split(z, [self.split_dim, z.size(-1) - self.split_dim], dim=-1)
+        if self.swap:
+            z1, z2 = z2, z1
 
         # Concatenate z2 and condition for the neural network input
         net_input = torch.cat([z2, condition], dim=-1)
@@ -85,6 +94,9 @@ class ConditionalAffineCoupling(torch.nn.Module):
         # Apply inverse affine transformation to z1
         x1 = (z1 - t) * torch.exp(-s)
         x2 = z2
+
+        if self.swap:
+            x1, x2 = x2, x1
 
         return torch.cat([x1, x2], dim=-1)
 
@@ -101,11 +113,11 @@ class CinnAffine(torch.nn.Module):
         Returns: (z, log_det_jacobian)
         """
         x = alpha
-        log_det_J_total = 0.0
+        log_det_J_total = torch.zeros(x.shape[0], dtype=x.dtype, device=x.device)
 
         for layer in self.coupling_layers:
             x, log_det_J = layer.forward(x, beta)
-            log_det_J_total += log_det_J
+            log_det_J_total = log_det_J_total + log_det_J
 
         return x, log_det_J_total
 
@@ -149,7 +161,7 @@ class CinnAffine(torch.nn.Module):
 
 
 def create_model(
-    input_size, condition_size, hidden_sizes=[128, 128], n_coupling_layers=2
+    input_size, condition_size, hidden_sizes=[128, 128], n_coupling_layers=6
 ):
     """
     Create a conditional affine invertible neural network model.
@@ -177,6 +189,7 @@ def create_model(
             condition_size=condition_size,
             hidden_sizes=hidden_sizes,
             split_dim=split_dim,
+            swap=(i % 2 == 1),
         )
         coupling_layers.append(layer)
 
@@ -245,20 +258,8 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     # u_pred = input_function_encoder(X, alpha_pred)
     # inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
-    # Weak NLL-style regularization on forward pass
-    z_fwd, log_det_J = model.forward(alpha_gt, beta_gt)
-    latent_term = 0.5 * torch.mean(z_fwd**2)
-    change_of_vars = -torch.mean(log_det_J)
-
-    # # Forward prediction loss: alpha_gt -> z -> alpha_reconstructed vs alpha_gt
-    # # Since cINN maps alpha to latent z conditioned on beta, we test round-trip consistency
-    # z_pred, _ = model.forward(alpha_gt, beta_gt)
-    # alpha_reconstructed = model.inverse(z_pred, beta_gt)
-    # forward_loss = torch.nn.functional.mse_loss(
-    #     alpha_reconstructed, alpha_gt, reduction="mean"
-    # )
-
-    return inverse_loss + (latent_term + change_of_vars)
+    # Focus deterministic affine cINN on inverse quality only.
+    return inverse_loss
 
 
 def train(
