@@ -1,5 +1,5 @@
 """
-Full Darcy coefficient-noise evaluation pipeline with plotting.
+Full Elastic Plate coefficient-noise evaluation pipeline with plotting.
 
 For each trained model found in the logs, the script applies Gaussian noise to
 the predicted inverse coefficients (alpha) at several preset levels, recomputes
@@ -7,7 +7,7 @@ inverse/forward/coefficient MSEs, saves per-model and aggregated metrics, and
 generates publication-style comparison plots using shared utilities.
 
 Example:
-    python -m inverse_neural_operator.plots.plot_darcy_noise_comparison
+    python -m inverse_neural_operator.plots.plot_elastic_noise_comparison
 """
 
 import argparse
@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+import math
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -32,17 +33,19 @@ for path in (PROJECT_ROOT, PACKAGE_ROOT):
 
 from inverse_neural_operator.data.load_dataset import load_dataset
 from inverse_neural_operator.models.load_model import load_models
-from inverse_neural_operator.b2b.load_model import load_forward_model
 from inverse_neural_operator.plots.utils.plot_utils import (
     display_name,
     get_model_color,
+    setup_publication_style,
 )
 
 
-DEFAULT_DATASET = "darcy_1d"
+DEFAULT_DATASET = "elastic_plate"
 DEFAULT_SEED = 1
-DEFAULT_NOISE_LEVELS = [0.0, 0.005, 0.01, 0.02, 0.04]
+DEFAULT_NOISE_LEVELS = [0.0, 0.02, 0.04, 0.06, 0.08, 0.1]
 DEFAULT_MODEL_NAME = "model"
+EXCLUDED_PLOT_MODELS = {"linear"}
+EXCLUDED_METRIC_MODELS = {"linear", "linear_inverse", "inn_affine"}
 
 device = "cpu"
 
@@ -51,16 +54,14 @@ device = "cpu"
 class NoiseStats:
     inverse_sq: float = 0.0
     inverse_count: int = 0
-    forward_sq: float = 0.0
-    forward_count: int = 0
     coeff_sq: float = 0.0
     coeff_count: int = 0
 
-    def update(self, u_noisy, u_true, s_resim, s_true, alpha_noisy, alpha_true) -> None:
-        self.inverse_sq += torch.sum((u_noisy - u_true) ** 2).item()
+    def update_inverse(self, u_pred, u_true) -> None:
+        self.inverse_sq += torch.sum((u_pred - u_true) ** 2).item()
         self.inverse_count += u_true.numel()
-        self.forward_sq += torch.sum((s_resim - s_true) ** 2).item()
-        self.forward_count += s_true.numel()
+
+    def update_coeff(self, alpha_noisy, alpha_true) -> None:
         self.coeff_sq += torch.sum((alpha_noisy - alpha_true) ** 2).item()
         self.coeff_count += alpha_true.numel()
 
@@ -71,9 +72,7 @@ class NoiseStats:
         return {
             "noise_std": noise_std,
             "inverse_mse": mse(self.inverse_sq, self.inverse_count),
-            "forward_mse": mse(self.forward_sq, self.forward_count),
             "inverse_count": self.inverse_count,
-            "forward_count": self.forward_count,
             "coeff_mse": mse(self.coeff_sq, self.coeff_count),
             "coeff_count": self.coeff_count,
         }
@@ -129,33 +128,58 @@ def evaluate_coeff_noise(
     evaluate_fn,
     input_function_encoder,
     output_function_encoder,
-    forward_model,
     dataset,
     noise_levels: List[float],
 ) -> Dict[str, Dict[str, float]]:
     stats_per_noise = {level: NoiseStats() for level in noise_levels}
 
     model.eval()
-    forward_model.eval()
 
     with torch.no_grad():
         for sample in dataset:
             (X, u_true, Y, s_true), (X_b, u_b, Y_b, s_b) = _prepare_sample(sample)
 
-            _, alpha_pred = evaluate_fn(
+            eval_out = evaluate_fn(
                 model, (X_b, u_b, Y_b, s_b), input_function_encoder, output_function_encoder
             )
+            if isinstance(eval_out, (tuple, list)):
+                _, alpha_pred = eval_out
+            else:
+                alpha_pred = None
+
+            if alpha_pred is None:
+                raise ValueError(
+                    "Model evaluate() must return alpha coefficients for coefficient noise analysis."
+                )
+
             alpha_pred = alpha_pred.squeeze(0)
             alpha_true, _ = input_function_encoder.compute_coefficients(X_b, u_b)
             alpha_true = alpha_true.squeeze(0)
 
             for noise_std, stats in stats_per_noise.items():
-                alpha_noisy = alpha_pred if noise_std == 0.0 else alpha_pred + noise_std * torch.randn_like(alpha_pred)
-                alpha_noisy_b = alpha_noisy.unsqueeze(0)
-                u_noisy = input_function_encoder(X_b, alpha_noisy_b).squeeze(0)
-                beta_pred = forward_model(alpha_noisy_b)
-                s_resim = output_function_encoder(Y_b, beta_pred).squeeze(0)
-                stats.update(u_noisy, u_true, s_resim, s_true, alpha_noisy, alpha_true)
+                # Inverse noise: perturb observed outputs before feeding to inverse model
+                noise_tensor = (
+                    torch.zeros_like(s_b)
+                    if noise_std == 0.0
+                    else noise_std * torch.randn_like(s_b)
+                )
+                noisy_batch = (X_b, u_b, Y_b, s_b + noise_tensor)
+                inv_eval = evaluate_fn(
+                    model, noisy_batch, input_function_encoder, output_function_encoder
+                )
+                if isinstance(inv_eval, (tuple, list)):
+                    u_pred_noise = inv_eval[0]
+                else:
+                    u_pred_noise = inv_eval
+                stats.update_inverse(u_pred_noise.squeeze(0), u_true)
+
+                # Coefficient noise: perturb latent coefficients for coeff/forward metrics
+                alpha_noisy = (
+                    alpha_pred
+                    if noise_std == 0.0
+                    else alpha_pred + noise_std * torch.randn_like(alpha_pred)
+                )
+                stats.update_coeff(alpha_noisy, alpha_true)
 
     return {
         (format_noise_value(level) if level > 0 else "0"): stats.to_metrics(level)
@@ -169,6 +193,7 @@ def plot_aggregated_metric(
     title: str,
     ylabel: str,
     output_path: Path,
+    xlabel: str,
 ) -> None:
     noise_map: Dict[float, Dict[str, Dict]] = defaultdict(dict)
     for model_name, metrics in aggregated.items():
@@ -184,12 +209,27 @@ def plot_aggregated_metric(
         return
 
     sorted_noises = sorted(noise_map.keys())
-    models = sorted({model for data in noise_map.values() for model in data.keys()})
+    noise_baseline = noise_map.get(0.0, {})
+    models = sorted(
+        {
+            model
+            for data in noise_map.values()
+            for model in data.keys()
+            if model not in EXCLUDED_METRIC_MODELS
+        }
+    )
+    if noise_baseline:
+        models = sorted(
+            models,
+            key=lambda m: noise_baseline.get(m, {}).get(metric_key, float("inf")),
+        )
     if not models:
         print(f"⚠️  No models present in aggregated coefficient metrics at {output_path}")
         return
+    legend_cols = len(models)
 
-    plt.figure(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(6.5, 2.3))
+    fig.subplots_adjust(left=0.12, right=0.98, bottom=0.2)
     for model_name in models:
         points = [
             (noise, noise_map[noise][model_name][metric_key])
@@ -199,7 +239,7 @@ def plot_aggregated_metric(
         ]
         if points:
             xs, ys = zip(*points)
-            plt.plot(
+            ax.plot(
                 xs,
                 ys,
                 marker="o",
@@ -208,21 +248,38 @@ def plot_aggregated_metric(
                 color=get_model_color(model_name),
             )
 
-    if not plt.gca().lines:
-        plt.close()
+    if not ax.lines:
+        plt.close(fig)
         print(f"⚠️  No positive {metric_key} values to plot in aggregate at {output_path}")
         return
 
-    plt.title(title)
-    plt.xlabel("Coefficient noise std")
-    plt.ylabel(ylabel)
-    plt.grid(True, alpha=0.3)
-    plt.xticks(sorted_noises)
-    plt.yscale("log")
-    plt.tight_layout()
-    plt.legend(title="Model", loc="upper left", bbox_to_anchor=(1.02, 1.0))
-    os.makedirs(output_path.parent, exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    ax.set_title("")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(sorted_noises)
+    ax.set_yscale("log")
+    fig.suptitle(title, y=1.01)
+    legend_axes = fig.add_axes([0.10, 0.86, 0.90, 0.10], frameon=False)
+    legend_axes.axis("off")
+    legend = legend_axes.legend(
+        [line for line in ax.lines],
+        [display_name(m) for m in models],
+        loc="center",
+        ncol=legend_cols,
+        frameon=False,
+        columnspacing=1.5,
+        handlelength=1.2,
+        borderpad=0.3,
+    )
+    ax.legend().remove()
+    output_path = Path(output_path)
+    base_path = output_path.with_suffix("") if output_path.suffix else output_path
+    png_path = base_path.with_suffix(".png")
+    pdf_path = base_path.with_suffix(".pdf")
+    for save_path in (png_path, pdf_path):
+        os.makedirs(save_path.parent, exist_ok=True)
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"✓ Saved aggregated {metric_key} plot → {output_path}")
 
@@ -237,9 +294,9 @@ def resolve_results_root(dataset_name: str, override: Optional[str]) -> Path:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Evaluate Darcy inverse models under coefficient noise and save MSE metrics."
+        description="Evaluate Elastic Plate inverse models under coefficient noise and save MSE metrics."
     )
-    parser.add_argument("--log_dir", type=str, default=None, help="Path to logs root (defaults to models/darcy_1d; accepts model/seed paths too)")
+    parser.add_argument("--log_dir", type=str, default=None, help="Path to logs root (defaults to logs/elastic_plate; accepts model/seed paths too)")
     parser.add_argument("--results_dir", type=str, default=None, help="Root directory to store coefficient-noise metrics (default mirrors results/dataset)")
     parser.add_argument("--noise_levels", type=float, nargs="*", help="Noise std values applied to inverse coefficients (default: 0,0.005,0.01,0.02,0.04)")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Random seed for reproducibility")
@@ -250,13 +307,15 @@ def parse_args():
 def main():
     args = parse_args()
 
+    setup_publication_style(figsize=(6.5, 3))
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
     base_log_dir = (
         Path(args.log_dir).resolve()
         if args.log_dir
-        else PROJECT_ROOT / "models" / DEFAULT_DATASET
+        else PROJECT_ROOT / "logs" / DEFAULT_DATASET
     )
     if not base_log_dir.exists():
         print(f"✗ Log directory not found: {base_log_dir}")
@@ -286,22 +345,22 @@ def main():
             params.dataset, params, device, split="test", return_info=True
         )
 
-        input_encoder, output_encoder, model, evaluate_fn = load_models(
-            log_dir=str(model_log_dir),
-            dataset_info=dataset_info,
-            params=params,
-            device=device,
-        )
-        forward_model = load_forward_model(
-            log_dir=str(model_log_dir), forward_model_name="b2b_nonlinear", device=device
-        )
+        try:
+            input_encoder, output_encoder, model, evaluate_fn = load_models(
+                log_dir=str(model_log_dir),
+                dataset_info=dataset_info,
+                params=params,
+                device=device,
+            )
+        except Exception as exc:
+            print(f"✗ {model_name}: failed to load model ({exc}); skipping.")
+            continue
 
         metrics = evaluate_coeff_noise(
             model=model,
             evaluate_fn=evaluate_fn,
             input_function_encoder=input_encoder,
             output_function_encoder=output_encoder,
-            forward_model=forward_model,
             dataset=test_dataset,
             noise_levels=noise_levels,
         )
@@ -323,8 +382,9 @@ def main():
         plot_aggregated_metric(
             data,
             metric_key="inverse_mse",
-            title="Coefficient Noise Sensitivity (Input Space)",
+            title="Noise Sensitivity (Input Space)",
             ylabel="Inverse MSE (log scale)",
+            xlabel="Observation noise std",
             output_path=summary_root / "coefficient_noise_plot.png",
         )
         plot_aggregated_metric(
@@ -333,6 +393,7 @@ def main():
             title="Coefficient Noise Sensitivity (Aggregated Coefficients)",
             ylabel="Coefficient MSE (log scale)",
             output_path=summary_root / "coefficient_noise_coeff_plot.png",
+            xlabel="Coefficient noise std",
         )
 
 
