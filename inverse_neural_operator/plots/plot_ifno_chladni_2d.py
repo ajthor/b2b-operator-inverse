@@ -26,7 +26,7 @@ torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
 
-device = "cuda:1" if torch.cuda.is_available() else "cpu"
+device = "cuda:5" if torch.cuda.is_available() else "cpu"
 
 
 def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
@@ -53,7 +53,9 @@ def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     return cfg if cfg else None
 
 
-def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots_chladni_2d/"):
+def visualize_ifno_results(
+    model_path, n_samples=3, save_dir="results/ifno_plots_chladni_2d/"
+):
     """Visualize IFNO results on Chladni 2D dataset with forward and backward plots."""
 
     print("Loading Chladni 2D test dataset...")
@@ -106,7 +108,9 @@ def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots
     os.makedirs(save_dir, exist_ok=True)
 
     # Choose random test indices
-    test_indices = random.sample(range(len(test_dataset)), min(n_samples, len(test_dataset)))
+    test_indices = random.sample(
+        range(len(test_dataset)), min(n_samples, len(test_dataset))
+    )
     print(f"Generating {len(test_indices)} visualization pairs (forward/backward)...")
 
     for idx in test_indices:
@@ -139,7 +143,7 @@ def plot_sample(model, sample, sample_idx, save_dir, dataset_info):
         else:
             u_pred = backward_result
         if u_pred.shape[-1] > u_true.unsqueeze(0).shape[-1]:
-            u_pred = u_pred[..., -u_true.unsqueeze(0).shape[-1]:]
+            u_pred = u_pred[..., -u_true.unsqueeze(0).shape[-1] :]
         u_pred = u_pred.squeeze(0)
 
         # Forward: given u, predict s (model.forward)
@@ -152,7 +156,7 @@ def plot_sample(model, sample, sample_idx, save_dir, dataset_info):
         else:
             s_pred = forward_result
         if s_pred.shape[-1] > s_true.unsqueeze(0).shape[-1]:
-            s_pred = s_pred[..., -s_true.unsqueeze(0).shape[-1]:]
+            s_pred = s_pred[..., -s_true.unsqueeze(0).shape[-1] :]
         s_pred = s_pred.squeeze(0)
 
     # Convert to 2D arrays
@@ -197,18 +201,22 @@ def plot_sample(model, sample, sample_idx, save_dir, dataset_info):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Visualize IFNO results on Chladni 2D dataset")
+    parser = argparse.ArgumentParser(
+        description="Visualize IFNO results on Chladni 2D dataset"
+    )
     parser.add_argument(
         "--model_path",
         type=str,
-        default="./logs/chladni_2d_ifno_standalone/ifno_model.pth",
+        default="./logs_ifno/chladni_2d/seed_0/ifno_model.pth",
         help="Path to trained IFNO model",
     )
-    parser.add_argument("--n_samples", type=int, default=3, help="Number of samples to visualize")
+    parser.add_argument(
+        "--n_samples", type=int, default=3, help="Number of samples to visualize"
+    )
     parser.add_argument(
         "--save_dir",
         type=str,
-        default="results/ifno_plots_chladni_2d/",
+        default="results/chladni_2d/ifno/",
         help="Directory to save visualization plots",
     )
 
@@ -219,7 +227,11 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.model_path):
         print(f"Model file not found: {args.model_path}")
-        print("Please train the model first using: python train_ifno_standalone.py --dataset chladni_2d")
+        print(
+            "Please train the model first using: python train_ifno_standalone.py --dataset chladni_2d"
+        )
         raise SystemExit(1)
 
-    visualize_ifno_results(model_path=args.model_path, n_samples=args.n_samples, save_dir=args.save_dir)
+    visualize_ifno_results(
+        model_path=args.model_path, n_samples=args.n_samples, save_dir=args.save_dir
+    )

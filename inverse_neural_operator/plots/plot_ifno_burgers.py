@@ -32,7 +32,9 @@ def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     if "p1.weight" in sd:
         cfg["width"] = int(sd["p1.weight"].shape[0])
     # n_layers from number of convs entries (two convs per layer)
-    conv_keys = [k for k in sd.keys() if k.startswith("convs.") and k.endswith(".weights")]
+    conv_keys = [
+        k for k in sd.keys() if k.startswith("convs.") and k.endswith(".weights")
+    ]
     if conv_keys:
         cfg["n_layers"] = len(conv_keys) // 2
         # modes from conv weight last dim
@@ -45,7 +47,9 @@ def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     return cfg if cfg else None
 
 
-def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots_burgers/"):
+def visualize_ifno_results(
+    model_path, n_samples=3, save_dir="results/ifno_plots_burgers/"
+):
     """Visualize IFNO results on Burgers 1D dataset."""
 
     print("Loading Burgers 1D test dataset...")
@@ -88,7 +92,9 @@ def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots
     os.makedirs(save_dir, exist_ok=True)
 
     # Select random samples
-    test_indices = random.sample(range(len(test_dataset)), min(n_samples, len(test_dataset)))
+    test_indices = random.sample(
+        range(len(test_dataset)), min(n_samples, len(test_dataset))
+    )
 
     print(f"Generating {n_samples} visualization plots...")
 
@@ -119,7 +125,7 @@ def plot_sample(model, sample, sample_idx, save_dir):
             u_final_pred = forward_result
 
         if u_final_pred.shape[-1] > u_final.unsqueeze(0).shape[-1]:
-            u_final_pred = u_final_pred[..., -u_final.unsqueeze(0).shape[-1]:]
+            u_final_pred = u_final_pred[..., -u_final.unsqueeze(0).shape[-1] :]
 
         u_final_pred = u_final_pred.squeeze(0)
 
@@ -137,7 +143,7 @@ def plot_sample(model, sample, sample_idx, save_dir):
             u_initial_pred = inverse_result
 
         if u_initial_pred.shape[-1] > u_initial.unsqueeze(0).shape[-1]:
-            u_initial_pred = u_initial_pred[..., -u_initial.unsqueeze(0).shape[-1]:]
+            u_initial_pred = u_initial_pred[..., -u_initial.unsqueeze(0).shape[-1] :]
 
         u_initial_pred = u_initial_pred.squeeze(0)
 
@@ -195,7 +201,9 @@ def plot_sample(model, sample, sample_idx, save_dir):
     axes_inv[0].legend()
     axes_inv[0].grid(True)
 
-    axes_inv[1].plot(x_coords, u_initial_np, "b-", label="True Initial $u_0(x)$", alpha=0.7)
+    axes_inv[1].plot(
+        x_coords, u_initial_np, "b-", label="True Initial $u_0(x)$", alpha=0.7
+    )
     axes_inv[1].plot(
         x_coords,
         u_initial_pred_np,
@@ -220,11 +228,13 @@ def plot_sample(model, sample, sample_idx, save_dir):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Visualize IFNO results on Burgers 1D dataset")
+    parser = argparse.ArgumentParser(
+        description="Visualize IFNO results on Burgers 1D dataset"
+    )
     parser.add_argument(
         "--model_path",
         type=str,
-        default="logs_ifno/burgers_1d/ifno_model.pth",
+        default="logs_ifno/burgers_1d/seed_0/ifno_model.pth",
         help="Path to trained IFNO model",
     )
     parser.add_argument(
@@ -236,7 +246,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--save_dir",
         type=str,
-        default="results/ifno_plots_burgers/",
+        default="results/burgers_1d/ifno/",
         help="Directory to save visualization plots",
     )
 
@@ -247,7 +257,9 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.model_path):
         print(f"Model file not found: {args.model_path}")
-        print("Please train the model first using: python train_ifno_standalone.py --dataset burgers_1d")
+        print(
+            "Please train the model first using: python train_ifno_standalone.py --dataset burgers_1d"
+        )
         raise SystemExit(1)
 
     visualize_ifno_results(

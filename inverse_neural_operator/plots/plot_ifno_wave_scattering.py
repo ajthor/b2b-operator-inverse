@@ -16,8 +16,10 @@ from inverse_neural_operator.data.wave_scattering import load_data
 from inverse_neural_operator.models.ifno import create_model
 
 # Global device handle (can be overridden via CLI)
-device = "cuda:0" if torch.cuda.is_available() else (
-    "mps" if torch.backends.mps.is_available() else "cpu"
+device = (
+    "cuda:0"
+    if torch.cuda.is_available()
+    else ("mps" if torch.backends.mps.is_available() else "cpu")
 )
 
 # Reproducibility defaults
@@ -41,7 +43,11 @@ def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
         cfg["intermediate_dim"] = int(state_dict["p1.weight"].shape[1])
 
     # Number of layers and modes from Fourier blocks
-    conv_keys = [k for k in state_dict.keys() if k.startswith("convs.") and k.endswith(".weights")]
+    conv_keys = [
+        k
+        for k in state_dict.keys()
+        if k.startswith("convs.") and k.endswith(".weights")
+    ]
     if conv_keys:
         cfg["n_layers"] = len(conv_keys) // 2
         sample_conv = state_dict[conv_keys[0]]
@@ -171,14 +177,18 @@ def plot_sample(model, sample, sample_idx: int, save_dir: str):
     extent = [0.0, 1.0, 0.0, 1.0]
 
     ax_true_field = plt.subplot(2, 3, 4)
-    im_true = ax_true_field.imshow(s_true_2d, cmap="viridis", origin="lower", extent=extent)
+    im_true = ax_true_field.imshow(
+        s_true_2d, cmap="viridis", origin="lower", extent=extent
+    )
     ax_true_field.set_title("Observed Density Field s(x, y)")
     ax_true_field.set_xlabel("x")
     ax_true_field.set_ylabel("y")
     plt.colorbar(im_true, ax=ax_true_field, fraction=0.046, pad=0.04)
 
     ax_pred_field = plt.subplot(2, 3, 5)
-    im_pred = ax_pred_field.imshow(s_pred_2d, cmap="viridis", origin="lower", extent=extent)
+    im_pred = ax_pred_field.imshow(
+        s_pred_2d, cmap="viridis", origin="lower", extent=extent
+    )
     ax_pred_field.set_title("Predicted Density Field ŝ(x, y)")
     ax_pred_field.set_xlabel("x")
     ax_pred_field.set_ylabel("y")
@@ -205,7 +215,9 @@ def plot_sample(model, sample, sample_idx: int, save_dir: str):
     print(f"Saved visualization: {save_path}")
 
 
-def visualize_ifno_results(model_path: str, n_samples: int, save_dir: str, split: str = "test"):
+def visualize_ifno_results(
+    model_path: str, n_samples: int, save_dir: str, split: str = "test"
+):
     print("Loading Wave Scattering dataset...")
     dataset = load_data(None, device=device, split=split)
     dataset_info = dataset.get_info()
@@ -231,7 +243,7 @@ def parse_args():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="logs_ifno_back/wave_scattering/ifno_model.pth",
+        default="logs_ifno/wave_scattering/seed_0/ifno_model.pth",
         help="Path to trained IFNO model checkpoint",
     )
     parser.add_argument(
@@ -243,7 +255,7 @@ def parse_args():
     parser.add_argument(
         "--save_dir",
         type=str,
-        default="results/ifno_plots_wave_scattering/",
+        default="results/wave_scattering/ifno/",
         help="Directory to store generated plots",
     )
     parser.add_argument(
@@ -288,4 +300,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
