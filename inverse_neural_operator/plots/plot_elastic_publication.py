@@ -28,6 +28,7 @@ sys.path.insert(0, "inverse_neural_operator")
 
 from data.load_dataset import load_dataset
 from plots.utils.model_utils import (
+    evaluate_models_on_subset,
     load_all_models,
     select_models_and_sample,
 )
@@ -42,28 +43,40 @@ from models.ifno import create_model as create_ifno_model, load as load_ifno_wei
 
 DEVICE = "cpu"
 
+PUBLICATION_DISPLAY_OVERRIDES = {
+    "cinn_additive_probabilistic": "cINN-Add-Prob",
+}
+
+
+def publication_display_name(model_name: str) -> str:
+    """Return display label with local overrides for publication plots."""
+    return PUBLICATION_DISPLAY_OVERRIDES.get(model_name, display_name(model_name))
+
 INVERSE_MODELS = (
     "linear",
     "linear_inverse",
     "nonlinear",
     "inn_affine",
+    "inn_additive",
     "cinn_affine",
     "variational_autoencoder",
     "conditional_realnvp",
     "mixture_density_network",
     "cinn_additive",
+    "cinn_additive_probabilistic",
+    "cinn_affine_probabilistic",
 )
 
 SAMPLING_MODELS = {
     "variational_autoencoder",
     "mixture_density_network",
-    "inn_affine",
-    "cinn_affine",
+    "cinn_additive_probabilistic",
+    "cinn_affine_probabilistic",
 }
 
-MAX_MODELS = 6  # Total number of models evaluated (including IFNO)
-MAX_FORCE_MODELS = 5  # Number of model force curves (5 models including IFNO, plus GT)
-MAX_DISPLACEMENT_MODELS = 5  # Number of model displacement fields (5 models including IFNO, plus GT)
+MAX_MODELS = 8  # Total number of models evaluated (including IFNO)
+MAX_FORCE_MODELS = 8  # Number of model force curves shown (plus separate GT panel)
+MAX_DISPLACEMENT_MODELS = 8  # Number of model displacement fields shown (plus GT)
 N_SAMPLES = 8
 
 GROUND_TRUTH_COLOR = "#CCCCCC"  # Gray - for ground truth lines
@@ -112,14 +125,18 @@ def _create_unified_figure():
     Returns:
         fig: Figure object
         gs: GridSpec object (to be used for colorbar later)
-        axes_left: List of 6 axes for left grid (force plots)
-        axes_right: List of 6 axes for right grid (displacement fields)
+        axes_left: List of 9 axes for left grid (force plots)
+        axes_right: List of 9 axes for right grid (displacement fields)
     """
-    # Calculate figure size to create square subplot cells
-    # 2 rows × 6 columns (plus thin colorbar)
-    # For square cells: width/6 = height/2, so width = 3*height
-    # With 6.5 inch width standard, height = 6.5/3 ≈ 2.17
-    fig = plt.figure(figsize=(6.5, 2.17), layout="constrained")
+    # Calculate figure size so subplot cells stay square despite colorbar column
+    width_ratios = [1, 1, 1, 1, 1, 1, 0.05]
+    height_ratios = [1, 1, 1]
+    fig_width = 6.5
+    plot_width_units = sum(width_ratios)  # include colorbar column for accurate scaling
+    # Slightly reduce height to compensate for constrained layout padding squeezing width
+    square_adjust = 0.95
+    fig_height = square_adjust * fig_width * sum(height_ratios) / plot_width_units
+    fig = plt.figure(figsize=(fig_width, fig_height), layout="constrained")
     fig.set_constrained_layout_pads(
         w_pad=0.5 / 72.0, h_pad=0.5 / 72.0, hspace=0.0, wspace=0.0
     )
@@ -128,10 +145,10 @@ def _create_unified_figure():
     # Columns: [plot, plot, plot, plot, plot, plot, colorbar]
     # Equal ratios create square cells with correct figure aspect
     gs = fig.add_gridspec(
-        2,
+        3,
         7,
-        width_ratios=[1, 1, 1, 1, 1, 1, 0.05],
-        height_ratios=[1, 1],
+        width_ratios=width_ratios,
+        height_ratios=height_ratios,
         hspace=0.0,
         wspace=0.0,
         left=0,
@@ -159,14 +176,14 @@ def _create_unified_figure():
 
     # Create subplot axes for left grid (force plots)
     axes_left = []
-    for i in range(2):
+    for i in range(3):
         for j in range(3):
             ax = fig.add_subplot(gs[i, j])
             axes_left.append(ax)
 
     # Create subplot axes for right grid (displacement fields)
     axes_right = []
-    for i in range(2):
+    for i in range(3):
         for j in range(3):
             ax = fig.add_subplot(gs[i, j + 3])
             axes_right.append(ax)
@@ -255,6 +272,18 @@ def sample_alpha(model_name, model, beta, device, dtype, num_samples):
         return model.inverse(beta=beta_rep, z=z)
 
     if model_name == "cinn_affine":
+        alpha_dim = model.coupling_layers[0].input_size
+        # Deterministic affine cINN: use zero latent for inverse mapping
+        z_zero = torch.zeros(num_samples, alpha_dim, device=device, dtype=dtype)
+        return model.inverse(z_zero, beta_rep)
+
+    if model_name == "cinn_additive_probabilistic":
+        # Use the model's posterior sampler for better-calibrated stochastic samples
+        # beta has shape [1, beta_dim] here; sample_posterior returns [num_samples, 1, alpha_dim]
+        samples = model.sample_posterior(beta, num_samples)
+        return samples.squeeze(1)
+
+    if model_name == "cinn_affine_probabilistic":
         alpha_dim = model.coupling_layers[0].input_size
         z = torch.randn(num_samples, alpha_dim, device=device, dtype=dtype)
         return model.inverse(z, beta_rep)
@@ -495,25 +524,37 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
                 force_y,
                 u_true,
                 u_data,
-                annotation=display_name(model_name),
+                annotation=publication_display_name(model_name),
                 color=get_model_color(model_name, idx),
             )
         else:
             axes_left[idx].axis("off")
 
-    _plot_force_curve(axes_left[5], force_y, u_true, annotation="Ground Truth", show_gt_overlay=False)
+    _plot_force_curve(
+        axes_left[-1],
+        force_y,
+        u_true,
+        annotation="Ground Truth",
+        show_gt_overlay=False,
+    )
 
     # Right side: Displacement fields (top 5 models + ground truth)
     for idx, model_name in enumerate(models_to_plot[:MAX_DISPLACEMENT_MODELS]):
         if model_name in processed_preds:
             u_data, s_mean = processed_preds[model_name]
             im_right = _plot_displacement_field(axes_right[idx], y_2d, s_mean, vmin=s_min, vmax=s_max,
-                                               annotation=display_name(model_name))
+                                               annotation=publication_display_name(model_name))
         else:
             axes_right[idx].axis("off")
 
-    im_right = _plot_displacement_field(axes_right[5], y_2d, s_true, vmin=s_min, vmax=s_max,
-                                        annotation="Ground Truth")
+    im_right = _plot_displacement_field(
+        axes_right[-1],
+        y_2d,
+        s_true,
+        vmin=s_min,
+        vmax=s_max,
+        annotation="Ground Truth",
+    )
 
     # Add colorbar for displacement fields
     if im_right is not None:
@@ -591,12 +632,29 @@ def main():
 
     forward_model = load_forward_model(log_dir, args.seed, device=DEVICE)
 
+    print("\nComputing inverse reconstruction error for all models...")
+    per_model_mses, _ = evaluate_models_on_subset(
+        test_dataset,
+        models_dict,
+        input_enc,
+        output_enc,
+        max_samples=len(test_dataset),
+        device=DEVICE,
+    )
+    model_inverse_mse = {
+        name: float(np.mean(mse_list)) if mse_list else float("inf")
+        for name, mse_list in per_model_mses.items()
+    }
+    for name in sorted(model_inverse_mse, key=model_inverse_mse.get):
+        print(f"  {publication_display_name(name)}: {model_inverse_mse[name]:.6e}")
+
     # Load IFNO model
     print("\nLoading IFNO model...")
     ifno_model = load_ifno_model(dataset_info, device=DEVICE)
+    ifno_mse = None
 
     # Evaluate models and select best performers (get top MAX_MODELS to have room for IFNO)
-    models_to_plot, sample_idx = select_models_and_sample(
+    models_to_plot, sample_idx, per_model_losses = select_models_and_sample(
         test_dataset,
         models_dict,
         input_enc,
@@ -605,12 +663,23 @@ def main():
         max_models=MAX_MODELS,  # Get top MAX_MODELS models
         sample_index=args.sample_index,
         device=DEVICE,
+        return_metrics=True,
     )
+    resim_mse = {
+        name: float(np.mean(losses["pred_loss"]))
+        if losses["pred_loss"]
+        else float("inf")
+        for name, losses in per_model_losses.items()
+    }
+    print("\nRe-simulation MSE summary:")
+    for name in sorted(resim_mse, key=resim_mse.get):
+        val = resim_mse[name]
+        display = "inf" if not np.isfinite(val) else f"{val:.6e}"
+        print(f"  {publication_display_name(name)}: {display}")
 
     # Evaluate IFNO and insert it into the sorted list based on accuracy
     if ifno_model is not None:
         print("\nEvaluating IFNO performance...")
-        from plots.utils.model_utils import evaluate_models_on_subset
 
         # Evaluate IFNO on test dataset
         ifno_errors = []
@@ -642,33 +711,24 @@ def main():
 
         ifno_mse = np.mean(ifno_errors)
         print(f"  IFNO MSE: {ifno_mse:.6e}")
+    else:
+        print("  IFNO model not available; skipping IFNO evaluation.")
 
-        # Re-evaluate all selected models to get their errors
-        per_model_mses, _ = evaluate_models_on_subset(
-            test_dataset,
-            {name: models_dict[name] for name in models_to_plot if name in models_dict},
-            input_enc,
-            output_enc,
-            max_samples=len(test_dataset),
-            device=DEVICE,
-        )
-
-        # Compute mean MSE for each model
-        model_errors = {
-            name: float(np.mean(mse_list)) if mse_list else float("inf")
-            for name, mse_list in per_model_mses.items()
-        }
-
-        # Insert IFNO into the sorted list based on its error
-        models_with_errors = [(name, error) for name, error in model_errors.items()]
+    models_with_errors = [
+        (name, resim_mse.get(name, float("inf"))) for name in resim_mse.keys()
+    ]
+    if ifno_mse is not None:
         models_with_errors.append(("ifno", ifno_mse))
-        models_with_errors.sort(key=lambda x: x[1])  # Sort by error (ascending)
-
-        # Take top MAX_MODELS models including IFNO
-        models_to_plot = [name for name, _ in models_with_errors[:MAX_MODELS]]
-        print(f"\nTop {MAX_MODELS} models (including IFNO):")
-        for name, error in models_with_errors[:MAX_MODELS]:
-            print(f"  {display_name(name)}: {error:.6e}")
+    models_with_errors.sort(key=lambda x: x[1])
+    ranking_title = (
+        f"\nTop {MAX_MODELS} models by re-simulation MSE (including IFNO):"
+        if ifno_mse is not None
+        else f"\nTop {MAX_MODELS} models by re-simulation MSE:"
+    )
+    print(ranking_title)
+    for name, error in models_with_errors[:MAX_MODELS]:
+        print(f"  {publication_display_name(name)}: {error:.6e}")
+    models_to_plot = [name for name, _ in models_with_errors[:MAX_MODELS]]
 
     num_plots = max(1, args.num_random_plots)
     if args.sample_index is not None:
