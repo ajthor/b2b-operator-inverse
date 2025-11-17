@@ -184,9 +184,8 @@ def loss_function(model, batch, input_function_encoder, output_function_encoder)
     alpha, _ = input_function_encoder.compute_coefficients(X, u)
     beta, _ = output_function_encoder.compute_coefficients(Y, s)
 
-    # Inverse loss: beta -> alpha -> u_pred vs u_gt
+    # Inverse loss: reconstruct boundary forces directly
     alpha_pred = model.inverse(beta)
-    # inverse_loss = torch.nn.functional.mse_loss(alpha_pred, alpha, reduction="mean")
     u_pred = input_function_encoder(X, alpha_pred)
     inverse_loss = torch.nn.functional.mse_loss(u_pred, u, reduction="mean")
 
@@ -341,7 +340,10 @@ def resimulation_loss(
     forward_model.eval()
     with torch.no_grad():
         # Deterministic inverse: beta -> alpha (no sampling needed)
-        alpha_pred = model.inverse(beta_target)  # [batch_size, alpha_dim]
+        alpha_raw = model.inverse(beta_target)  # [batch_size, alpha_dim]
+        # Reconstruct boundary forces and re-encode coefficients for consistency
+        u_pred = input_function_encoder(X, alpha_raw)
+        alpha_pred, _ = input_function_encoder.compute_coefficients(X, u_pred)
 
         # Forward re-simulation: alpha -> beta
         beta_resim = forward_model(alpha_pred)  # [batch_size, beta_dim]
@@ -367,4 +369,6 @@ def evaluate(model, point, input_function_encoder, output_function_encoder):
         alpha_pred = model.inverse(beta)
         pred = input_function_encoder(X, alpha_pred)
 
-        return pred, alpha_pred
+        alpha_encoded, _ = input_function_encoder.compute_coefficients(X, pred)
+
+        return pred, alpha_encoded

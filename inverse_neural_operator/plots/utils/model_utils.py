@@ -160,7 +160,8 @@ def select_models_and_sample(
     max_models: int = 6,
     sample_index: int | None = None,
     device: str = "cpu",
-) -> Tuple[List[str], int]:
+    return_metrics: bool = False,
+) -> Tuple[List[str], int] | Tuple[List[str], int, Dict[str, Dict[str, List[float]]]]:
     """Evaluate models on entire test set, rank by re-simulation performance, and select median sample.
 
     Args:
@@ -172,10 +173,12 @@ def select_models_and_sample(
         max_models: Maximum number of top-performing models to return
         sample_index: Specific sample to use (if None, selects median-performing sample)
         device: Device for computation
+        return_metrics: If True, also return per-model loss history
 
     Returns:
         models_to_plot: List of model names to plot (top performers)
         sample_index: Index of the representative sample
+        per_model_losses (optional): Re-simulation loss history per model
     """
     print("Evaluating models on full test set using re-simulation loss...")
     per_model_losses, sample_scores = evaluate_models(
@@ -222,6 +225,9 @@ def select_models_and_sample(
         )
     else:
         print(f"  Using provided sample: {sample_index}")
+
+    if return_metrics:
+        return models_to_plot, sample_index, per_model_losses
 
     return models_to_plot, sample_index
 
