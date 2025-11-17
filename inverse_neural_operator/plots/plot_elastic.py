@@ -20,8 +20,10 @@ from b2b.load_model import load_forward_model
 DEVICE = "cpu"
 DEFAULT_SAMPLE_COUNT = 10
 SAMPLING_MODELS = {
-    "variational_autoencoder", "mixture_density_network",
-    "inn_affine", "cinn_affine", "cinn_additive"
+    "variational_autoencoder",
+    "mixture_density_network",
+    "inn_affine",
+    "cinn_affine",
 }
 ALL_MODELS = [
     "linear", "linear_inverse", "nonlinear", "variational_autoencoder",
@@ -101,7 +103,7 @@ def sample_alpha(model_name, model, beta, device, dtype, num_samples):
         z = torch.randn(num_samples, z_size, device=device, dtype=dtype)
         return model.inverse(beta=beta_rep, z=z)
 
-    if model_name in {"cinn_affine", "cinn_additive"}:
+    if model_name == "cinn_affine":
         alpha_dim = model.coupling_layers[0].input_size
         z = torch.randn(num_samples, alpha_dim, device=device, dtype=dtype)
         return model.inverse(z, beta_rep)
