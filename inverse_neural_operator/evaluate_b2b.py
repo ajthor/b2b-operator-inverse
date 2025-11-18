@@ -156,7 +156,7 @@ def evaluate_function_encoders(
                         input_encoder, (example_xs, example_ys, xs, ys)
                     )
                     total_input_sq_error += torch.sum((u_pred - ys) ** 2).item()
-                    total_input_sq_target += torch.sum(ys ** 2).item()
+                    total_input_sq_target += torch.sum(ys**2).item()
 
                 for batch in output_test_dataloader:
                     example_xs, example_ys, xs, ys = batch
@@ -169,7 +169,7 @@ def evaluate_function_encoders(
                         output_encoder, (example_xs, example_ys, xs, ys)
                     )
                     total_output_sq_error += torch.sum((s_pred - ys) ** 2).item()
-                    total_output_sq_target += torch.sum(ys ** 2).item()
+                    total_output_sq_target += torch.sum(ys**2).item()
 
             input_l2_error = (
                 math.sqrt(total_input_sq_error / total_input_sq_target)
@@ -297,7 +297,7 @@ def evaluate_forward_models(
                         # Decode to output
                         s_pred = output_encoder(Y, beta_pred)
                         total_sq_error += torch.sum((s_pred - s) ** 2).item()
-                        total_sq_target += torch.sum(s ** 2).item()
+                        total_sq_target += torch.sum(s**2).item()
 
                 if total_sq_target > 0:
                     test_l2_error = math.sqrt(total_sq_error / total_sq_target)
@@ -456,7 +456,9 @@ def print_results_tables(function_encoder_results, forward_model_results):
         table_data.append(["Min", f"{stats['min']:.6e}"])
         table_data.append(["Max", f"{stats['max']:.6e}"])
 
-        print(tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid"))
+        print(
+            tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid")
+        )
     else:
         print("\n--- Input Function Encoder ---")
         print("  No results available")
@@ -478,7 +480,9 @@ def print_results_tables(function_encoder_results, forward_model_results):
         table_data.append(["Min", f"{stats['min']:.6e}"])
         table_data.append(["Max", f"{stats['max']:.6e}"])
 
-        print(tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid"))
+        print(
+            tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid")
+        )
     else:
         print("\n--- Output Function Encoder ---")
         print("  No results available")
@@ -501,7 +505,11 @@ def print_results_tables(function_encoder_results, forward_model_results):
             table_data.append(["Min", f"{stats['min']:.6e}"])
             table_data.append(["Max", f"{stats['max']:.6e}"])
 
-            print(tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid"))
+            print(
+                tabulate(
+                    table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid"
+                )
+            )
         else:
             print(f"\n--- Forward Model: {model_name} ---")
             print("  No results available")
@@ -593,7 +601,9 @@ def generate_plots(
 
             # Plot std as shaded region (use log space for better visibility)
             # Convert to log space, add/subtract std, then convert back
-            log_medians = np.log10(medians_array + 1e-12)  # Add small epsilon to avoid log(0)
+            log_medians = np.log10(
+                medians_array + 1e-12
+            )  # Add small epsilon to avoid log(0)
             log_stds = stds_array / (medians_array * np.log(10) + 1e-12)
 
             upper = 10 ** (log_medians + log_stds)

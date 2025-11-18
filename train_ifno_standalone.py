@@ -9,6 +9,7 @@ import argparse
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import os
+import json
 
 # Import IFNO model (unconditional)
 from inverse_neural_operator.models.ifno import (
@@ -71,6 +72,12 @@ def main():
     )
     parser.add_argument(
         "--lr_forward", type=float, default=1e-4, help="Joint training learning rate"
+    )
+    parser.add_argument(
+        "--lr_backward",
+        type=float,
+        default=None,
+        help="Joint training backward learning rate (defaults to 0.5 * lr_forward)",
     )
 
     # IFNO architecture parameters (following paper recommendations)
@@ -136,11 +143,13 @@ def main():
     # Create log directory
     os.makedirs(args.log_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=args.log_dir)
+    print(f"TensorBoard logs -> {args.log_dir}")
 
     # Set checkpoint directory
     if args.checkpoint_dir is None:
         args.checkpoint_dir = os.path.join(args.log_dir, "checkpoints")
     os.makedirs(args.checkpoint_dir, exist_ok=True)
+    print(f"Checkpoints -> {args.checkpoint_dir}")
 
     # Select dataset loader
     if args.dataset == "darcy_1d":
@@ -171,6 +180,9 @@ def main():
     dataset_info = train_dataset.get_info()
 
     print(f"Dataset info: {dataset_info}")
+    writer.add_text("setup/dataset", args.dataset)
+    writer.add_text("setup/dataset_info", json.dumps(dataset_info, indent=2))
+    writer.add_text("setup/hyperparameters", json.dumps(vars(args), indent=2))
 
     # Create IFNO model with paper-recommended hyperparameters
     print("Creating IFNO model...")
@@ -198,9 +210,11 @@ def main():
     print(f"Model created with {count_model_params(model)} parameters")
 
     # Create optimizer
+    print("Initializing optimizer...")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     # Create data loaders
+    print("Creating dataloaders...")
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -239,6 +253,7 @@ def main():
         lr_vae=args.lr_vae,
         lr_ifno=args.lr_ifno,
         lr_forward=args.lr_forward,
+        lr_backward=args.lr_backward,
     )
 
     # Save model

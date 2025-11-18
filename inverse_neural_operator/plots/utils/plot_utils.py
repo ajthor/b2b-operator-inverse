@@ -21,6 +21,7 @@ DISPLAY_NAMES = {
     "inn_additive": "INN-Add",
     "cinn_affine": "cINN-Affine",
     "cinn_additive": "cINN-Add",
+    "cinn_additive_probabilistic": "cINN-Add-Prob",
     "variational_autoencoder": "cVAE",
     "conditional_realnvp": "RealNVP",
     "mixture_density_network": "MDN",
