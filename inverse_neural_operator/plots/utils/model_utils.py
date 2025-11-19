@@ -180,15 +180,115 @@ def select_models_and_sample(
         sample_index: Index of the representative sample
         per_model_losses (optional): Re-simulation loss history per model
     """
-    print("Evaluating models on full test set using re-simulation loss...")
-    per_model_losses, sample_scores = evaluate_models(
-        test_dataset,
-        models_dict,
-        input_function_encoder,
-        output_function_encoder,
-        forward_model,
-        device=device,
-    )
+    # print("Evaluating models on full test set using re-simulation loss...")
+    # per_model_losses, sample_scores = evaluate_models(
+    #     test_dataset,
+    #     models_dict,
+    #     input_function_encoder,
+    #     output_function_encoder,
+    #     forward_model,
+    #     device=device,
+    # )
+
+    # # Rank models by mean pred_loss (re-simulation error, lower is better)
+    # ranked_models = sorted(
+    #     per_model_losses.keys(),
+    #     key=lambda k: (
+    #         np.mean(per_model_losses[k]["pred_loss"])
+    #         if per_model_losses[k]["pred_loss"]
+    #         else float("inf")
+    #     ),
+    # )
+    # models_to_plot = ranked_models[:max_models]
+
+    # # Print model rankings with mean pred_loss
+    # print(f"  Top {max_models} models by mean re-simulation loss:")
+    # for i, model_name in enumerate(models_to_plot, 1):
+    #     pred_losses = per_model_losses[model_name]["pred_loss"]
+    #     if pred_losses:
+    #         mean_pred_loss = np.mean(pred_losses)
+    #         print(f"    {i}. {model_name}: {mean_pred_loss:.6e}")
+    #     else:
+    #         print(f"    {i}. {model_name}: N/A")
+
+    # # Select representative sample (median-performing across all models by pred_loss)
+    # if sample_index is None:
+    #     if not sample_scores:
+    #         raise ValueError("Unable to score samples - no sample scores available")
+    #     # Sort by median pred_loss to find the sample with median performance
+    #     sample_scores_sorted = sorted(sample_scores, key=lambda x: x[1])
+    #     median_idx = len(sample_scores_sorted) // 2
+    #     sample_index = sample_scores_sorted[median_idx][0]
+    #     median_pred_loss = sample_scores_sorted[median_idx][1]
+    #     print(
+    #         f"  Selected median-performing sample: {sample_index} (median pred_loss: {median_pred_loss:.6e})"
+    #     )
+    # else:
+    #     print(f"  Using provided sample: {sample_index}")
+
+    # if return_metrics:
+    #     return models_to_plot, sample_index, per_model_losses
+
+    # return models_to_plot, sample_index
+
+    # FAST MODE: Evaluate on small batch and use sample 0 (much faster for publication plots)
+    fast_mode_batch_size = 20
+    print(f"Fast mode: Evaluating models on {fast_mode_batch_size} samples...")
+
+    # Create a subset of the dataset for quick evaluation
+    subset_indices = list(range(min(fast_mode_batch_size, len(test_dataset))))
+    per_model_losses = {
+        name: {"coeff_loss": [], "pred_loss": []} for name in models_dict.keys()
+    }
+
+    # Import resimulation_loss functions for each model
+    resim_loss_fns = {}
+    for model_name in models_dict.keys():
+        try:
+            resim_loss_fns[model_name] = import_model_functions(
+                model_name, "resimulation_loss"
+            )
+        except (ValueError, AttributeError) as e:
+            print(
+                f"  Warning: Could not import resimulation_loss for {model_name}: {e}"
+            )
+            continue
+
+    # Quick evaluation on subset
+    for idx in subset_indices:
+        X, u_true, Y, s_observed = test_dataset[idx]
+        X = X.to(device)
+        u_true = u_true.to(device)
+        Y = Y.to(device)
+        s_observed = s_observed.to(device)
+
+        batch = (
+            X.unsqueeze(0),
+            u_true.unsqueeze(0),
+            Y.unsqueeze(0),
+            s_observed.unsqueeze(0),
+        )
+
+        for model_name, (model, _) in models_dict.items():
+            if model_name not in resim_loss_fns:
+                continue
+
+            model.eval()
+            if forward_model is not None:
+                forward_model.eval()
+
+            with torch.no_grad():
+                coeff_loss, pred_loss = resim_loss_fns[model_name](
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                    forward_model=forward_model,
+                    n_samples=1,  # Deterministic evaluation
+                )
+
+            per_model_losses[model_name]["coeff_loss"].append(coeff_loss)
+            per_model_losses[model_name]["pred_loss"].append(pred_loss)
 
     # Rank models by mean pred_loss (re-simulation error, lower is better)
     ranked_models = sorted(
@@ -202,7 +302,7 @@ def select_models_and_sample(
     models_to_plot = ranked_models[:max_models]
 
     # Print model rankings with mean pred_loss
-    print(f"  Top {max_models} models by mean re-simulation loss:")
+    print(f"  Top {max_models} models by mean re-simulation loss (on {fast_mode_batch_size} samples):")
     for i, model_name in enumerate(models_to_plot, 1):
         pred_losses = per_model_losses[model_name]["pred_loss"]
         if pred_losses:
@@ -211,18 +311,10 @@ def select_models_and_sample(
         else:
             print(f"    {i}. {model_name}: N/A")
 
-    # Select representative sample (median-performing across all models by pred_loss)
+    # Use sample 0 by default in fast mode
     if sample_index is None:
-        if not sample_scores:
-            raise ValueError("Unable to score samples - no sample scores available")
-        # Sort by median pred_loss to find the sample with median performance
-        sample_scores_sorted = sorted(sample_scores, key=lambda x: x[1])
-        median_idx = len(sample_scores_sorted) // 2
-        sample_index = sample_scores_sorted[median_idx][0]
-        median_pred_loss = sample_scores_sorted[median_idx][1]
-        print(
-            f"  Selected median-performing sample: {sample_index} (median pred_loss: {median_pred_loss:.6e})"
-        )
+        sample_index = 0
+        print(f"  Using sample: {sample_index} (fast mode default)")
     else:
         print(f"  Using provided sample: {sample_index}")
 
@@ -230,7 +322,6 @@ def select_models_and_sample(
         return models_to_plot, sample_index, per_model_losses
 
     return models_to_plot, sample_index
-
 
 def collect_predictions(
     sample,

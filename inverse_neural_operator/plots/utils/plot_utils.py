@@ -53,6 +53,7 @@ MODEL_COLOR_ORDER = (
     "cinn_affine",
     "mixture_density_network",
     "ifno",
+    "cinn_additive_probabilistic",
     "cinn_additive",
     "linear_inverse",
 )

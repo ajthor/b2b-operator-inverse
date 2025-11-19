@@ -214,6 +214,77 @@ def _plot_2d_field(ax, field_2d, cmap="viridis", vmin=None, vmax=None, annotatio
     return im
 
 
+def _plot_2d_field_cutaway(
+    ax,
+    field_binary,
+    field_continuous,
+    cmap="viridis",
+    vmin=None,
+    vmax=None,
+    annotation=None,
+):
+    """Plot a 2D density field with small inset showing continuous values.
+
+    Args:
+        ax: Axis to plot on
+        field_binary: 2D numpy array for binary/thresholded field (background)
+        field_continuous: 2D numpy array for continuous values (inset overlay)
+        cmap: Colormap name
+        vmin, vmax: Color scale limits
+        annotation: Optional text annotation for upper-left corner
+
+    Returns:
+        The image object from the main binary field
+    """
+    extent = [0, 1, 0, 1]
+
+    # Plot binary field as main image
+    im = ax.imshow(
+        field_binary, cmap=cmap, extent=extent, origin="lower", vmin=vmin, vmax=vmax
+    )
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_aspect("equal")
+
+    # Add annotation if provided
+    if annotation:
+        ax.text(
+            0.05,
+            0.95,
+            annotation,
+            transform=ax.transAxes,
+            fontsize=5,
+            color="white",
+            verticalalignment="top",
+            horizontalalignment="left",
+            bbox=dict(
+                boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
+            ),
+        )
+
+    # Create inset axes in lower-right corner (about 1/4 area)
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+    ax_inset = inset_axes(
+        ax, width="50%", height="50%", loc="lower right", borderpad=0.3
+    )
+
+    # Plot continuous field in inset
+    ax_inset.imshow(
+        field_continuous, cmap=cmap, extent=extent, origin="lower", vmin=vmin, vmax=vmax
+    )
+    ax_inset.set_xticks([])
+    ax_inset.set_yticks([])
+
+    # Add white border to make inset stand out
+    for spine in ax_inset.spines.values():
+        spine.set_edgecolor("white")
+        spine.set_linewidth(0.5)
+
+    return im
+
+
 # def plot_unified_comparison(
 #     models_dict,
 #     ranked_models,
@@ -454,7 +525,15 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
             # Create thresholded version (binary density field)
             s_mean_thresholded = (s_mean_2d > 0.5).astype(float)
 
-            processed_preds[model_name] = (u_mean_mag, s_mean_thresholded)
+            # For iFNO, store both continuous and thresholded versions
+            if model_name == "ifno":
+                processed_preds[model_name] = (
+                    u_mean_mag,
+                    s_mean_thresholded,
+                    s_mean_2d,
+                )
+            else:
+                processed_preds[model_name] = (u_mean_mag, s_mean_thresholded)
             all_s_values.append(s_mean_thresholded)
 
     # Determine consistent value limits
@@ -465,7 +544,15 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     im_right = None
     for idx, model_name in enumerate(models_to_plot[:5]):
         if model_name in processed_preds:
-            u_mag, s_2d = processed_preds[model_name]
+            pred_data = processed_preds[model_name]
+
+            # Check if this is iFNO (has 3 elements: u_mag, binary, continuous)
+            if len(pred_data) == 3:
+                u_mag, s_binary, s_continuous = pred_data
+                is_ifno = True
+            else:
+                u_mag, s_2d = pred_data
+                is_ifno = False
 
             # Far-field pattern (left - polar)
             ax = axes_left[idx]
@@ -473,14 +560,27 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
             # Density field (right - 2D)
             ax = axes_right[idx]
-            im_right = _plot_2d_field(
-                ax,
-                s_2d,
-                cmap="viridis",
-                vmin=s_min,
-                vmax=s_max,
-                annotation=display_name(model_name),
-            )
+            if is_ifno:
+                # Use cutaway plot for iFNO to show continuous values
+                im_right = _plot_2d_field_cutaway(
+                    ax,
+                    s_binary,
+                    s_continuous,
+                    cmap="viridis",
+                    vmin=s_min,
+                    vmax=s_max,
+                    annotation=display_name(model_name),
+                )
+            else:
+                # Regular binary plot for other models
+                im_right = _plot_2d_field(
+                    ax,
+                    s_2d,
+                    cmap="viridis",
+                    vmin=s_min,
+                    vmax=s_max,
+                    annotation=display_name(model_name),
+                )
 
     # 6th position: ground truth
     ax = axes_left[5]
@@ -534,7 +634,7 @@ def main():
     parser.add_argument(
         "--ifno_checkpoint",
         type=str,
-        default="logs_ifno/wave_scattering/ifno_model.pth",
+        default="logs_ifno/wave_scattering/seed_0/ifno_model.pth",
         help="Path to trained IFNO weights (set empty to skip).",
     )
     args = parser.parse_args()
@@ -590,7 +690,9 @@ def main():
     ifno_checkpoint = args.ifno_checkpoint.strip() if args.ifno_checkpoint else ""
     include_ifno = bool(ifno_checkpoint)
     if include_ifno and not os.path.exists(ifno_checkpoint):
-        print(f"  Warning: IFNO checkpoint not found at {ifno_checkpoint}. Skipping IFNO panel.")
+        print(
+            f"  Warning: IFNO checkpoint not found at {ifno_checkpoint}. Skipping IFNO panel."
+        )
         include_ifno = False
 
     b2b_models_to_plot = list(models_to_plot)
@@ -622,7 +724,9 @@ def main():
             )
             final_model_order.append("ifno")
         except Exception as exc:
-            print(f"  Warning: Unable to evaluate IFNO checkpoint ({exc}). Skipping IFNO panel.")
+            print(
+                f"  Warning: Unable to evaluate IFNO checkpoint ({exc}). Skipping IFNO panel."
+            )
 
     print("Rendering figure...")
     plot_comparison(sample_idx, final_model_order, predictions, meta, args.results_dir)

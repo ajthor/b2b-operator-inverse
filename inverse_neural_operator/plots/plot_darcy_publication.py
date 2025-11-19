@@ -219,7 +219,7 @@ def main():
     parser.add_argument(
         "--ifno_checkpoint",
         type=str,
-        default="logs_ifno/darcy_1d/ifno_model.pth",
+        default="logs_ifno/darcy_1d/seed_0/ifno_model.pth",
         help="Path to trained IFNO weights (set to empty string to skip).",
     )
     args = parser.parse_args()
@@ -265,7 +265,9 @@ def main():
     ifno_checkpoint = args.ifno_checkpoint.strip() if args.ifno_checkpoint else ""
     include_ifno = bool(ifno_checkpoint)
     if include_ifno and not os.path.exists(ifno_checkpoint):
-        print(f"  Warning: IFNO checkpoint not found at {ifno_checkpoint}. Skipping IFNO panel.")
+        print(
+            f"  Warning: IFNO checkpoint not found at {ifno_checkpoint}. Skipping IFNO panel."
+        )
         include_ifno = False
 
     b2b_models_to_plot = list(models_to_plot)
@@ -294,7 +296,9 @@ def main():
             )
             final_model_order.append("ifno")
         except Exception as exc:
-            print(f"  Warning: Unable to evaluate IFNO checkpoint ({exc}). Skipping IFNO panel.")
+            print(
+                f"  Warning: Unable to evaluate IFNO checkpoint ({exc}). Skipping IFNO panel."
+            )
 
     print("Rendering figure...")
     plot_comparison(sample_idx, final_model_order, predictions, meta, args.results_dir)

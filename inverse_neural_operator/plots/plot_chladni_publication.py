@@ -98,13 +98,17 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     u_true = meta["u_true"]
     s_true = meta["s_true"]
 
-    # Compute colorbar limits
+    # Compute colorbar limits (excluding iFNO to avoid extreme values)
     u_min = u_true.min()
     u_max = u_true.max()
     s_min = s_true.min()
     s_max = s_true.max()
 
     for model_name in models_to_plot:
+        # Skip iFNO when computing color limits
+        if model_name == "ifno":
+            continue
+
         preds = predictions.get(model_name, {})
         if "inputs" in preds and preds["inputs"].size > 0:
             u_min = min(u_min, preds["inputs"].min())
@@ -135,6 +139,10 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
         if u_samples.size > 0:
             u_mean = u_samples.mean(axis=0)
             u_mean_2d = u_mean.reshape(grid_size, grid_size)
+
+            # Clip iFNO values to computed range
+            if model_name == "ifno":
+                u_mean_2d = np.clip(u_mean_2d, u_min, u_max)
 
             im_left = ax.imshow(
                 u_mean_2d,
@@ -177,6 +185,10 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
         if s_samples.size > 0:
             s_mean = s_samples.mean(axis=0)
             s_mean_2d = s_mean.reshape(grid_size, grid_size)
+
+            # Clip iFNO values to computed range
+            if model_name == "ifno":
+                s_mean_2d = np.clip(s_mean_2d, s_min, s_max)
 
             im_right = ax.imshow(
                 s_mean_2d,
@@ -294,7 +306,7 @@ def main():
     parser.add_argument(
         "--ifno_checkpoint",
         type=str,
-        default="logs_ifno/chladni_2d/ifno_model.pth",
+        default="logs_ifno/chladni_2d/seed_0/ifno_model.pth",
         help="Path to trained IFNO weights (set empty to skip).",
     )
     args = parser.parse_args()
@@ -340,7 +352,9 @@ def main():
     ifno_checkpoint = args.ifno_checkpoint.strip() if args.ifno_checkpoint else ""
     include_ifno = bool(ifno_checkpoint)
     if include_ifno and not os.path.exists(ifno_checkpoint):
-        print(f"  Warning: IFNO checkpoint not found at {ifno_checkpoint}. Skipping IFNO panel.")
+        print(
+            f"  Warning: IFNO checkpoint not found at {ifno_checkpoint}. Skipping IFNO panel."
+        )
         include_ifno = False
 
     b2b_models_to_plot = list(models_to_plot)
@@ -372,7 +386,9 @@ def main():
             )
             final_model_order.append("ifno")
         except Exception as exc:
-            print(f"  Warning: Unable to evaluate IFNO checkpoint ({exc}). Skipping IFNO panel.")
+            print(
+                f"  Warning: Unable to evaluate IFNO checkpoint ({exc}). Skipping IFNO panel."
+            )
 
     print("Rendering figure...")
     plot_comparison(sample_idx, final_model_order, predictions, meta, args.results_dir)

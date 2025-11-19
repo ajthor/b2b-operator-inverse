@@ -42,7 +42,10 @@ INVERSE_MODELS = (
     "linear_inverse",
     "nonlinear",
     "inn_affine",
+    "inn_additive",
     "cinn_affine",
+    "cinn_additive",
+    "cinn_additive_probabilistic",
     "variational_autoencoder",
     "conditional_realnvp",
     "mixture_density_network",
@@ -54,7 +57,9 @@ N_SAMPLES = 10
 GROUND_TRUTH_COLOR = "#CCCCCC"
 
 
-def plot_comparison(sample_idx, models_to_plot, predictions, meta, forward_model, output_enc, save_dir):
+def plot_comparison(
+    sample_idx, models_to_plot, predictions, meta, forward_model, output_enc, save_dir
+):
     """Create publication figure with balanced input and output grids."""
     fig = plt.figure(figsize=(6.5, 1.5), layout="constrained")
     fig.set_constrained_layout_pads(
@@ -75,14 +80,18 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, forward_model
 
     # Parent axes for left grid (inputs)
     ax_left = fig.add_subplot(gs[:, 0:4], frameon=False)
-    ax_left.tick_params(labelcolor="none", top=False, bottom=False, left=False, right=False)
+    ax_left.tick_params(
+        labelcolor="none", top=False, bottom=False, left=False, right=False
+    )
     ax_left.set_xlabel(r"$x$", labelpad=-8)
     ax_left.set_ylabel(r"$f(x)$", labelpad=-8)
     ax_left.set_title("Burgers Input Reconstructions")
 
     # Parent axes for right grid (outputs)
     ax_right = fig.add_subplot(gs[:, 5:9], frameon=False)
-    ax_right.tick_params(labelcolor="none", top=False, bottom=False, left=False, right=False)
+    ax_right.tick_params(
+        labelcolor="none", top=False, bottom=False, left=False, right=False
+    )
     ax_right.set_xlabel(r"$y$", labelpad=-8)
     ax_right.set_ylabel(r"$h(y)$", labelpad=-8)
     ax_right.set_title("Burgers Output Re-Simulations")
@@ -143,7 +152,9 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, forward_model
             color="white",
             va="top",
             ha="left",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"),
+            bbox=dict(
+                boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
+            ),
         )
 
     # Plot output predictions (right 2x4 grid)
@@ -157,7 +168,9 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, forward_model
         color = get_model_color(model_name, idx)
 
         if s_samples.size > 0:
-            ax.plot(y, s_true, color=GROUND_TRUTH_COLOR, linewidth=1.0, linestyle="dashed")
+            ax.plot(
+                y, s_true, color=GROUND_TRUTH_COLOR, linewidth=1.0, linestyle="dashed"
+            )
 
             for sample in s_samples:
                 ax.plot(y, sample, color=color, alpha=0.6, linewidth=0.6)
@@ -175,7 +188,12 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, forward_model
                 color="white",
                 va="top",
                 ha="left",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"),
+                bbox=dict(
+                    boxstyle="round,pad=0.3",
+                    facecolor="black",
+                    alpha=0.7,
+                    edgecolor="none",
+                ),
             )
         else:
             ax.axis("off")
@@ -203,7 +221,7 @@ def main():
     parser.add_argument(
         "--ifno_checkpoint",
         type=str,
-        default="logs_ifno/burgers_1d/ifno_model.pth",
+        default="logs_ifno/burgers_1d/seed_0/ifno_model.pth",
         help="Path to trained IFNO weights (set to empty string to skip).",
     )
     args = parser.parse_args()
@@ -249,7 +267,9 @@ def main():
     ifno_checkpoint = args.ifno_checkpoint.strip() if args.ifno_checkpoint else ""
     include_ifno = bool(ifno_checkpoint)
     if include_ifno and not os.path.exists(ifno_checkpoint):
-        print(f"  Warning: IFNO checkpoint not found at {ifno_checkpoint}. Skipping IFNO panel.")
+        print(
+            f"  Warning: IFNO checkpoint not found at {ifno_checkpoint}. Skipping IFNO panel."
+        )
         include_ifno = False
 
     b2b_models_to_plot = list(models_to_plot)
@@ -278,11 +298,19 @@ def main():
             )
             final_model_order.append("ifno")
         except Exception as exc:
-            print(f"  Warning: Unable to evaluate IFNO checkpoint ({exc}). Skipping IFNO panel.")
+            print(
+                f"  Warning: Unable to evaluate IFNO checkpoint ({exc}). Skipping IFNO panel."
+            )
 
     print("Rendering figure...")
     plot_comparison(
-        sample_idx, final_model_order, predictions, meta, forward_model, output_enc, args.results_dir
+        sample_idx,
+        final_model_order,
+        predictions,
+        meta,
+        forward_model,
+        output_enc,
+        args.results_dir,
     )
     print(f"SUCCESS: Created publication figure → {args.results_dir}")
 
