@@ -6,25 +6,25 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import os
 
-from b2b.function_encoder import (
+from inverse_neural_operator.b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
-from b2b.load_model import load_forward_model
-from b2b.load_model import (
+from inverse_neural_operator.b2b.load_model import load_forward_model
+from inverse_neural_operator.b2b.load_model import (
     load_function_encoders,
     load_function_encoder_params,
 )
 
-from data.load_dataset import load_dataset
-from models.create_model import create_model
+from inverse_neural_operator.data.load_dataset import load_dataset
+from inverse_neural_operator.models.create_model import create_model
 
-from utils.device import get_device, set_seed
-from utils.params import save_params
-from utils.checkpoints import setup_checkpoint_dir
-from utils.args import load_defaults_from_yaml
-from utils.imports import import_model_functions
+from inverse_neural_operator.utils.device import get_device, set_seed
+from inverse_neural_operator.utils.params import save_params
+from inverse_neural_operator.utils.checkpoints import setup_checkpoint_dir
+from inverse_neural_operator.utils.args import load_defaults_from_yaml
+from inverse_neural_operator.utils.imports import import_model_functions
 
 torch.set_float32_matmul_precision("high")
 

@@ -13,9 +13,9 @@ from scipy.interpolate import griddata
 
 sys.path.insert(0, "inverse_neural_operator")
 
-from data.load_dataset import load_dataset
-from models.load_model import load_models
-from b2b.load_model import load_forward_model
+from inverse_neural_operator.data.load_dataset import load_dataset
+from inverse_neural_operator.models.load_model import load_models
+from inverse_neural_operator.b2b.load_model import load_forward_model
 
 DEVICE = "cpu"
 DEFAULT_SAMPLE_COUNT = 10

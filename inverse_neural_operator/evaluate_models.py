@@ -35,9 +35,9 @@ import torch
 from tabulate import tabulate
 from torch.utils.data import DataLoader
 
-from b2b.load_model import load_forward_model
-from data.load_dataset import load_dataset
-from models.load_model import load_models
+from inverse_neural_operator.b2b.load_model import load_forward_model
+from inverse_neural_operator.data.load_dataset import load_dataset
+from inverse_neural_operator.models.load_model import load_models
 
 
 # Order in which metrics are reported (key, human readable label)

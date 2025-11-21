@@ -24,22 +24,24 @@ import torch
 from scipy.interpolate import griddata
 
 # Add project root to path for module imports
-sys.path.insert(0, "inverse_neural_operator")
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from data.load_dataset import load_dataset
-from plots.utils.model_utils import (
+from inverse_neural_operator.data.load_dataset import load_dataset
+from inverse_neural_operator.plots.utils.model_utils import (
     evaluate_models_on_subset,
     load_all_models,
     select_models_and_sample,
 )
-from plots.utils.plot_utils import (
+from inverse_neural_operator.plots.utils.plot_utils import (
     setup_publication_style,
     display_name,
     get_model_color,
     find_params,
     load_forward_model,
 )
-from models.ifno import create_model as create_ifno_model, load as load_ifno_weights
+from inverse_neural_operator.models.ifno import create_model as create_ifno_model, load as load_ifno_weights
 
 DEVICE = "cpu"
 

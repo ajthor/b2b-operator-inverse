@@ -9,7 +9,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import torch
 
-from b2b.load_model import load_forward_model as load_b2b_forward_model
+from inverse_neural_operator.b2b.load_model import load_forward_model as load_b2b_forward_model
 
 
 # Display names for models

@@ -5,14 +5,14 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import os
 
-from utils.device import get_device, set_seed
-from utils.params import save_params
-from utils.checkpoints import setup_checkpoint_dir
-from utils.args import load_defaults_from_yaml
-from utils.imports import import_model_functions
-from data.load_dataset import load_dataset
-from b2b.load_model import load_function_encoder_params, load_function_encoders
-from b2b.create_model import create_forward_model
+from inverse_neural_operator.utils.device import get_device, set_seed
+from inverse_neural_operator.utils.params import save_params
+from inverse_neural_operator.utils.checkpoints import setup_checkpoint_dir
+from inverse_neural_operator.utils.args import load_defaults_from_yaml
+from inverse_neural_operator.utils.imports import import_model_functions
+from inverse_neural_operator.data.load_dataset import load_dataset
+from inverse_neural_operator.b2b.load_model import load_function_encoder_params, load_function_encoders
+from inverse_neural_operator.b2b.create_model import create_forward_model
 
 torch.set_float32_matmul_precision("high")
 

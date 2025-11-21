@@ -25,7 +25,7 @@ import torch
 # Add project root to path for module imports
 sys.path.insert(0, "inverse_neural_operator")
 
-from data.load_dataset import load_dataset
+from inverse_neural_operator.data.load_dataset import load_dataset
 from plots.utils.model_utils import (
     evaluate_models_on_subset,
     load_all_models,

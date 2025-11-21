@@ -30,7 +30,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
     
     match model_name:
         case "linear_inverse":
-            from models.linear_inverse import create_model
+            from inverse_neural_operator.models.linear_inverse import create_model
 
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for linear_inverse model")
@@ -42,7 +42,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = None
 
         case "linear":
-            from models.linear import create_model
+            from inverse_neural_operator.models.linear import create_model
 
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for linear model")
@@ -54,7 +54,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = None
 
         case "nonlinear":
-            from models.nonlinear import create_model
+            from inverse_neural_operator.models.nonlinear import create_model
 
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for nonlinear model")
@@ -68,7 +68,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             
             
         case "variational_autoencoder":
-            from models.variational_autoencoder import create_model
+            from inverse_neural_operator.models.variational_autoencoder import create_model
             
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for variational_autoencoder")
@@ -82,7 +82,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
         case "inn_additive":
-            from models.inn_additive import create_model
+            from inverse_neural_operator.models.inn_additive import create_model
             
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for inn_additive")
@@ -96,7 +96,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
         case "inn_affine":
-            from models.inn_affine import create_model
+            from inverse_neural_operator.models.inn_affine import create_model
             
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for inn_affine")
@@ -110,7 +110,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
         case "cinn_additive":
-            from models.cinn_additive import create_model
+            from inverse_neural_operator.models.cinn_additive import create_model
             
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for cinn_additive")
@@ -124,7 +124,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
         case "cinn_affine":
-            from models.cinn_affine import create_model
+            from inverse_neural_operator.models.cinn_affine import create_model
 
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for cinn_affine")
@@ -138,7 +138,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
         case "cinn_additive_probabilistic":
-            from models.cinn_additive_probabilistic import create_model
+            from inverse_neural_operator.models.cinn_additive_probabilistic import create_model
 
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for cinn_additive_probabilistic")
@@ -152,7 +152,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
         case "cinn_affine_probabilistic":
-            from models.cinn_affine_probabilistic import create_model
+            from inverse_neural_operator.models.cinn_affine_probabilistic import create_model
 
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for cinn_affine_probabilistic")
@@ -166,7 +166,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
         case "ifno":
-            from models.ifno import create_model
+            from inverse_neural_operator.models.ifno import create_model
             
             if input_size is None:
                 raise ValueError("input_size is required for ifno")
@@ -193,7 +193,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
             
         case "mixture_density_network":
-            from models.mixture_density_network import create_model
+            from inverse_neural_operator.models.mixture_density_network import create_model
 
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for mixture_density_network")
@@ -207,7 +207,7 @@ def create_model(model_name, params, dataset_info, device, input_size=None, outp
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
         case "conditional_realnvp":
-            from models.conditional_realnvp import create_model
+            from inverse_neural_operator.models.conditional_realnvp import create_model
 
             if input_size is None or output_size is None:
                 raise ValueError("input_size and output_size are required for conditional_realnvp")

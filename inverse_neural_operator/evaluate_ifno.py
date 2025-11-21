@@ -33,8 +33,8 @@ import torch
 from tabulate import tabulate
 from torch.utils.data import DataLoader
 
-from data.load_dataset import load_dataset
-from plots.utils.ifno_utils import load_ifno_model
+from inverse_neural_operator.data.load_dataset import load_dataset
+from inverse_neural_operator.plots.utils.ifno_utils import load_ifno_model
 
 
 # Order in which metrics are reported (key, human readable label)

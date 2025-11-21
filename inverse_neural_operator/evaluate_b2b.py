@@ -25,10 +25,10 @@ from collections import defaultdict
 import warnings
 import math
 
-from data.load_dataset import load_dataset
-from b2b.load_model import load_function_encoders, load_forward_model
-from data.process_data import InputFunctionEncoderDataset, OutputFunctionEncoderDataset
-from b2b.function_encoder import evaluate as evaluate_function_encoder
+from inverse_neural_operator.data.load_dataset import load_dataset
+from inverse_neural_operator.b2b.load_model import load_function_encoders, load_forward_model
+from inverse_neural_operator.data.process_data import InputFunctionEncoderDataset, OutputFunctionEncoderDataset
+from inverse_neural_operator.b2b.function_encoder import evaluate as evaluate_function_encoder
 
 # Try to import tensorboard for reading event files
 try:

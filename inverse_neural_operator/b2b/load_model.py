@@ -7,12 +7,12 @@ This module provides functionality to load trained B2B models from disk.
 import os
 import torch
 
-from b2b.function_encoder import (
+from inverse_neural_operator.b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
-from b2b.create_model import create_forward_model
+from inverse_neural_operator.b2b.create_model import create_forward_model
 
 
 def load_function_encoder_params(log_dir: str):

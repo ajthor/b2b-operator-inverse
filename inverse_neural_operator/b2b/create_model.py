@@ -30,7 +30,7 @@ def create_forward_model(model_name, params, input_size, output_size, device):
 
     match model_name:
         case "b2b_nonlinear":
-            from b2b.b2b_nonlinear import create_model
+            from inverse_neural_operator.b2b.b2b_nonlinear import create_model
 
             model = create_model(
                 input_size=input_size,
@@ -40,7 +40,7 @@ def create_forward_model(model_name, params, input_size, output_size, device):
             optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)
 
         case "b2b_linear":
-            from b2b.b2b_linear import create_model
+            from inverse_neural_operator.b2b.b2b_linear import create_model
 
             model = create_model(
                 input_size=input_size,
