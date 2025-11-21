@@ -1,14 +1,19 @@
-import torch
+import os
+import json
 import numpy as np
-import matplotlib.pyplot as plt
+import torch
 from torch.utils.data import Dataset
 from datasets import load_dataset
+
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+stats_path = os.path.join(current_dir, "wave_scattering_normalization_stats.json")
 
 
 class WaveScatteringDataset(Dataset):
     """Custom dataset for wave scattering data."""
 
-    def __init__(self, dataset, device="cpu"):
+    def __init__(self, dataset, stats, device="cpu"):
         """
         Initialize the dataset by extracting 'theta' (input params), 'u' (input values),
         and 's' (output values) and creating coordinate grid.
@@ -19,6 +24,7 @@ class WaveScatteringDataset(Dataset):
         """
         self.device = device
         self.n_samples = len(dataset)
+        self.stats = stats
 
         # Extract theta (X), u, and s values from dataset
         self.X = torch.tensor(dataset["theta"], device=device)  # Input parameters
@@ -39,6 +45,10 @@ class WaveScatteringDataset(Dataset):
         if self.s.dim() == 2:
             self.s = self.s.unsqueeze(-1)
 
+        # Normalize u and s
+        self.u = self._normalize(self.u, stats["u_mean"], stats["u_std"])
+        self.s = self._normalize(self.s, stats["s_mean"], stats["s_std"])
+
         # Create a meshgrid for Y coordinates
         grid_size = 200
         x = torch.linspace(0, 1, grid_size, device=device)
@@ -47,6 +57,12 @@ class WaveScatteringDataset(Dataset):
 
         self.Y = torch.stack([X_grid.flatten(), Y_grid.flatten()], dim=1)
         self.Y = self.Y.unsqueeze(0).expand(self.s.shape[0], -1, -1)
+
+    @staticmethod
+    def _normalize(tensor, mean, std):
+        mean = torch.as_tensor(mean, device=tensor.device, dtype=tensor.dtype)
+        std = torch.as_tensor(std, device=tensor.device, dtype=tensor.dtype).clamp(min=1e-6)
+        return (tensor - mean) / std
 
     def __len__(self):
         return self.n_samples
@@ -95,7 +111,20 @@ class WaveScatteringDataset(Dataset):
             "input_function_channels": self.u.shape[-1],  # Actual number of function channels in u
             "output_function_channels": self.s.shape[-1],  # Actual number of function channels in s
             "coordinate_dim": 2,  # Coordinates are 2D (x, y)
+            "normalization_stats": self.stats,
         }
+
+
+def compute_stats(dataset):
+    """Compute mean and std for u and s fields in the dataset."""
+    u_data = np.array(dataset["u"])
+    s_data = np.array(dataset["s"])
+    return {
+        "u_mean": float(np.mean(u_data)),
+        "u_std": float(np.std(u_data)),
+        "s_mean": float(np.mean(s_data)),
+        "s_std": float(np.std(s_data)),
+    }
 
 
 def load_data(params, device, split="train"):
@@ -111,8 +140,20 @@ def load_data(params, device, split="train"):
         A tuple containing the datasets and info for the specified split
     """
 
+    # Load stats (compute from train if missing)
+    if os.path.exists(stats_path):
+        with open(stats_path, "r") as f:
+            stats = json.load(f)
+    else:
+        print(f"Normalization stats not found at {stats_path}. Computing from training set...")
+        train_ds = load_dataset("ajthor/wave_scattering", split="train")
+        stats = compute_stats(train_ds)
+        with open(stats_path, "w") as f:
+            json.dump(stats, f, indent=2)
+        print(f"Stats saved to {stats_path}")
+
     ds = load_dataset("ajthor/wave_scattering", split=split)
 
-    model_dataset = WaveScatteringDataset(ds, device=device)
+    model_dataset = WaveScatteringDataset(ds, stats=stats, device=device)
 
     return model_dataset

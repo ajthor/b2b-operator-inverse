@@ -51,19 +51,19 @@ def load_dataset(dataset_name, params, device, split="train", return_info=False)
     # Load dataset based on name
     match dataset_name:
         case "burgers_1d":
-            from data.burgers_1d import load_data
+            from inverse_neural_operator.data.burgers_1d import load_data
         case "darcy_1d":
-            from data.darcy_1d import load_data
+            from inverse_neural_operator.data.darcy_1d import load_data
         case "parametric_heat":
-            from data.parametric_heat import load_data
+            from inverse_neural_operator.data.parametric_heat import load_data
         case "wave_scattering":
-            from data.wave_scattering import load_data
+            from inverse_neural_operator.data.wave_scattering import load_data
         case "chladni_2d":
-            from data.chladni_2d import load_data
+            from inverse_neural_operator.data.chladni_2d import load_data
         case "fwi":
-            from data.fwi_data import load_data
+            from inverse_neural_operator.data.fwi_data import load_data
         case "elastic_plate":
-            from data.elastic_plate import load_data
+            from inverse_neural_operator.data.elastic_plate import load_data
         case _:
             raise ValueError(f"Unknown dataset: {dataset_name}")
 

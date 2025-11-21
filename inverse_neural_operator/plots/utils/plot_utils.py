@@ -26,6 +26,7 @@ DISPLAY_NAMES = {
     "conditional_realnvp": "RealNVP",
     "mixture_density_network": "MDN",
     "ifno": "iFNO",
+    "cinn_additive_probabilistic": "cINN-Add-Prob",
 }
 
 # Colorblind-friendly, high-contrast palette (Okabe-Ito + Tol extensions)
@@ -41,6 +42,7 @@ MODEL_COLOR_SEQUENCE = (
     "#44AA99",  # teal
     "#AA4499",  # mauve
     "#117733",  # dark green
+    "#882255",  # dark magenta
     "#999999",  # gray
 )
 MODEL_COLOR_ORDER = (
@@ -56,6 +58,7 @@ MODEL_COLOR_ORDER = (
     "cinn_additive_probabilistic",
     "cinn_additive",
     "linear_inverse",
+    "cinn_additive_probabilistic",
 )
 MODEL_COLORS = {
     name: MODEL_COLOR_SEQUENCE[idx % len(MODEL_COLOR_SEQUENCE)]

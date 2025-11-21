@@ -1,23 +1,31 @@
 import torch
-import matplotlib.pyplot as plt
+import os
+import json
+import numpy as np
 from torch.utils.data import Dataset
 from datasets import load_dataset
 
+# Get paths relative to this file
+current_dir = os.path.dirname(os.path.abspath(__file__))
+stats_path = os.path.join(current_dir, 'darcy_1d_normalization_stats.json')
 
-class DarcyDataset(Dataset):
-    """Custom dataset for Darcy 1D equation data."""
+class DarcyNormDataset(Dataset):
+    """Custom dataset for Normalized Darcy 1D equation data."""
 
-    def __init__(self, dataset, device="cpu"):
+    def __init__(self, dataset, stats, device="cpu"):
         """
-        Initialize from HuggingFace dataset.
+        Initialize from HuggingFace dataset with normalization.
 
         Args:
             dataset: HuggingFace dataset with 'X', 'u', 'Y', 's' fields
+            stats: Dictionary containing mean and std for 'u' and 's'
             device: The device to put tensors on
         """
         self.device = device
         self.n_samples = len(dataset)
+        self.stats = stats
 
+        # Load data as tensors
         self.X = torch.tensor(dataset["X"], device=device)
         self.u = torch.tensor(dataset["u"], device=device)
         self.Y = torch.tensor(dataset["Y"], device=device)
@@ -32,6 +40,18 @@ class DarcyDataset(Dataset):
             self.Y = self.Y.unsqueeze(-1)
         if self.s.dim() == 2:
             self.s = self.s.unsqueeze(-1)
+
+        # Apply normalization
+        self.u = self._normalize(self.u, stats['u_mean'], stats['u_std'])
+        self.s = self._normalize(self.s, stats['s_mean'], stats['s_std'])
+
+    def _normalize(self, tensor, mean, std):
+        """Normalize tensor using mean and std."""
+        return (tensor - mean) / std
+
+    def _denormalize(self, tensor, mean, std):
+        """Denormalize tensor using mean and std."""
+        return tensor * std + mean
 
     def __len__(self):
         return self.n_samples
@@ -48,7 +68,7 @@ class DarcyDataset(Dataset):
     def get_info(self):
         """Extract info from model dataset."""
         return {
-            # Basic info (existing)
+            # Basic info
             "X_size": self.X.shape[-1],
             "u_size": self.u.shape[-1],
             "Y_size": self.Y.shape[-1],
@@ -64,12 +84,26 @@ class DarcyDataset(Dataset):
             "input_function_channels": 1,        # Scalar permeability field
             "output_function_channels": 1,       # Scalar pressure field
             "coordinate_dim": 1,                 # 1D spatial coordinates
+            
+            # Normalization info
+            "normalization_stats": self.stats
         }
 
+def compute_stats(dataset):
+    """Compute mean and std for u and s fields in the dataset."""
+    u_data = np.array(dataset["u"])
+    s_data = np.array(dataset["s"])
+    
+    return {
+        "u_mean": float(np.mean(u_data)),
+        "u_std": float(np.std(u_data)),
+        "s_mean": float(np.mean(s_data)),
+        "s_std": float(np.std(s_data))
+    }
 
 def load_data(params, device, split="train"):
     """
-    Load a dataset from a specific split.
+    Load a normalized dataset from a specific split.
 
     Args:
         params: Parameters for processing
@@ -77,11 +111,29 @@ def load_data(params, device, split="train"):
         split: The dataset split to load (default: "train")
 
     Returns:
-        A tuple containing the datasets and info for the specified split
+        DarcyNormDataset instance
     """
+    
+    # Load statistics or compute them from training set if missing
+    if os.path.exists(stats_path):
+        with open(stats_path, 'r') as f:
+            stats = json.load(f)
+    else:
+        print(f"Normalization stats not found at {stats_path}. Computing from training set...")
+        # Load training set to compute stats
+        train_ds = load_dataset("ajthor/darcy_1d", split="train")
+        stats = compute_stats(train_ds)
+        
+        # Save stats
+        with open(stats_path, 'w') as f:
+            json.dump(stats, f, indent=2)
+        print(f"Stats saved to {stats_path}")
 
+    # Load the requested split
     ds = load_dataset("ajthor/darcy_1d", split=split)
 
-    model_dataset = DarcyDataset(ds, device=device)
+    # Create normalized dataset
+    model_dataset = DarcyNormDataset(ds, stats, device=device)
 
     return model_dataset
+
