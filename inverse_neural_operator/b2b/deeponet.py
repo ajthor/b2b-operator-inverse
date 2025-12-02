@@ -6,6 +6,9 @@ from torch.utils.data import Subset, DataLoader
 import tqdm
 import os
 
+from utils.distributed import is_main_process
+from torch.cuda.amp import autocast, GradScaler
+
 
 class DeepONet(torch.nn.Module):
     """
@@ -170,6 +173,8 @@ def load(model, path, device=None):
 
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
+    if not is_main_process():
+        return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     checkpoint = {
         "epoch": epoch,
@@ -244,6 +249,8 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
+    enable_amp = device is not None and str(device).startswith("cuda")
+    scaler = GradScaler(enabled=enable_amp)
     train_dataloader_iter = iter(train_dataloader)
     test_dataloader_iter = iter(test_dataloader)
     tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
@@ -251,12 +258,14 @@ def train(
         model.train()
         batch = next(train_dataloader_iter)
         optimizer.zero_grad()
-        loss = loss_function(
-            model=model,
-            batch=batch,
-        )
-        loss.backward()
-        optimizer.step()
+        with autocast(enabled=enable_amp):
+            loss = loss_function(
+                model=model,
+                batch=batch,
+            )
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         if summary_writer:
             summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
@@ -264,6 +273,7 @@ def train(
         avg_test_loss = test_model(
             model=model,
             test_dataloader_iter=test_dataloader_iter,
+            use_amp=enable_amp,
         )
 
         if summary_writer:
@@ -282,14 +292,16 @@ def test_model(
     test_dataloader_iter,
     input_function_encoder=None,  # Not used but kept for API compatibility
     output_function_encoder=None,  # Not used but kept for API compatibility
+    use_amp=False,
 ):
     model.eval()
     with torch.no_grad():
         batch = next(test_dataloader_iter)
-        loss = loss_function(
-            model=model,
-            batch=batch,
-        )
+        with autocast(enabled=use_amp):
+            loss = loss_function(
+                model=model,
+                batch=batch,
+            )
 
     return loss.item()
 

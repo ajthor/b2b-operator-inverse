@@ -5,11 +5,17 @@ model: nonlinear
 hidden_sizes: [512, 512, 512]
 forward_model: b2b_nonlinear
 
-batch_size: 20
-epochs: 20000
+batch_size: 128
+epochs: 1600
+grad_accumulation_steps: 2
 learning_rate: 0.0001
 
 seed: 42
 
 checkpoint_interval: 100
 resume: false
+
+num_workers: 4
+prefetch_factor: 2
+
+dataset_device: cpu

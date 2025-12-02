@@ -3,6 +3,8 @@ import numpy as np
 from torch.utils.data import Subset, DataLoader
 from safetensors.torch import save_file, load_file
 
+from utils.distributed import is_main_process
+
 import tqdm
 import os
 
@@ -64,6 +66,8 @@ def load(model, path, device=None):
 
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
+    if not is_main_process():
+        return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     checkpoint = {
         "epoch": epoch,

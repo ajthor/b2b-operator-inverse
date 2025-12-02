@@ -8,11 +8,19 @@ n_basis: 100
 hidden_sizes: [512, 512, 512]
 regularization: 0.001
 
-batch_size: 20
-epochs: 20000
+batch_size: 128
+# Each "epoch" corresponds to one optimizer step; with the settings below this
+# processes roughly the same number of samples as the original configuration.
+epochs: 1600
+grad_accumulation_steps: 2
 learning_rate: 0.0001
 
 seed: 42
 
 checkpoint_interval: 100
 resume: false
+
+num_workers: 4
+prefetch_factor: 2
+
+dataset_device: cpu

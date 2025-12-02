@@ -4,11 +4,17 @@ model: b2b_nonlinear
 
 hidden_sizes: [512, 512, 512]
 
-batch_size: 20
-epochs: 20000
+batch_size: 128
+epochs: 1600
 learning_rate: 0.0001
 
 seed: 42
 
 checkpoint_interval: 100
 resume: false
+
+num_workers: 4
+prefetch_factor: 2
+grad_accumulation_steps: 2
+
+dataset_device: cpu

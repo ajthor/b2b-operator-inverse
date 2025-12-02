@@ -28,20 +28,20 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.plots.utils.model_utils import (
+from data.load_dataset import load_dataset
+from plots.utils.model_utils import (
     evaluate_models_on_subset,
     load_all_models,
     select_models_and_sample,
 )
-from inverse_neural_operator.plots.utils.plot_utils import (
+from plots.utils.plot_utils import (
     setup_publication_style,
     display_name,
     get_model_color,
     find_params,
     load_forward_model,
 )
-from inverse_neural_operator.models.ifno import create_model as create_ifno_model, load as load_ifno_weights
+from models.ifno import create_model as create_ifno_model, load as load_ifno_weights
 
 DEVICE = "cpu"
 
@@ -54,12 +54,13 @@ def publication_display_name(model_name: str) -> str:
     """Return display label with local overrides for publication plots."""
     return PUBLICATION_DISPLAY_OVERRIDES.get(model_name, display_name(model_name))
 
+
 INVERSE_MODELS = (
- #   "linear",
+    #   "linear",
     "linear_inverse",
     "nonlinear",
     "inn_affine",
- #   "inn_additive",
+    #   "inn_additive",
     "cinn_affine",
     "variational_autoencoder",
     "conditional_realnvp",
@@ -74,7 +75,7 @@ SAMPLING_MODELS = {
     "mixture_density_network",
     "cinn_additive_probabilistic",
     "cinn_affine_probabilistic",
-    "conditional_realnvp"
+    "conditional_realnvp",
 }
 
 MAX_MODELS = 8  # Total number of models evaluated (including IFNO)
@@ -90,7 +91,9 @@ def create_circular_mask(x, y, center=(0.5, 0.5), radius=0.25):
     return (x - center[0]) ** 2 + (y - center[1]) ** 2 <= radius**2
 
 
-def load_ifno_model(dataset_info, device="cpu", ifno_path="logs_ifno/elastic_plate/ifno_model.pth"):
+def load_ifno_model(
+    dataset_info, device="cpu", ifno_path="logs_ifno/elastic_plate/ifno_model.pth"
+):
     """Load IFNO model for elastic plate problem."""
     if not os.path.exists(ifno_path):
         print(f"IFNO model not found at {ifno_path}")
@@ -194,7 +197,15 @@ def _create_unified_figure():
     return fig, gs, axes_left, axes_right
 
 
-def _plot_force_curve(ax, force_y, force_mag_true, force_mag_samples=None, annotation=None, color="b", show_gt_overlay=True):
+def _plot_force_curve(
+    ax,
+    force_y,
+    force_mag_true,
+    force_mag_samples=None,
+    annotation=None,
+    color="b",
+    show_gt_overlay=True,
+):
     """Plot a 1D forcing function along the boundary with optional ground truth overlay.
 
     Args:
@@ -208,7 +219,13 @@ def _plot_force_curve(ax, force_y, force_mag_true, force_mag_samples=None, annot
     """
     # Plot ground truth
     if show_gt_overlay:
-        ax.plot(force_mag_true, force_y, color=GROUND_TRUTH_COLOR, linewidth=0.5, linestyle="dashed")
+        ax.plot(
+            force_mag_true,
+            force_y,
+            color=GROUND_TRUTH_COLOR,
+            linewidth=0.5,
+            linestyle="dashed",
+        )
     else:
         ax.plot(force_mag_true, force_y, color="black", linewidth=0.5)
 
@@ -231,11 +248,24 @@ def _plot_force_curve(ax, force_y, force_mag_true, force_mag_samples=None, annot
         spine.set_visible(True)
 
     if annotation:
-        ax.text(0.05, 0.95, annotation, transform=ax.transAxes, fontsize=5, color="white",
-                va="top", ha="left", bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"))
+        ax.text(
+            0.05,
+            0.95,
+            annotation,
+            transform=ax.transAxes,
+            fontsize=5,
+            color="white",
+            va="top",
+            ha="left",
+            bbox=dict(
+                boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
+            ),
+        )
 
 
-def _plot_displacement_field(ax, coords, displacement, cmap="jet", vmin=None, vmax=None, annotation=None):
+def _plot_displacement_field(
+    ax, coords, displacement, cmap="jet", vmin=None, vmax=None, annotation=None
+):
     """Plot a 2D displacement field with circular void masked."""
     # Create interpolation grid
     xi = np.linspace(coords[:, 0].min(), coords[:, 0].max(), 150)
@@ -252,8 +282,19 @@ def _plot_displacement_field(ax, coords, displacement, cmap="jet", vmin=None, vm
     ax.set_yticks([])
 
     if annotation:
-        ax.text(0.05, 0.95, annotation, transform=ax.transAxes, fontsize=5, color="white",
-                va="top", ha="left", bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"))
+        ax.text(
+            0.05,
+            0.95,
+            annotation,
+            transform=ax.transAxes,
+            fontsize=5,
+            color="white",
+            va="top",
+            ha="left",
+            bbox=dict(
+                boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
+            ),
+        )
 
     return im
 
@@ -328,7 +369,12 @@ def collect_elastic_predictions(
     Y = Y.to(device)
     s_observed = s_observed.to(device)
 
-    batch = (X.unsqueeze(0), u_true.unsqueeze(0), Y.unsqueeze(0), s_observed.unsqueeze(0))
+    batch = (
+        X.unsqueeze(0),
+        u_true.unsqueeze(0),
+        Y.unsqueeze(0),
+        s_observed.unsqueeze(0),
+    )
 
     predictions = {}
     meta = {
@@ -353,7 +399,9 @@ def collect_elastic_predictions(
             # Check if this is a sampling model
             if model_name in SAMPLING_MODELS:
                 # For sampling models, use latent space sampling
-                beta, _ = output_function_encoder.compute_coefficients(batch[2], batch[3])
+                beta, _ = output_function_encoder.compute_coefficients(
+                    batch[2], batch[3]
+                )
                 alpha_samples = sample_alpha(
                     model_name, model, beta, device, beta.dtype, n_samples_per_model
                 )
@@ -370,7 +418,7 @@ def collect_elastic_predictions(
 
                         # Re-simulate if forward model available
                         if forward_model is not None:
-                            alpha_single = alpha_samples[i:i+1]
+                            alpha_single = alpha_samples[i : i + 1]
                             beta_resim = forward_model(alpha_single)
                             s_resim = output_function_encoder(batch[2], beta_resim)
                             s_resim_np = s_resim.squeeze(0).squeeze(-1).cpu().numpy()
@@ -378,7 +426,12 @@ def collect_elastic_predictions(
                 else:
                     # Fallback to evaluate_fn if sampling fails
                     for i in range(n_samples_per_model):
-                        u_pred, alpha_pred = evaluate_fn(model, batch, input_function_encoder, output_function_encoder)
+                        u_pred, alpha_pred = evaluate_fn(
+                            model,
+                            batch,
+                            input_function_encoder,
+                            output_function_encoder,
+                        )
                         u_pred_np = u_pred.squeeze(0).squeeze(-1).cpu().numpy()
                         input_samples.append(u_pred_np)
 
@@ -389,7 +442,9 @@ def collect_elastic_predictions(
                             output_samples.append(s_resim_np)
             else:
                 # For deterministic models, just call evaluate_fn once
-                u_pred, alpha_pred = evaluate_fn(model, batch, input_function_encoder, output_function_encoder)
+                u_pred, alpha_pred = evaluate_fn(
+                    model, batch, input_function_encoder, output_function_encoder
+                )
                 u_pred_np = u_pred.squeeze(0).squeeze(-1).cpu().numpy()
 
                 # Repeat the same prediction n_samples_per_model times for consistent interface
@@ -426,7 +481,7 @@ def collect_elastic_predictions(
 
             # Extract function values only (last channel)
             if pred_u_full.shape[-1] > batch[1].shape[-1]:
-                pred_u = pred_u_full[..., -batch[1].shape[-1]:]
+                pred_u = pred_u_full[..., -batch[1].shape[-1] :]
             else:
                 pred_u = pred_u_full
 
@@ -439,7 +494,9 @@ def collect_elastic_predictions(
             output_samples = []
             if forward_model is not None:
                 # Get alpha coefficients from predicted u
-                alpha_pred, _ = input_function_encoder.compute_coefficients(batch[0], pred_u)
+                alpha_pred, _ = input_function_encoder.compute_coefficients(
+                    batch[0], pred_u
+                )
                 beta_resim = forward_model(alpha_pred)
                 s_resim = output_function_encoder(batch[2], beta_resim)
                 s_resim_np = s_resim.squeeze(0).squeeze(-1).cpu().numpy()
@@ -454,7 +511,7 @@ def collect_elastic_predictions(
                     pred_s = result_fwd
 
                 if pred_s.shape[-1] > batch[3].shape[-1]:
-                    pred_s = pred_s[..., -batch[3].shape[-1]:]
+                    pred_s = pred_s[..., -batch[3].shape[-1] :]
 
                 s_pred_np = pred_s.squeeze(0).squeeze(-1).cpu().numpy()
                 output_samples = [s_pred_np.copy() for _ in range(n_samples_per_model)]
@@ -545,8 +602,14 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     for idx, model_name in enumerate(models_to_plot[:MAX_DISPLACEMENT_MODELS]):
         if model_name in processed_preds:
             u_data, s_mean = processed_preds[model_name]
-            im_right = _plot_displacement_field(axes_right[idx], y_2d, s_mean, vmin=s_min, vmax=s_max,
-                                               annotation=publication_display_name(model_name))
+            im_right = _plot_displacement_field(
+                axes_right[idx],
+                y_2d,
+                s_mean,
+                vmin=s_min,
+                vmax=s_max,
+                annotation=publication_display_name(model_name),
+            )
         else:
             axes_right[idx].axis("off")
 
@@ -583,9 +646,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Create publication-quality Elastic Plate plots."
     )
-    parser.add_argument(
-        "--log_dir", type=str, default="runs"
-    )
+    parser.add_argument("--log_dir", type=str, default="runs")
     parser.add_argument("--results_dir", type=str, default="results/elastic_plate")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--sample_index", type=int, default=None)
@@ -669,9 +730,9 @@ def main():
         return_metrics=True,
     )
     resim_mse = {
-        name: float(np.mean(losses["pred_loss"]))
-        if losses["pred_loss"]
-        else float("inf")
+        name: (
+            float(np.mean(losses["pred_loss"])) if losses["pred_loss"] else float("inf")
+        )
         for name, losses in per_model_losses.items()
     }
     print("\nRe-simulation MSE summary:")
@@ -706,7 +767,7 @@ def main():
 
                 # Extract function values only
                 if pred_u.shape[-1] > u_true.shape[-1]:
-                    pred_u = pred_u[..., -u_true.shape[-1]:]
+                    pred_u = pred_u[..., -u_true.shape[-1] :]
 
                 # Compute MSE (to match other models' evaluation)
                 error = ((pred_u - u_true) ** 2).mean()

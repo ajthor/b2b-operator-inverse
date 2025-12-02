@@ -2,16 +2,20 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Subset, DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from safetensors.torch import save_file, load_file
 
 from function_encoder.model.mlp import MultiHeadedMLP, MLP
-from function_encoder.function_encoder import FunctionEncoder, least_squares
+from function_encoder.function_encoder import FunctionEncoder
 from function_encoder.losses import basis_normalization_loss, residual_loss
 import functools
+
+from utils.distributed import is_main_process
 
 import tqdm
 import os
 from torch.utils.tensorboard import SummaryWriter
+from torch.cuda.amp import autocast, GradScaler
 
 
 def memory_efficient_inner_product(f: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
@@ -25,6 +29,40 @@ def memory_efficient_inner_product(f: torch.Tensor, g: torch.Tensor) -> torch.Te
     result = torch.matmul(f_flat.transpose(1, 2), g_flat) / m
 
     return result
+
+
+def unwrap_model(model):
+    """Return the underlying module when wrapped by DistributedDataParallel."""
+    return model.module if hasattr(model, "module") else model
+
+
+def cholesky_least_squares(
+    f: torch.Tensor,
+    g: torch.Tensor,
+    inner_product,
+    regularization: float = 1e-3,
+):
+    """
+    Solve (G + lambda I) alpha = F using batched Cholesky for speed/stability.
+
+    Args:
+        f: tensor of shape (batch, n_points, features)
+        g: tensor of shape (batch, n_points, features, n_basis)
+    """
+    F = inner_product(g, f.unsqueeze(-1)).squeeze(-1)
+    G = inner_product(g, g)
+
+    eye = torch.eye(G.size(-1), device=G.device, dtype=G.dtype)
+    G_reg = G + regularization * eye
+
+    chol, info = torch.linalg.cholesky_ex(G_reg)
+    if torch.any(info > 0):
+        # Fall back to general solve if decomposition failed for any batch
+        coefficients = torch.linalg.solve(G_reg, F)
+    else:
+        coefficients = torch.cholesky_solve(F.unsqueeze(-1), chol).squeeze(-1)
+
+    return coefficients, G
 
 
 def create_model(
@@ -61,7 +99,7 @@ def create_model(
 
     # Create a custom coefficients method with the desired regularization
     coefficients_method = functools.partial(
-        least_squares, regularization=regularization
+        cholesky_least_squares, regularization=regularization
     )
 
     kwargs = {}
@@ -85,10 +123,13 @@ def load(model, path, device=None):
 
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
+    if not is_main_process():
+        return
+    model_to_save = unwrap_model(model)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     checkpoint = {
         "epoch": epoch,
-        "model_state_dict": model.state_dict(),
+        "model_state_dict": model_to_save.state_dict(),
         "optimizer_state_dict": (
             optimizer.state_dict() if optimizer is not None else None
         ),
@@ -104,7 +145,8 @@ def load_checkpoint(
     device=None,
 ):
     checkpoint = torch.load(path, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model_to_load = unwrap_model(model)
+    model_to_load.load_state_dict(checkpoint["model_state_dict"])
 
     if device is not None:
         model = model.to(device)
@@ -117,9 +159,13 @@ def load_checkpoint(
 
 
 def loss_function(model, batch):
+    model = unwrap_model(model)
     example_xs, example_ys, xs, ys = batch
-
-    coefficients, G = model.compute_coefficients(example_xs, example_ys)
+    # Inner least-squares solve is numerically sensitive; run it in full precision
+    with autocast(enabled=False):
+        coefficients, G = model.compute_coefficients(
+            example_xs.float(), example_ys.float()
+        )
     y_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(y_pred, ys)
@@ -145,6 +191,7 @@ def train(
     checkpoint_dir=None,
     checkpoint_interval=100,
     device=None,
+    grad_accumulation_steps=1,
 ):
     start_epoch = 0
 
@@ -160,24 +207,60 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
-    tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
-    for epoch in range(start_epoch, n_epochs):
+    enable_amp = device is not None and str(device).startswith("cuda")
+    scaler = GradScaler(enabled=enable_amp)
+    accumulation_steps = max(grad_accumulation_steps, 1)
+    total_steps = n_epochs
+    current_step = start_epoch
+
+    train_sampler = getattr(train_dataloader, "sampler", None)
+    next_sampler_epoch = start_epoch
+
+    def make_iterator(epoch_seed):
+        if isinstance(train_sampler, DistributedSampler):
+            train_sampler.set_epoch(epoch_seed)
+        return iter(train_dataloader)
+
+    train_iter = make_iterator(next_sampler_epoch)
+
+    tqdm_bar = tqdm.tqdm(range(start_epoch, total_steps))
+    while current_step < total_steps:
         model.train()
-        batch = next(iter(train_dataloader))
-        optimizer.zero_grad()
-        loss = loss_function(model=model, batch=batch)
-        loss.backward()
-        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        running_loss = 0.0
 
-        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
+        for _ in range(accumulation_steps):
+            try:
+                batch = next(train_iter)
+            except StopIteration:
+                next_sampler_epoch += 1
+                train_iter = make_iterator(next_sampler_epoch)
+                batch = next(train_iter)
 
-        avg_test_loss = test_model(model=model, test_dataloader=test_dataloader)
-        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+            with autocast(enabled=enable_amp):
+                loss = loss_function(model=model, batch=batch)
+                scaled_loss = loss / accumulation_steps
+            scaler.scale(scaled_loss).backward()
+            running_loss += loss.item()
 
-        # Save checkpoint
-        if (epoch + 1) % checkpoint_interval == 0:
-            save_checkpoint(model, optimizer, epoch + 1, avg_test_loss, checkpoint_path)
+        scaler.step(optimizer)
+        scaler.update()
 
+        summary_writer.add_scalars(
+            "loss/train", {model_name: running_loss / accumulation_steps}, current_step
+        )
+
+        avg_test_loss = test_model(
+            model=model, test_dataloader=test_dataloader, epoch=current_step
+        )
+        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, current_step)
+
+        if checkpoint_interval > 0 and (current_step + 1) % checkpoint_interval == 0:
+            save_checkpoint(
+                model, optimizer, current_step + 1, avg_test_loss, checkpoint_path
+            )
+
+        current_step += 1
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
         tqdm_bar.update(1)
 
@@ -185,9 +268,14 @@ def train(
 def test_model(
     model,
     test_dataloader,
+    epoch=None,
 ):
+    model = unwrap_model(model)
     model.eval()
     with torch.no_grad():
+        test_sampler = getattr(test_dataloader, "sampler", None)
+        if epoch is not None and isinstance(test_sampler, DistributedSampler):
+            test_sampler.set_epoch(epoch)
         batch = next(iter(test_dataloader))
         loss = loss_function(model=model, batch=batch)
 

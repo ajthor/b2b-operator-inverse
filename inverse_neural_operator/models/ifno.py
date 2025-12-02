@@ -9,6 +9,8 @@ import os
 import warnings
 from neuralop.layers.fno_block import FNOBlocks
 
+from utils.distributed import is_main_process
+
 
 # Simple 1D Fourier Layer for IFNO compatibility
 class SimpleFourierLayer1D(nn.Module):
@@ -1335,6 +1337,8 @@ def load(model, path, device=None):
 
 
 def save_checkpoint(model, optimizer, epoch, loss, path, training_stage="joint"):
+    if not is_main_process():
+        return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(optimizer, dict):
         optimizer_state = {name: opt.state_dict() for name, opt in optimizer.items()}

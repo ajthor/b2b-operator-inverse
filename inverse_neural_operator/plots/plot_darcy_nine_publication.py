@@ -25,7 +25,7 @@ import torch
 # Add project root to path for module imports
 sys.path.insert(0, "inverse_neural_operator")
 
-from inverse_neural_operator.data.load_dataset import load_dataset
+from data.load_dataset import load_dataset
 from plots.utils.model_utils import (
     evaluate_models_on_subset,
     load_all_models,
@@ -50,6 +50,7 @@ def publication_display_name(model_name: str) -> str:
     """Return display label with local overrides for publication plots."""
     return PUBLICATION_DISPLAY_OVERRIDES.get(model_name, display_name(model_name))
 
+
 INVERSE_MODELS = (
     "linear",
     "linear_inverse",
@@ -71,7 +72,7 @@ SAMPLING_MODELS = {
     "mixture_density_network",
     "cinn_additive_probabilistic",
     "cinn_affine_probabilistic",
-    "conditional_realnvp"
+    "conditional_realnvp",
 }
 
 MAX_MODELS = 8  # Total number of models evaluated
@@ -95,11 +96,11 @@ def _create_unified_figure():
     width_ratios = [1, 1, 1, 1, 1, 1]
     height_ratios = [1, 1, 1]
     fig_width = 6.5
-    
+
     # Adjust aspect ratio
     square_adjust = 0.8
     fig_height = square_adjust * fig_width * sum(height_ratios) / sum(width_ratios)
-    
+
     fig = plt.figure(figsize=(fig_width, fig_height), layout="constrained")
     fig.set_constrained_layout_pads(
         w_pad=0.5 / 72.0, h_pad=0.5 / 72.0, hspace=0.0, wspace=0.0
@@ -154,7 +155,9 @@ def _create_unified_figure():
     return fig, gs, axes_left, axes_right
 
 
-def _plot_1d_curve(ax, x_grid, y_true, y_samples=None, annotation=None, color="b", show_gt_overlay=True):
+def _plot_1d_curve(
+    ax, x_grid, y_true, y_samples=None, annotation=None, color="b", show_gt_overlay=True
+):
     """Plot a 1D curve with optional ground truth overlay.
 
     Args:
@@ -169,10 +172,12 @@ def _plot_1d_curve(ax, x_grid, y_true, y_samples=None, annotation=None, color="b
     # Ensure x_grid and y_true are 1D arrays
     x_grid = np.squeeze(x_grid)
     y_true = np.squeeze(y_true)
-    
+
     # Plot ground truth
     if show_gt_overlay:
-        ax.plot(x_grid, y_true, color=GROUND_TRUTH_COLOR, linewidth=0.5, linestyle="dashed")
+        ax.plot(
+            x_grid, y_true, color=GROUND_TRUTH_COLOR, linewidth=0.5, linestyle="dashed"
+        )
     else:
         ax.plot(x_grid, y_true, color="black", linewidth=0.5)
 
@@ -182,22 +187,25 @@ def _plot_1d_curve(ax, x_grid, y_true, y_samples=None, annotation=None, color="b
             ax.plot(x_grid, y_samples, color=color, linewidth=0.5)
         else:
             for sample in y_samples:
-                ax.plot(x_grid, np.squeeze(sample), color=color, alpha=0.6, linewidth=0.5)
+                ax.plot(
+                    x_grid, np.squeeze(sample), color=color, alpha=0.6, linewidth=0.5
+                )
 
     # Styling
     ax.set_xlim(x_grid.min(), x_grid.max())
-    
+
     # Set reasonable y-limits based on data range
     y_min, y_max = y_true.min(), y_true.max()
     if y_samples is not None:
         y_min = min(y_min, y_samples.min())
         y_max = max(y_max, y_samples.max())
-    
+
     # Add some padding
     padding = (y_max - y_min) * 0.1
-    if padding == 0: padding = 1.0
+    if padding == 0:
+        padding = 1.0
     ax.set_ylim(y_min - padding, y_max + padding)
-    
+
     ax.set_xticks([])
     ax.set_yticks([])
     ax.grid(True, linestyle="-", linewidth=0.4, alpha=0.6)
@@ -205,8 +213,19 @@ def _plot_1d_curve(ax, x_grid, y_true, y_samples=None, annotation=None, color="b
         spine.set_visible(True)
 
     if annotation:
-        ax.text(0.05, 0.95, annotation, transform=ax.transAxes, fontsize=5, color="white",
-                va="top", ha="left", bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"))
+        ax.text(
+            0.05,
+            0.95,
+            annotation,
+            transform=ax.transAxes,
+            fontsize=5,
+            color="white",
+            va="top",
+            ha="left",
+            bbox=dict(
+                boxstyle="round,pad=0.3", facecolor="black", alpha=0.7, edgecolor="none"
+            ),
+        )
 
 
 def sample_alpha(model_name, model, beta, device, dtype, num_samples):
@@ -230,7 +249,7 @@ def sample_alpha(model_name, model, beta, device, dtype, num_samples):
         # Deterministic affine cINN: use zero latent for inverse mapping
         z_zero = torch.zeros(num_samples, alpha_dim, device=device, dtype=dtype)
         return model.inverse(z_zero, beta_rep)
-    
+
     if model_name == "cinn_additive":
         alpha_dim = model.coupling_layers[0].input_size
         # Deterministic additive cINN: use zero latent for inverse mapping
@@ -279,13 +298,18 @@ def collect_darcy_predictions(
     X, u_true, Y, s_observed = sample
     # Note: In Darcy code, u is input (permeability), s is output (pressure)
     # X is spatial coord for u, Y is spatial coord for s
-    
+
     X = X.to(device)
     u_true = u_true.to(device)
     Y = Y.to(device)
     s_observed = s_observed.to(device)
 
-    batch = (X.unsqueeze(0), u_true.unsqueeze(0), Y.unsqueeze(0), s_observed.unsqueeze(0))
+    batch = (
+        X.unsqueeze(0),
+        u_true.unsqueeze(0),
+        Y.unsqueeze(0),
+        s_observed.unsqueeze(0),
+    )
 
     predictions = {}
     meta = {
@@ -310,7 +334,9 @@ def collect_darcy_predictions(
             # Check if this is a sampling model
             if model_name in SAMPLING_MODELS:
                 # For sampling models, use latent space sampling
-                beta, _ = output_function_encoder.compute_coefficients(batch[2], batch[3])
+                beta, _ = output_function_encoder.compute_coefficients(
+                    batch[2], batch[3]
+                )
                 alpha_samples = sample_alpha(
                     model_name, model, beta, device, beta.dtype, n_samples_per_model
                 )
@@ -327,7 +353,7 @@ def collect_darcy_predictions(
 
                         # Re-simulate if forward model available
                         if forward_model is not None:
-                            alpha_single = alpha_samples[i:i+1]
+                            alpha_single = alpha_samples[i : i + 1]
                             beta_resim = forward_model(alpha_single)
                             s_resim = output_function_encoder(batch[2], beta_resim)
                             s_resim_np = s_resim.squeeze(0).squeeze(-1).cpu().numpy()
@@ -335,7 +361,12 @@ def collect_darcy_predictions(
                 else:
                     # Fallback to evaluate_fn if sampling fails
                     for i in range(n_samples_per_model):
-                        u_pred, alpha_pred = evaluate_fn(model, batch, input_function_encoder, output_function_encoder)
+                        u_pred, alpha_pred = evaluate_fn(
+                            model,
+                            batch,
+                            input_function_encoder,
+                            output_function_encoder,
+                        )
                         u_pred_np = u_pred.squeeze(0).squeeze(-1).cpu().numpy()
                         input_samples.append(u_pred_np)
 
@@ -346,7 +377,9 @@ def collect_darcy_predictions(
                             output_samples.append(s_resim_np)
             else:
                 # For deterministic models, just call evaluate_fn once
-                u_pred, alpha_pred = evaluate_fn(model, batch, input_function_encoder, output_function_encoder)
+                u_pred, alpha_pred = evaluate_fn(
+                    model, batch, input_function_encoder, output_function_encoder
+                )
                 u_pred_np = u_pred.squeeze(0).squeeze(-1).cpu().numpy()
 
                 # Repeat the same prediction n_samples_per_model times for consistent interface
@@ -472,9 +505,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Create publication-quality Normalized Darcy 1D plots."
     )
-    parser.add_argument(
-        "--log_dir", type=str, default="runs"
-    )
+    parser.add_argument("--log_dir", type=str, default="runs")
     parser.add_argument("--results_dir", type=str, default="results/darcy_1d")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--sample_index", type=int, default=None)
@@ -507,7 +538,7 @@ def main():
     if params is None:
         print(f"✗ No trained models found in {log_dir}")
         exit(1)
-    
+
     # Ensure params uses correct dataset name
     params.dataset = dataset
 
@@ -556,14 +587,14 @@ def main():
         device=DEVICE,
         return_metrics=True,
     )
-    
+
     resim_mse = {
-        name: float(np.mean(losses["pred_loss"]))
-        if losses["pred_loss"]
-        else float("inf")
+        name: (
+            float(np.mean(losses["pred_loss"])) if losses["pred_loss"] else float("inf")
+        )
         for name, losses in per_model_losses.items()
     }
-    
+
     print("\nRe-simulation MSE summary:")
     for name in sorted(resim_mse, key=resim_mse.get):
         val = resim_mse[name]
@@ -574,7 +605,7 @@ def main():
         (name, resim_mse.get(name, float("inf"))) for name in resim_mse.keys()
     ]
     models_with_errors.sort(key=lambda x: x[1])
-    
+
     ranking_title = f"\nTop {MAX_MODELS} models by re-simulation MSE:"
     print(ranking_title)
     for name, error in models_with_errors[:MAX_MODELS]:

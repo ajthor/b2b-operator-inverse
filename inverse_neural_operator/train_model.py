@@ -4,28 +4,35 @@ import torch
 import gc
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 import os
 
-from inverse_neural_operator.b2b.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
-from inverse_neural_operator.b2b.load_model import load_forward_model
-from inverse_neural_operator.b2b.load_model import (
+from b2b.load_model import load_forward_model
+from b2b.load_model import (
     load_function_encoders,
     load_function_encoder_params,
 )
 
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.models.create_model import create_model
+from data.load_dataset import load_dataset
+from models.create_model import create_model
 
-from utils.device import get_device, set_seed
+from utils.device import set_seed, dataset_on_cpu
 from utils.params import save_params
 from utils.checkpoints import setup_checkpoint_dir
 from utils.args import load_defaults_from_yaml
 from utils.imports import import_model_functions
 from config.paths import get_runs_dir, get_model_dir, get_shared_dir
+from utils.distributed import (
+    init_distributed_mode,
+    cleanup_distributed,
+    is_main_process,
+    NullSummaryWriter,
+)
 
 torch.set_float32_matmul_precision("high")
 
@@ -64,10 +71,32 @@ parser.add_argument("--device", type=str)
 # Seed args
 parser.add_argument("--seed", type=int)
 
+# Dataset device args
+parser.add_argument(
+    "--dataset_device",
+    type=str,
+    help='Location for dataset tensors ("cpu", "cuda", or "same" to match training device)',
+)
+
 # Checkpoint args
 parser.add_argument("--checkpoint_interval", type=int)
 parser.add_argument("--checkpoint_dir", type=str)
 parser.add_argument("--resume", type=bool)
+
+# DataLoader args
+parser.add_argument("--num_workers", type=int, default=0)
+parser.add_argument(
+    "--prefetch_factor",
+    type=int,
+    default=None,
+    help="Number of batches to prefetch per worker (requires num_workers > 0)",
+)
+parser.add_argument(
+    "--grad_accumulation_steps",
+    type=int,
+    default=1,
+    help="Mini-batches to accumulate before each optimizer step",
+)
 
 # Load defaults from YAML
 defaults_path = os.path.join(os.path.dirname(__file__), "train_model_defaults.yaml")
@@ -76,9 +105,19 @@ parser.set_defaults(**defaults)
 
 params = parser.parse_args()
 
-device = get_device(params.device)
-print(f"Using device: {device}")
-set_seed(params.seed)
+dist_config = init_distributed_mode(params.device)
+device = dist_config.device
+use_cuda = isinstance(device, str) and device.startswith("cuda")
+if is_main_process():
+    print(
+        f"Using device: {device} "
+        f"(distributed={dist_config.is_distributed}, world_size={dist_config.world_size})"
+    )
+set_seed(params.seed + dist_config.rank)
+
+dataset_device = params.dataset_device or "cpu"
+if dataset_device in ("same", "match"):
+    dataset_device = device
 
 log_dir = str(
     get_runs_dir(
@@ -95,20 +134,35 @@ shared_dir = str(
 )
 
 # Create SummaryWriter
-writer = SummaryWriter(log_dir=log_dir)
-log_dir = writer.log_dir
+if is_main_process():
+    writer = SummaryWriter(log_dir=log_dir)
+else:
+    writer = NullSummaryWriter()
 
 # Save args to model directory
-os.makedirs(model_dir, exist_ok=True)
-save_params(params, model_dir)
+if is_main_process():
+    os.makedirs(model_dir, exist_ok=True)
+    save_params(params, model_dir)
 
 # Create checkpoint directories
 params.checkpoint_dir = setup_checkpoint_dir(params.checkpoint_dir, log_dir)
 
 # Load dataset using utility
-train_dataset = load_dataset(params.dataset, params, device, split="train")
-test_dataset = load_dataset(params.dataset, params, device, split="test")
+train_dataset = load_dataset(params.dataset, params, dataset_device, split="train")
+test_dataset = load_dataset(params.dataset, params, dataset_device, split="test")
 dataset_info = train_dataset.get_info()
+
+train_pin_memory = use_cuda and dataset_on_cpu(train_dataset)
+test_pin_memory = use_cuda and dataset_on_cpu(test_dataset)
+
+effective_num_workers = params.num_workers
+if not train_pin_memory and effective_num_workers > 0:
+    if is_main_process():
+        print(
+            "Dataset tensors already on accelerator; forcing num_workers=0 to avoid CUDA access in worker processes."
+        )
+    effective_num_workers = 0
+persistent_workers = effective_num_workers > 0
 
 # Get the appropriate train/save functions for the model
 train_model, save_model = import_model_functions(params.model, "train", "save")
@@ -125,6 +179,15 @@ model, optimizer = create_model(
     input_encoder_params.n_basis,  # input size (alpha coefficients)
     output_encoder_params.n_basis,  # output size (beta coefficients)
 )
+
+# Wrap in DistributedDataParallel if needed
+if dist_config.is_distributed:
+    model = torch.nn.parallel.DistributedDataParallel(
+        model,
+        device_ids=[dist_config.local_rank] if use_cuda else None,
+        output_device=dist_config.local_rank if use_cuda else None,
+        broadcast_buffers=False,
+    )
 
 # Load function encoders (all models will receive them, some may not use them)
 input_function_encoder, output_function_encoder = load_function_encoders(
@@ -143,15 +206,52 @@ except Exception as e:
 
 # Train model
 
+train_sampler = (
+    DistributedSampler(
+        train_dataset,
+        num_replicas=dist_config.world_size,
+        rank=dist_config.rank,
+        shuffle=True,
+    )
+    if dist_config.is_distributed
+    else None
+)
+test_sampler = (
+    DistributedSampler(
+        test_dataset,
+        num_replicas=dist_config.world_size,
+        rank=dist_config.rank,
+        shuffle=False,
+    )
+    if dist_config.is_distributed
+    else None
+)
+
+prefetch_factor = (
+    params.prefetch_factor
+    if effective_num_workers > 0 and params.prefetch_factor is not None
+    else None
+)
+
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=params.batch_size,
-    shuffle=True,
+    shuffle=train_sampler is None,
+    sampler=train_sampler,
+    num_workers=effective_num_workers,
+    pin_memory=train_pin_memory,
+    persistent_workers=persistent_workers,
+    prefetch_factor=prefetch_factor,
 )
 test_dataloader = DataLoader(
     test_dataset,
     batch_size=params.batch_size,
-    shuffle=True,
+    shuffle=False,
+    sampler=test_sampler,
+    num_workers=effective_num_workers,
+    pin_memory=test_pin_memory,
+    persistent_workers=persistent_workers,
+    prefetch_factor=prefetch_factor,
 )
 
 # Single consistent training function call for all models
@@ -174,5 +274,9 @@ train_model(
 )
 
 # Save model
-os.makedirs(model_dir, exist_ok=True)
-save_model(model=model, path=os.path.join(model_dir, "model.safetensors"))
+if is_main_process():
+    os.makedirs(model_dir, exist_ok=True)
+    model_to_save = model.module if dist_config.is_distributed else model
+    save_model(model=model_to_save, path=os.path.join(model_dir, "model.safetensors"))
+
+cleanup_distributed()

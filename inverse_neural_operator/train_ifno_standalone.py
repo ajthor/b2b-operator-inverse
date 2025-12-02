@@ -7,6 +7,7 @@ No function encoders required - IFNO works directly with raw data.
 import torch
 import argparse
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 import os
 import json
@@ -21,6 +22,13 @@ from models.ifno import (
 )
 from config.paths import get_model_dir, get_runs_dir
 from utils.params import save_params
+from utils.device import set_seed, dataset_on_cpu
+from utils.distributed import (
+    init_distributed_mode,
+    cleanup_distributed,
+    is_main_process,
+    NullSummaryWriter,
+)
 
 
 def main():
@@ -122,42 +130,64 @@ def main():
     # Device args
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument(
+        "--prefetch_factor",
+        type=int,
+        default=None,
+        help="Batches to prefetch per worker (requires num_workers>0)",
+    )
+    parser.add_argument(
+        "--dataset_device",
+        type=str,
+        default="cpu",
+        help='Location for dataset tensors ("cpu", "cuda", or "same" to match training device)',
+    )
 
     args = parser.parse_args()
 
-    # Set device
-    if args.device is None:
-        if torch.cuda.is_available():
-            device = "cuda:5"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-    else:
-        device = args.device
+    dist_config = init_distributed_mode(args.device)
+    device = dist_config.device
+    use_cuda = isinstance(device, str) and device.startswith("cuda")
+    if is_main_process():
+        print(
+            f"Using device: {device} "
+            f"(distributed={dist_config.is_distributed}, world_size={dist_config.world_size})"
+        )
+    set_seed(args.seed + dist_config.rank)
 
-    print(f"Using device: {device}")
-    torch.manual_seed(args.seed)
+    dataset_device = args.dataset_device or "cpu"
+    if dataset_device in ("same", "match"):
+        dataset_device = device
 
     # Construct paths (CLI base_dir overrides env → YAML defaults)
-    log_dir = str(get_runs_dir(args.dataset, "ifno", args.seed, base_dir_override=args.base_dir))
-    model_dir = str(get_model_dir(args.dataset, "ifno", args.seed, base_dir_override=args.base_dir))
+    log_dir = str(
+        get_runs_dir(args.dataset, "ifno", args.seed, base_dir_override=args.base_dir)
+    )
+    model_dir = str(
+        get_model_dir(args.dataset, "ifno", args.seed, base_dir_override=args.base_dir)
+    )
 
     # Create directories
-    os.makedirs(log_dir, exist_ok=True)
-    os.makedirs(model_dir, exist_ok=True)
+    if is_main_process():
+        os.makedirs(log_dir, exist_ok=True)
+        os.makedirs(model_dir, exist_ok=True)
 
     # Checkpoints saved in runs (log_dir) alongside TensorBoard events
     checkpoint_dir = os.path.join(log_dir, "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    writer = SummaryWriter(log_dir=log_dir)
-    print(f"TensorBoard logs -> {log_dir}")
-    print(f"Model directory -> {model_dir}")
-    print(f"Checkpoints -> {checkpoint_dir}")
+    if is_main_process():
+        writer = SummaryWriter(log_dir=log_dir)
+        print(f"TensorBoard logs -> {log_dir}")
+        print(f"Model directory -> {model_dir}")
+        print(f"Checkpoints -> {checkpoint_dir}")
+    else:
+        writer = NullSummaryWriter()
 
     # Save args to model directory
-    save_params(args, model_dir)
+    if is_main_process():
+        save_params(args, model_dir)
 
     # Select dataset loader
     if args.dataset == "darcy_1d":
@@ -183,14 +213,27 @@ def main():
 
     # Load dataset
     print(f"Loading dataset: {args.dataset}...")
-    train_dataset = load_data_fn(args, device=device, split="train")
-    test_dataset = load_data_fn(args, device=device, split="test")
+    train_dataset = load_data_fn(args, device=dataset_device, split="train")
+    test_dataset = load_data_fn(args, device=dataset_device, split="test")
     dataset_info = train_dataset.get_info()
 
+    train_pin_memory = use_cuda and dataset_on_cpu(train_dataset)
+    test_pin_memory = use_cuda and dataset_on_cpu(test_dataset)
+
+    effective_num_workers = args.num_workers
+    if not train_pin_memory and effective_num_workers > 0:
+        if is_main_process():
+            print(
+                "Dataset tensors already on accelerator; forcing num_workers=0 to avoid CUDA access in worker processes."
+            )
+        effective_num_workers = 0
+    persistent_workers = effective_num_workers > 0
+
     print(f"Dataset info: {dataset_info}")
-    writer.add_text("setup/dataset", args.dataset)
-    writer.add_text("setup/dataset_info", json.dumps(dataset_info, indent=2))
-    writer.add_text("setup/hyperparameters", json.dumps(vars(args), indent=2))
+    if is_main_process():
+        writer.add_text("setup/dataset", args.dataset)
+        writer.add_text("setup/dataset_info", json.dumps(dataset_info, indent=2))
+        writer.add_text("setup/hyperparameters", json.dumps(vars(args), indent=2))
 
     # Create IFNO model with paper-recommended hyperparameters
     print("Creating IFNO model...")
@@ -221,17 +264,56 @@ def main():
     print("Initializing optimizer...")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
+    if dist_config.is_distributed:
+        model = torch.nn.parallel.DistributedDataParallel(
+            model,
+            device_ids=[dist_config.local_rank] if use_cuda else None,
+            output_device=dist_config.local_rank if use_cuda else None,
+            broadcast_buffers=False,
+        )
+
     # Create data loaders
     print("Creating dataloaders...")
+    train_sampler = (
+        DistributedSampler(
+            train_dataset,
+            num_replicas=dist_config.world_size,
+            rank=dist_config.rank,
+            shuffle=True,
+        )
+        if dist_config.is_distributed
+        else None
+    )
+    test_sampler = (
+        DistributedSampler(
+            test_dataset,
+            num_replicas=dist_config.world_size,
+            rank=dist_config.rank,
+            shuffle=False,
+        )
+        if dist_config.is_distributed
+        else None
+    )
+
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
+        num_workers=effective_num_workers,
+        pin_memory=train_pin_memory,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor,
     )
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=args.batch_size,
         shuffle=False,
+        sampler=test_sampler,
+        num_workers=effective_num_workers,
+        pin_memory=test_pin_memory,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor,
     )
 
     print(
@@ -265,12 +347,17 @@ def main():
     )
 
     # Save model
-    model_path = os.path.join(model_dir, "ifno_model.safetensors")
-    save_model(model=model, path=model_path)
-    print(f"Model saved to: {model_path}")
+    if is_main_process():
+        model_path = os.path.join(model_dir, "ifno_model.safetensors")
+        model_to_save = model.module if dist_config.is_distributed else model
+        save_model(model=model_to_save, path=model_path)
+        print(f"Model saved to: {model_path}")
+        writer.close()
+        print("Training completed!")
+    else:
+        writer.close()
 
-    writer.close()
-    print("Training completed!")
+    cleanup_distributed()
 
 
 if __name__ == "__main__":

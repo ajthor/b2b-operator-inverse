@@ -6,6 +6,10 @@ import tqdm
 import os
 from safetensors.torch import save_file, load_file
 
+from utils.distributed import is_main_process
+from torch.utils.data.distributed import DistributedSampler
+from torch.cuda.amp import autocast, GradScaler
+
 
 class AffineCoupling(torch.nn.Module):
     def __init__(
@@ -212,6 +216,8 @@ def load(model, path, device=None):
 
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
+    if not is_main_process():
+        return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     checkpoint = {
         "epoch": epoch,
@@ -302,54 +308,87 @@ def train(
             )
             print(f"Resuming training from epoch {start_epoch}...")
 
-    tqdm_bar = tqdm.tqdm(range(start_epoch, n_epochs))
-    for epoch in range(start_epoch, n_epochs):
-        model.train()
-        batch = next(iter(train_dataloader))
-        optimizer.zero_grad()
-        loss = loss_function(
-            model=model,
-            batch=batch,
-            input_function_encoder=input_function_encoder,
-            output_function_encoder=output_function_encoder,
-        )
-        loss.backward()
-        optimizer.step()
+    enable_amp = device is not None and str(device).startswith("cuda")
+    scaler = GradScaler(enabled=enable_amp)
+    accumulation_steps = max(getattr(params, "grad_accumulation_steps", 1), 1)
+    total_steps = n_epochs
+    current_step = start_epoch
 
-        summary_writer.add_scalars("loss/train", {model_name: loss.item()}, epoch)
+    train_sampler = getattr(train_dataloader, "sampler", None)
+    next_sampler_epoch = start_epoch
+
+    def make_iterator(epoch_seed):
+        if isinstance(train_sampler, DistributedSampler):
+            train_sampler.set_epoch(epoch_seed)
+        return iter(train_dataloader)
+
+    train_iter = make_iterator(next_sampler_epoch)
+
+    tqdm_bar = tqdm.tqdm(range(start_epoch, total_steps))
+    while current_step < total_steps:
+        model.train()
+        optimizer.zero_grad(set_to_none=True)
+        running_loss = 0.0
+
+        for _ in range(accumulation_steps):
+            try:
+                batch = next(train_iter)
+            except StopIteration:
+                next_sampler_epoch += 1
+                train_iter = make_iterator(next_sampler_epoch)
+                batch = next(train_iter)
+
+            with autocast(enabled=enable_amp):
+                loss = loss_function(
+                    model=model,
+                    batch=batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                )
+                scaled_loss = loss / accumulation_steps
+            scaler.scale(scaled_loss).backward()
+            running_loss += loss.item()
+
+        scaler.step(optimizer)
+        scaler.update()
+
+        summary_writer.add_scalars(
+            "loss/train", {model_name: running_loss / accumulation_steps}, current_step
+        )
 
         avg_test_loss = test_model(
             model=model,
             test_dataloader=test_dataloader,
             input_function_encoder=input_function_encoder,
             output_function_encoder=output_function_encoder,
+            use_amp=enable_amp,
         )
-        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, epoch)
+        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, current_step)
 
-        # Compute and log re-simulation loss on single batch
         with torch.no_grad():
             test_batch = next(iter(test_dataloader))
-            resim_coeff_loss, resim_pred_loss = resimulation_loss(
-                model=model,
-                batch=test_batch,
-                input_function_encoder=input_function_encoder,
-                output_function_encoder=output_function_encoder,
-                forward_model=forward_model,
-                n_samples=1,
-            )
+            with autocast(enabled=enable_amp):
+                resim_coeff_loss, resim_pred_loss = resimulation_loss(
+                    model=model,
+                    batch=test_batch,
+                    input_function_encoder=input_function_encoder,
+                    output_function_encoder=output_function_encoder,
+                    forward_model=forward_model,
+                    n_samples=1,
+                )
         summary_writer.add_scalars(
-            "loss/resimulation_coeff", {model_name: resim_coeff_loss}, epoch
+            "loss/resimulation_coeff", {model_name: resim_coeff_loss}, current_step
         )
         summary_writer.add_scalars(
-            "loss/resimulation_pred", {model_name: resim_pred_loss}, epoch
+            "loss/resimulation_pred", {model_name: resim_pred_loss}, current_step
         )
 
         tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
 
-        # Save checkpoint
-        if (epoch + 1) % checkpoint_interval == 0:
-            save_checkpoint(model, optimizer, epoch + 1, avg_test_loss, checkpoint_path)
+        if (current_step + 1) % checkpoint_interval == 0:
+            save_checkpoint(model, optimizer, current_step + 1, avg_test_loss, checkpoint_path)
 
+        current_step += 1
         tqdm_bar.update(1)
 
 
@@ -358,18 +397,20 @@ def test_model(
     test_dataloader,
     input_function_encoder,
     output_function_encoder,
+    use_amp=False,
 ):
     model.eval()
     # total_test_loss = 0.0
     # n_batches = 0
     with torch.no_grad():
         batch = next(iter(test_dataloader))
-        loss = loss_function(
-            model=model,
-            batch=batch,
-            input_function_encoder=input_function_encoder,
-            output_function_encoder=output_function_encoder,
-        )
+        with autocast(enabled=use_amp):
+            loss = loss_function(
+                model=model,
+                batch=batch,
+                input_function_encoder=input_function_encoder,
+                output_function_encoder=output_function_encoder,
+            )
         # for batch in test_dataloader:
         #     loss = loss_function(
         #         model=model,

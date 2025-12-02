@@ -7,17 +7,17 @@ This module provides functionality to load trained models from disk for evaluati
 import os
 import torch
 
-from inverse_neural_operator.b2b.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
-from inverse_neural_operator.b2b.load_model import (
+from b2b.load_model import (
     load_function_encoder_params,
     load_function_encoders,
 )
-from inverse_neural_operator.models.create_model import create_model
-from inverse_neural_operator.utils.imports import import_model_functions
+from models.create_model import create_model
+from utils.imports import import_model_functions
 
 # Note: Forward model loading (load_forward_model) should be imported directly from b2b.load_model
 # This keeps the responsibility clear - all B2B-specific loading logic lives in b2b.load_model
@@ -56,6 +56,7 @@ def load_models(
 
     # Load dataset to get dataset_info
     from data.load_dataset import load_dataset
+
     dataset_obj = load_dataset(dataset, params, device, split="test")
     dataset_info = dataset_obj.get_info()
 
