@@ -10,8 +10,8 @@ import numpy as np
 import random
 import os
 
-from inverse_neural_operator.models.ifno import create_model
-from inverse_neural_operator.data.burgers_1d import load_data
+from models.ifno import create_model
+from data.burgers_1d import load_data
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
@@ -24,7 +24,7 @@ device = "cuda:1" if torch.cuda.is_available() else "cpu"
 def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     """Infer IFNO hyperparameters from a saved state_dict path."""
     try:
-        sd = torch.load(state_dict_path, map_location="cpu")
+        sd = torch.load(state_dict_path, map_location="cpu", weights_only=False)
     except Exception:
         return None
     cfg = {}
@@ -32,7 +32,9 @@ def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     if "p1.weight" in sd:
         cfg["width"] = int(sd["p1.weight"].shape[0])
     # n_layers from number of convs entries (two convs per layer)
-    conv_keys = [k for k in sd.keys() if k.startswith("convs.") and k.endswith(".weights")]
+    conv_keys = [
+        k for k in sd.keys() if k.startswith("convs.") and k.endswith(".weights")
+    ]
     if conv_keys:
         cfg["n_layers"] = len(conv_keys) // 2
         # modes from conv weight last dim
@@ -45,7 +47,9 @@ def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     return cfg if cfg else None
 
 
-def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots_burger/"):
+def visualize_ifno_results(
+    model_path, n_samples=3, save_dir="results/ifno_plots_burger/"
+):
     """Visualize IFNO results on Burgers 1D dataset."""
 
     print("Loading Burgers 1D test dataset...")
@@ -79,7 +83,8 @@ def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots
     ).to(device)
 
     print(f"Loading model weights from {model_path}...")
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    state_dict = torch.load(model_path, map_location=device, weights_only=False)
+    model.load_state_dict(state_dict)
     model.eval()
 
     print(f"Model loaded with {sum(p.numel() for p in model.parameters())} parameters")
@@ -88,7 +93,9 @@ def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots
     os.makedirs(save_dir, exist_ok=True)
 
     # Select random samples
-    test_indices = random.sample(range(len(test_dataset)), min(n_samples, len(test_dataset)))
+    test_indices = random.sample(
+        range(len(test_dataset)), min(n_samples, len(test_dataset))
+    )
 
     print(f"Generating {n_samples} visualization plots...")
 
@@ -121,7 +128,9 @@ def plot_sample(model, sample, sample_idx, save_dir):
 
         # Extract function values only (remove coordinates if present)
         if u_pred.shape[-1] > u_true.unsqueeze(0).shape[-1]:
-            u_pred = u_pred[..., -u_true.unsqueeze(0).shape[-1]:]  # Take last channels (function values)
+            u_pred = u_pred[
+                ..., -u_true.unsqueeze(0).shape[-1] :
+            ]  # Take last channels (function values)
 
         u_pred = u_pred.squeeze(0)
 
@@ -141,7 +150,9 @@ def plot_sample(model, sample, sample_idx, save_dir):
 
         # Extract function values only (remove coordinates if present)
         if s_pred.shape[-1] > s.unsqueeze(0).shape[-1]:
-            s_pred = s_pred[..., -s.unsqueeze(0).shape[-1]:]  # Take last channels (function values)
+            s_pred = s_pred[
+                ..., -s.unsqueeze(0).shape[-1] :
+            ]  # Take last channels (function values)
 
         s_pred = s_pred.squeeze(0)
 
@@ -162,27 +173,27 @@ def plot_sample(model, sample, sample_idx, save_dir):
     fig_inv, axes_inv = plt.subplots(1, 2, figsize=(12, 5))
 
     # Plot 1: Observed output function u(x)
-    axes_inv[0].plot(x_coords, s_true_np, 'g-', label='Observed Output Function')
-    axes_inv[0].set_title('Observed Output Function u(x)')
-    axes_inv[0].set_xlabel('x')
-    axes_inv[0].set_ylabel('u(x)')
+    axes_inv[0].plot(x_coords, s_true_np, "g-", label="Observed Output Function")
+    axes_inv[0].set_title("Observed Output Function u(x)")
+    axes_inv[0].set_xlabel("x")
+    axes_inv[0].set_ylabel("u(x)")
     axes_inv[0].legend()
     axes_inv[0].grid(True)
 
     # Plot 2: Input function comparison (what we want to find)
-    axes_inv[1].plot(x_coords, u_true_np, 'b-', label='True Input', alpha=0.7)
-    axes_inv[1].plot(x_coords, u_pred_np, 'r--', label='Predicted Input', alpha=0.7)
-    axes_inv[1].set_title('Input Function: True vs Predicted s(x)')
-    axes_inv[1].set_xlabel('x')
-    axes_inv[1].set_ylabel('s(x)')
+    axes_inv[1].plot(x_coords, u_true_np, "b-", label="True Input", alpha=0.7)
+    axes_inv[1].plot(x_coords, u_pred_np, "r--", label="Predicted Input", alpha=0.7)
+    axes_inv[1].set_title("Input Function: True vs Predicted s(x)")
+    axes_inv[1].set_xlabel("x")
+    axes_inv[1].set_ylabel("s(x)")
     axes_inv[1].legend()
     axes_inv[1].grid(True)
 
     plt.tight_layout()
 
     # Save inverse plot
-    save_path_inv = os.path.join(save_dir, f'ifno_inverse_sample_{sample_idx}.png')
-    plt.savefig(save_path_inv, dpi=300, bbox_inches='tight')
+    save_path_inv = os.path.join(save_dir, f"ifno_inverse_sample_{sample_idx}.png")
+    plt.savefig(save_path_inv, dpi=300, bbox_inches="tight")
     print(f"Saved inverse plot: {save_path_inv}")
     plt.close()
 
@@ -190,27 +201,34 @@ def plot_sample(model, sample, sample_idx, save_dir):
     fig_fwd, axes_fwd = plt.subplots(1, 2, figsize=(12, 5))
 
     # Plot 1: Input function s(x)
-    axes_fwd[0].plot(x_coords, u_true_np, 'b-', label='Input Function s(x)')
-    axes_fwd[0].set_title('Input Function s(x)')
-    axes_fwd[0].set_xlabel('x')
-    axes_fwd[0].set_ylabel('s(x)')
+    axes_fwd[0].plot(x_coords, u_true_np, "b-", label="Input Function s(x)")
+    axes_fwd[0].set_title("Input Function s(x)")
+    axes_fwd[0].set_xlabel("x")
+    axes_fwd[0].set_ylabel("s(x)")
     axes_fwd[0].legend()
     axes_fwd[0].grid(True)
 
     # Plot 2: Output function comparison (what we predict)
-    axes_fwd[1].plot(x_coords, s_true_np, 'g-', label='True Output', alpha=0.7)
-    axes_fwd[1].plot(x_coords, s_pred_np, 'orange', linestyle='--', label='Predicted Output', alpha=0.7)
-    axes_fwd[1].set_title('Output Function: True vs Predicted u(x)')
-    axes_fwd[1].set_xlabel('x')
-    axes_fwd[1].set_ylabel('u(x)')
+    axes_fwd[1].plot(x_coords, s_true_np, "g-", label="True Output", alpha=0.7)
+    axes_fwd[1].plot(
+        x_coords,
+        s_pred_np,
+        "orange",
+        linestyle="--",
+        label="Predicted Output",
+        alpha=0.7,
+    )
+    axes_fwd[1].set_title("Output Function: True vs Predicted u(x)")
+    axes_fwd[1].set_xlabel("x")
+    axes_fwd[1].set_ylabel("u(x)")
     axes_fwd[1].legend()
     axes_fwd[1].grid(True)
 
     plt.tight_layout()
 
     # Save forward plot
-    save_path_fwd = os.path.join(save_dir, f'ifno_forward_sample_{sample_idx}.png')
-    plt.savefig(save_path_fwd, dpi=300, bbox_inches='tight')
+    save_path_fwd = os.path.join(save_dir, f"ifno_forward_sample_{sample_idx}.png")
+    plt.savefig(save_path_fwd, dpi=300, bbox_inches="tight")
     print(f"Saved forward plot: {save_path_fwd}")
     plt.close()
 
@@ -218,14 +236,24 @@ def plot_sample(model, sample, sample_idx, save_dir):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description='Visualize IFNO results on Burgers 1D dataset')
-    parser.add_argument('--model_path', type=str,
-                       default='./logs/burgers_1d_ifno_standalone/ifno_model.pth',
-                       help='Path to trained IFNO model')
-    parser.add_argument('--n_samples', type=int, default=3,
-                       help='Number of samples to visualize')
-    parser.add_argument('--save_dir', type=str, default='results/ifno_plots_burger/',
-                       help='Directory to save visualization plots')
+    parser = argparse.ArgumentParser(
+        description="Visualize IFNO results on Burgers 1D dataset"
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default="./logs/burgers_1d_ifno_standalone/ifno_model.pth",
+        help="Path to trained IFNO model",
+    )
+    parser.add_argument(
+        "--n_samples", type=int, default=3, help="Number of samples to visualize"
+    )
+    parser.add_argument(
+        "--save_dir",
+        type=str,
+        default="results/ifno_plots_burger/",
+        help="Directory to save visualization plots",
+    )
 
     args = parser.parse_args()
 
@@ -234,13 +262,11 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.model_path):
         print(f"Model file not found: {args.model_path}")
-        print("Please train the model first using: python train_ifno_standalone.py --dataset burgers_1d")
+        print(
+            "Please train the model first using: python train_ifno_standalone.py --dataset burgers_1d"
+        )
         exit(1)
 
     visualize_ifno_results(
-        model_path=args.model_path,
-        n_samples=args.n_samples,
-        save_dir=args.save_dir
+        model_path=args.model_path, n_samples=args.n_samples, save_dir=args.save_dir
     )
-
-

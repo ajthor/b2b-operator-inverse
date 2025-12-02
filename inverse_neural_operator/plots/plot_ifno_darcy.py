@@ -10,8 +10,8 @@ import numpy as np
 import random
 import os
 
-from inverse_neural_operator.models.ifno import create_model
-from inverse_neural_operator.data.darcy_1d import load_data
+from models.ifno import create_model
+from data.darcy_1d import load_data
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
@@ -24,7 +24,7 @@ device = "cuda:1" if torch.cuda.is_available() else "cpu"
 def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     """Infer IFNO hyperparameters from a saved state_dict path."""
     try:
-        sd = torch.load(state_dict_path, map_location="cpu")
+        sd = torch.load(state_dict_path, map_location="cpu", weights_only=False)
     except Exception:
         return None
     cfg = {}
@@ -83,7 +83,8 @@ def visualize_ifno_results(
     ).to(device)
 
     print(f"Loading model weights from {model_path}...")
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    state_dict = torch.load(model_path, map_location=device, weights_only=False)
+    model.load_state_dict(state_dict)
     model.eval()
 
     print(f"Model loaded with {sum(p.numel() for p in model.parameters())} parameters")

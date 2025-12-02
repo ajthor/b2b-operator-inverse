@@ -15,7 +15,7 @@ import random
 
 import torch
 
-from inverse_neural_operator.b2b.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,

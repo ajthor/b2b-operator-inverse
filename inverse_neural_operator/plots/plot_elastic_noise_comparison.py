@@ -31,9 +31,9 @@ for path in (PROJECT_ROOT, PACKAGE_ROOT):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.models.load_model import load_models
-from inverse_neural_operator.plots.utils.plot_utils import (
+from data.load_dataset import load_dataset
+from models.load_model import load_models
+from plots.utils.plot_utils import (
     display_name,
     get_model_color,
     setup_publication_style,
@@ -96,9 +96,11 @@ def infer_dataset_name(log_path: Path) -> str:
     return log_path.parent.name or DEFAULT_DATASET
 
 
-def collect_model_log_dirs(base_path: Path, seed: int, model_filter: Optional[set[str]]) -> Dict[str, Path]:
+def collect_model_log_dirs(
+    base_path: Path, seed: int, model_filter: Optional[set[str]]
+) -> Dict[str, Path]:
     seed_dir_name = f"seed_{seed}"
-    include = (lambda name: not model_filter or name in model_filter)
+    include = lambda name: not model_filter or name in model_filter
 
     if (base_path / "params.pth").exists():
         fallback = next(iter(model_filter)) if model_filter else DEFAULT_MODEL_NAME
@@ -140,7 +142,10 @@ def evaluate_coeff_noise(
             (X, u_true, Y, s_true), (X_b, u_b, Y_b, s_b) = _prepare_sample(sample)
 
             eval_out = evaluate_fn(
-                model, (X_b, u_b, Y_b, s_b), input_function_encoder, output_function_encoder
+                model,
+                (X_b, u_b, Y_b, s_b),
+                input_function_encoder,
+                output_function_encoder,
             )
             if isinstance(eval_out, (tuple, list)):
                 _, alpha_pred = eval_out
@@ -205,7 +210,9 @@ def plot_aggregated_metric(
             noise_map[noise][model_name] = data
 
     if not noise_map:
-        print(f"⚠️  No aggregated metrics found for coefficient plotting at {output_path}")
+        print(
+            f"⚠️  No aggregated metrics found for coefficient plotting at {output_path}"
+        )
         return
 
     sorted_noises = sorted(noise_map.keys())
@@ -224,7 +231,9 @@ def plot_aggregated_metric(
             key=lambda m: noise_baseline.get(m, {}).get(metric_key, float("inf")),
         )
     if not models:
-        print(f"⚠️  No models present in aggregated coefficient metrics at {output_path}")
+        print(
+            f"⚠️  No models present in aggregated coefficient metrics at {output_path}"
+        )
         return
     legend_cols = len(models)
 
@@ -250,7 +259,9 @@ def plot_aggregated_metric(
 
     if not ax.lines:
         plt.close(fig)
-        print(f"⚠️  No positive {metric_key} values to plot in aggregate at {output_path}")
+        print(
+            f"⚠️  No positive {metric_key} values to plot in aggregate at {output_path}"
+        )
         return
 
     ax.set_title("")
@@ -286,9 +297,7 @@ def plot_aggregated_metric(
 
 def resolve_results_root(dataset_name: str, override: Optional[str]) -> Path:
     return (
-        Path(override).resolve()
-        if override
-        else PROJECT_ROOT / "results" / dataset_name
+        Path(override).resolve() if override else PROJECT_ROOT / "runs" / dataset_name
     )
 
 
@@ -296,11 +305,30 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Evaluate Elastic Plate inverse models under coefficient noise and save MSE metrics."
     )
-    parser.add_argument("--log_dir", type=str, default=None, help="Path to logs root (defaults to logs/elastic_plate; accepts model/seed paths too)")
-    parser.add_argument("--results_dir", type=str, default=None, help="Root directory to store coefficient-noise metrics (default mirrors results/dataset)")
-    parser.add_argument("--noise_levels", type=float, nargs="*", help="Noise std values applied to inverse coefficients (default: 0,0.005,0.01,0.02,0.04)")
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Random seed for reproducibility")
-    parser.add_argument("--model", type=str, default=None, help="Optional model name filter")
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default=None,
+        help="Path to logs root (defaults to logs/elastic_plate; accepts model/seed paths too)",
+    )
+    parser.add_argument(
+        "--results_dir",
+        type=str,
+        default=None,
+        help="Root directory to store coefficient-noise metrics (default mirrors results/dataset)",
+    )
+    parser.add_argument(
+        "--noise_levels",
+        type=float,
+        nargs="*",
+        help="Noise std values applied to inverse coefficients (default: 0,0.005,0.01,0.02,0.04)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=DEFAULT_SEED, help="Random seed for reproducibility"
+    )
+    parser.add_argument(
+        "--model", type=str, default=None, help="Optional model name filter"
+    )
     return parser.parse_args()
 
 
@@ -315,7 +343,7 @@ def main():
     base_log_dir = (
         Path(args.log_dir).resolve()
         if args.log_dir
-        else PROJECT_ROOT / "logs" / DEFAULT_DATASET
+        else PROJECT_ROOT / "runs" / DEFAULT_DATASET
     )
     if not base_log_dir.exists():
         print(f"✗ Log directory not found: {base_log_dir}")

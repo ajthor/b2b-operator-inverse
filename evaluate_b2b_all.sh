@@ -2,10 +2,38 @@
 set -euo pipefail
 
 #── CONFIGURATION ────────────────────────────────────────
-# Datasets and models to evaluate - matches run_all.sh
+
+# Parse optional --base_dir argument
+B2B_RESULTS_DIR_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --base_dir)
+      B2B_RESULTS_DIR_OVERRIDE="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+# Hierarchy: script arg > B2B_RESULTS_DIR env var > default ./results
+B2B_RESULTS_DIR="${B2B_RESULTS_DIR_OVERRIDE:-${B2B_RESULTS_DIR:-}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_BASE_DIR="$SCRIPT_DIR/results"
+BASE_DIR="${B2B_RESULTS_DIR:-$DEFAULT_BASE_DIR}"
+if [[ "$BASE_DIR" != /* ]]; then
+  BASE_DIR="$SCRIPT_DIR/$BASE_DIR"
+fi
+mkdir -p "$BASE_DIR"
+BASE_DIR="$(cd "$BASE_DIR" && pwd)"
+RUNS_BASE_DIR="$BASE_DIR/runs"
+mkdir -p "$RUNS_BASE_DIR"
+export B2B_RESULTS_DIR BASE_DIR
+echo "Resolved base dir: $BASE_DIR"
 
 # List of GPUs to use for evaluation
-GPUS=(3)
+GPUS=(0)
 ALL_GPUS=("${GPUS[@]}")
 if [ ${#ALL_GPUS[@]} -eq 0 ]; then
   echo "Error: No GPUs specified" >&2
@@ -19,16 +47,12 @@ LOCK_FILE=/tmp/gpu_lock_file_eval
 STATUS_DIR=/tmp/gpu_status_eval
 
 # DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d)
-DATASETS=(burgers_1d darcy_1d)
+DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d)
 FORWARD_MODELS=(b2b_linear b2b_nonlinear)
 SEEDS=(1 2 3 4 5)
 
-# Base directories - same as run_all.sh and plot_all.sh
-LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
-RESULTS_BASE_DIR="results"
-
-# Batch size for evaluation
-BATCH_SIZE=32
+# Batch size for evaluation (match evaluate_b2b.py default)
+BATCH_SIZE=4
 
 #── INITIALIZE GPU STATUS ─────────────────────────────────
 mkdir -p "$STATUS_DIR"
@@ -38,7 +62,7 @@ done
 
 #── EVALUATION WORKER ─────────────────────────────────────
 evaluate_b2b_dataset() {
-  local dataset gpu count
+  local dataset gpu count exit_code
 
   # parse named args
   while (( $# )); do
@@ -50,57 +74,26 @@ evaluate_b2b_dataset() {
     esac
   done
 
-  # Construct paths
-  local dataset_log_dir="$LOG_BASE_DIR/$dataset"
-  local output_dir="$RESULTS_BASE_DIR/$dataset/shared"
-
-  # Check if shared directory exists
-  local shared_dir="$dataset_log_dir/shared"
-  if [ ! -d "$shared_dir" ]; then
-    echo "  ⚠ [$count/$TOTAL_JOBS] Skipping $dataset: Shared directory not found at $shared_dir"
-    # free the GPU slot
-    flock "$LOCK_FILE" bash -c "
-      c=\$(< $STATUS_DIR/gpu_$gpu)
-      echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
-    "
-    return 1
-  fi
-
-  # Check if at least one seed directory exists
-  local seed_exists=false
-  for seed in "${SEEDS[@]}"; do
-    if [ -d "$shared_dir/seed_$seed" ]; then
-      seed_exists=true
-      break
-    fi
-  done
-
-  if [ "$seed_exists" = false ]; then
-    echo "  ⚠ [$count/$TOTAL_JOBS] Skipping $dataset: No seed directories found in $shared_dir"
-    # free the GPU slot
-    flock "$LOCK_FILE" bash -c "
-      c=\$(< $STATUS_DIR/gpu_$gpu)
-      echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
-    "
-    return 1
-  fi
-
-  # Create output directory if it doesn't exist
-  mkdir -p "$output_dir"
-
   echo "  → [$count/$TOTAL_JOBS] Evaluating B2B models: $dataset → cuda:$gpu"
 
-  # Run Python evaluation script
-  python inverse_neural_operator/evaluate_b2b.py \
+  local log_dir="$RUNS_BASE_DIR/$dataset/shared"
+  local log_file="$log_dir/evaluate_b2b.log"
+  mkdir -p "$log_dir"
+  : > "$log_file"
+
+  # Run Python evaluation script - Python handles all path construction
+  if ! python inverse_neural_operator/evaluate_b2b.py \
     --dataset "$dataset" \
-    --log_base_dir "$dataset_log_dir" \
     --seeds "${SEEDS[@]}" \
     --forward_models "${FORWARD_MODELS[@]}" \
     --batch_size "$BATCH_SIZE" \
     --device "cuda:$gpu" \
-    --output_dir "$output_dir" \
-    > "$output_dir/evaluation_log.txt" 2>&1 \
-    || echo "  ✗ [$count/$TOTAL_JOBS] Evaluation failed for $dataset (exit code: $?)"
+    --base_dir "$BASE_DIR" \
+    >>"$log_file" 2>&1
+  then
+    exit_code=$?
+    echo "  ✗ [$count/$TOTAL_JOBS] Evaluation failed for $dataset (exit code: $exit_code)" | tee -a "$log_file"
+  fi
 
   # free the GPU slot
   flock "$LOCK_FILE" bash -c "
@@ -227,5 +220,9 @@ echo "════════════════════════�
 echo "  Evaluation Complete"
 echo "═══════════════════════════════════════════════════════════════"
 echo "  Evaluated $TOTAL_JOBS dataset(s)"
-echo "  Results saved to: $RESULTS_BASE_DIR/*/shared/"
+if [ -n "$B2B_RESULTS_DIR" ]; then
+  echo "  Results saved to: $B2B_RESULTS_DIR/runs/*/shared/"
+else
+echo "  Results saved under: $RUNS_BASE_DIR/*/shared/"
+fi
 echo "═══════════════════════════════════════════════════════════════"

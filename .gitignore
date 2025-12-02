@@ -266,3 +266,13 @@ results/
 
 evaluation/
 logs_ifno/
+results_plots/
+temp_plots/
+data/
+
+*.out
+
+gridspec/
+scripts/
+
+CLAUDE.md

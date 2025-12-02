@@ -164,7 +164,8 @@ def save(model, path):
 
 
 def load(model, path, device=None):
-    model.load_state_dict(torch.load(path, map_location=device))
+    state_dict = torch.load(path, map_location=device, weights_only=False)
+    model.load_state_dict(state_dict)
     return model
 
 
@@ -187,7 +188,7 @@ def load_checkpoint(
     optimizer=None,
     device=None,
 ):
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     if device is not None:

@@ -10,14 +10,17 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import os
 import json
+import sys
 
 # Import IFNO model (unconditional)
-from inverse_neural_operator.models.ifno import (
+from models.ifno import (
     create_model,
     train as train_model,
     save as save_model,
     count_model_params,
 )
+from config.paths import get_model_dir, get_runs_dir
+from utils.params import save_params
 
 
 def main():
@@ -108,12 +111,11 @@ def main():
 
     # I/O args
     parser.add_argument(
-        "--log_dir",
+        "--base_dir",
         type=str,
         default=None,
-        help="Log directory (defaults to ./logs_ifno/{dataset}/)",
+        help="Base directory for models/results/logs (overrides B2B_RESULTS_DIR / ./results fallback)",
     )
-    parser.add_argument("--checkpoint_dir", type=str, default=None)
     parser.add_argument("--checkpoint_interval", type=int, default=100)
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
 
@@ -137,39 +139,45 @@ def main():
     print(f"Using device: {device}")
     torch.manual_seed(args.seed)
 
-    # Resolve log directory
-    if args.log_dir is None:
-        args.log_dir = f"./logs_ifno/{args.dataset}/"
-    # Create log directory
-    os.makedirs(args.log_dir, exist_ok=True)
-    writer = SummaryWriter(log_dir=args.log_dir)
-    print(f"TensorBoard logs -> {args.log_dir}")
+    # Construct paths (CLI base_dir overrides env → YAML defaults)
+    log_dir = str(get_runs_dir(args.dataset, "ifno", args.seed, base_dir_override=args.base_dir))
+    model_dir = str(get_model_dir(args.dataset, "ifno", args.seed, base_dir_override=args.base_dir))
 
-    # Set checkpoint directory
-    if args.checkpoint_dir is None:
-        args.checkpoint_dir = os.path.join(args.log_dir, "checkpoints")
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
-    print(f"Checkpoints -> {args.checkpoint_dir}")
+    # Create directories
+    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
+
+    # Checkpoints saved in runs (log_dir) alongside TensorBoard events
+    checkpoint_dir = os.path.join(log_dir, "checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    writer = SummaryWriter(log_dir=log_dir)
+    print(f"TensorBoard logs -> {log_dir}")
+    print(f"Model directory -> {model_dir}")
+    print(f"Checkpoints -> {checkpoint_dir}")
+
+    # Save args to model directory
+    save_params(args, model_dir)
 
     # Select dataset loader
     if args.dataset == "darcy_1d":
-        from inverse_neural_operator.data.darcy_1d import load_data as load_data_fn
+        from data.darcy_1d import load_data as load_data_fn
     elif args.dataset == "burgers_1d":
-        from inverse_neural_operator.data.burgers_1d import load_data as load_data_fn
+        from data.burgers_1d import load_data as load_data_fn
     elif args.dataset == "parametric_heat":
-        from inverse_neural_operator.data.parametric_heat import (
+        from data.parametric_heat import (
             load_data as load_data_fn,
         )
     elif args.dataset == "chladni_2d":
-        from inverse_neural_operator.data.chladni_2d import load_data as load_data_fn
+        from data.chladni_2d import load_data as load_data_fn
     elif args.dataset == "wave_scattering":
-        from inverse_neural_operator.data.wave_scattering import (
+        from data.wave_scattering import (
             load_data as load_data_fn,
         )
     elif args.dataset == "fwi":
-        from inverse_neural_operator.data.fwi_data import load_data as load_data_fn
+        from data.fwi_data import load_data as load_data_fn
     elif args.dataset == "elastic_plate":
-        from inverse_neural_operator.data.elastic_plate import load_data as load_data_fn
+        from data.elastic_plate import load_data as load_data_fn
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 
@@ -245,7 +253,7 @@ def main():
         params=args,
         forward_model=None,  # Unused placeholder for IFNO
         resume_from_checkpoint=args.resume,
-        checkpoint_dir=args.checkpoint_dir,
+        checkpoint_dir=checkpoint_dir,
         checkpoint_interval=args.checkpoint_interval,
         device=device,
         epochs_vae=args.epochs_vae,
@@ -257,7 +265,7 @@ def main():
     )
 
     # Save model
-    model_path = os.path.join(args.log_dir, "ifno_model.pth")
+    model_path = os.path.join(model_dir, "ifno_model.safetensors")
     save_model(model=model, path=model_path)
     print(f"Model saved to: {model_path}")
 

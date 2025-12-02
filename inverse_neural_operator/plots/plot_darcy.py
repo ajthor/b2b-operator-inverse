@@ -28,10 +28,10 @@ DEFAULT_DATASET = "darcy_1d"
 DEFAULT_MODEL_NAME = "nonlinear"
 DEFAULT_SEED = 1
 
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.models.load_model import load_models
-from inverse_neural_operator.b2b.load_model import load_forward_model
-from inverse_neural_operator.plots.plot_utils import find_best_worst_samples
+from data.load_dataset import load_dataset
+from models.load_model import load_models
+from b2b.load_model import load_forward_model
+from plots.plot_utils import find_best_worst_samples
 
 device = "cpu"
 
@@ -72,12 +72,16 @@ def infer_dataset_name(log_path: Path) -> str:
     return DEFAULT_DATASET
 
 
-def collect_model_log_dirs(base_path: Path, seed: int, model_filter: Optional[set[str]]) -> Dict[str, Path]:
+def collect_model_log_dirs(
+    base_path: Path, seed: int, model_filter: Optional[set[str]]
+) -> Dict[str, Path]:
     seed_dir_name = f"seed_{seed}"
     model_dirs = {}
 
     if (base_path / "params.pth").exists():
-        fallback_model = next(iter(model_filter)) if model_filter else DEFAULT_MODEL_NAME
+        fallback_model = (
+            next(iter(model_filter)) if model_filter else DEFAULT_MODEL_NAME
+        )
         model_name = base_path.parent.name or fallback_model
         if not model_filter or model_name in model_filter:
             model_dirs[model_name] = base_path
@@ -131,11 +135,16 @@ def compute_mse_errors(
 
             X_b, u_b, Y_b, s_b = add_batch_dim(X, u_true, Y, s_input)
             u_pred, _ = evaluate_fn(
-                model, (X_b, u_b, Y_b, s_b), input_function_encoder, output_function_encoder
+                model,
+                (X_b, u_b, Y_b, s_b),
+                input_function_encoder,
+                output_function_encoder,
             )
             u_pred = u_pred.squeeze(0)
 
-            alpha, _ = input_function_encoder.compute_coefficients(X_b, u_pred.unsqueeze(0))
+            alpha, _ = input_function_encoder.compute_coefficients(
+                X_b, u_pred.unsqueeze(0)
+            )
             beta_pred = forward_model.forward(alpha)
             s_resim = output_function_encoder(Y_b, beta_pred).squeeze(0)
 
@@ -399,7 +408,9 @@ def plot_model_results(
     )
 
     # Load forward model for re-simulation
-    forward_model = load_forward_model(log_dir=log_dir, forward_model_name='b2b_nonlinear', device=device)
+    forward_model = load_forward_model(
+        log_dir=log_dir, forward_model_name="b2b_nonlinear", device=device
+    )
 
     inverse_mse, forward_mse = compute_mse_errors(
         model=model,
@@ -480,17 +491,41 @@ def plot_model_results(
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Plot Darcy 1D results for all models.")
-parser.add_argument("--log_dir", type=str, default=None, help="Path to logs root (defaults to logs/darcy_1d; accepts model/seed paths too)")
-parser.add_argument("--results_dir", type=str, default=None, help="Results directory for saving plots")
-parser.add_argument("--n_samples", type=int, default=3, help="Number of random samples to plot per model")
-parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
-parser.add_argument("--model", type=str, default=None, help="Model name to plot results for (defaults to all models)")
-parser.add_argument("--inverse_noise_std", type=float, default=0.0, help="Stddev of Gaussian noise added to inverse-model inputs")
+parser.add_argument(
+    "--log_dir",
+    type=str,
+    default=None,
+    help="Path to logs root (defaults to logs/darcy_1d; accepts model/seed paths too)",
+)
+parser.add_argument(
+    "--results_dir", type=str, default=None, help="Results directory for saving plots"
+)
+parser.add_argument(
+    "--n_samples",
+    type=int,
+    default=3,
+    help="Number of random samples to plot per model",
+)
+parser.add_argument(
+    "--seed", type=int, default=42, help="Random seed for reproducibility"
+)
+parser.add_argument(
+    "--model",
+    type=str,
+    default=None,
+    help="Model name to plot results for (defaults to all models)",
+)
+parser.add_argument(
+    "--inverse_noise_std",
+    type=float,
+    default=0.0,
+    help="Stddev of Gaussian noise added to inverse-model inputs",
+)
 
 args = parser.parse_args()
 
 if args.log_dir is None:
-    args.log_dir = str(PROJECT_ROOT / "logs" / DEFAULT_DATASET)
+    args.log_dir = str(PROJECT_ROOT / "runs" / DEFAULT_DATASET)
 
 inverse_noise_std = max(args.inverse_noise_std, 0.0)
 
@@ -517,12 +552,22 @@ metrics_aggregate: Dict[Path, Dict[str, Dict]] = defaultdict(dict)
 
 for model_name, model_log_dir in sorted(model_log_dirs.items()):
     dataset_name = infer_dataset_name(model_log_dir)
-    aggregator_base = custom_results_dir if custom_results_dir else PROJECT_ROOT / "results" / dataset_name
-    noise_suffix = format_noise_value(inverse_noise_std) if inverse_noise_std > 0 else None
-    aggregator_dir = aggregator_base if not noise_suffix else aggregator_base / noise_suffix
+    aggregator_base = (
+        custom_results_dir
+        if custom_results_dir
+        else PROJECT_ROOT / "runs" / dataset_name
+    )
+    noise_suffix = (
+        format_noise_value(inverse_noise_std) if inverse_noise_std > 0 else None
+    )
+    aggregator_dir = (
+        aggregator_base if not noise_suffix else aggregator_base / noise_suffix
+    )
 
     if custom_results_dir:
-        results_dir_path = aggregator_dir / model_name if multiple_models else aggregator_dir
+        results_dir_path = (
+            aggregator_dir / model_name if multiple_models else aggregator_dir
+        )
     else:
         results_dir_path = aggregator_dir / model_name
 
@@ -531,7 +576,9 @@ for model_name, model_log_dir in sorted(model_log_dirs.items()):
 
     print(f"Loading model parameters and dataset for {model_name}...")
     params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
-    test_dataset, dataset_info = load_dataset(params.dataset, params, device, split="test", return_info=True)
+    test_dataset, dataset_info = load_dataset(
+        params.dataset, params, device, split="test", return_info=True
+    )
     print(f"✓ {model_name}: loaded {len(test_dataset)} test samples")
 
     print(f"Generating {args.n_samples} sample plots for {model_name}...")

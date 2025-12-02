@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import DataLoader
+from safetensors.torch import save_file, load_file
 import tqdm
 import os
 import warnings
@@ -1321,12 +1322,15 @@ def ifno_joint_loss(model, batch, grid_loss_weight=0.01):
 
 
 def save(model, path):
+    """Save model weights in safetensors format."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    torch.save(model.state_dict(), path)
+    save_file(model.state_dict(), path)
 
 
 def load(model, path, device=None):
-    model.load_state_dict(torch.load(path, map_location=device))
+    """Load model weights from safetensors format."""
+    state_dict = load_file(path, device=str(device) if device else 'cpu')
+    model.load_state_dict(state_dict)
     return model
 
 
@@ -1349,7 +1353,7 @@ def save_checkpoint(model, optimizer, epoch, loss, path, training_stage="joint")
 
 
 def load_checkpoint(model, path, optimizer=None, device=None):
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     if device is not None:

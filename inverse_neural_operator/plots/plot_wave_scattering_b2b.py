@@ -384,7 +384,7 @@ parser.add_argument(
 parser.add_argument(
     "--results_dir",
     type=str,
-    default="results",
+    default="runs",
     help="Base results directory for saving plots",
 )
 parser.add_argument(

@@ -3,9 +3,37 @@ set -euo pipefail
 
 #── CONFIGURATION ────────────────────────────────────────
 
+# Parse optional --base_dir argument
+B2B_RESULTS_DIR_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --base_dir)
+      B2B_RESULTS_DIR_OVERRIDE="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+# Hierarchy: script arg > B2B_RESULTS_DIR env var > default ./results
+B2B_RESULTS_DIR="${B2B_RESULTS_DIR_OVERRIDE:-${B2B_RESULTS_DIR:-}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_BASE_DIR="$SCRIPT_DIR/results"
+BASE_DIR="${B2B_RESULTS_DIR:-$DEFAULT_BASE_DIR}"
+if [[ "$BASE_DIR" != /* ]]; then
+  BASE_DIR="$SCRIPT_DIR/$BASE_DIR"
+fi
+mkdir -p "$BASE_DIR"
+BASE_DIR="$(cd "$BASE_DIR" && pwd)"
+RUNS_BASE_DIR="$BASE_DIR/runs"
+mkdir -p "$RUNS_BASE_DIR"
+export B2B_RESULTS_DIR BASE_DIR
+echo "Resolved base dir: $BASE_DIR"
 
 # List of GPUs to use
-GPUS=(3 4 5 6)
+GPUS=(1 2 3 4 5 6)
 ALL_GPUS=("${GPUS[@]}")
 if [ ${#ALL_GPUS[@]} -eq 0 ]; then
   echo "Error: No GPUs specified" >&2
@@ -18,17 +46,13 @@ PROCS_PER_GPU=1
 LOCK_FILE=/tmp/gpu_lock_file
 STATUS_DIR=/tmp/gpu_status
 
-# Base directory for experiment logs
-# LOG_BASE_DIR="/geoelements/Stepan/b2b-operator-inverse/logs"
-LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
-
 # DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d elastic_plate)
-# MODELS=(linear linear_inverse nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
+# MODELS=(linear linear_inverse nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic mixture_density_network conditional_realnvp)
 # FORWARD_MODELS=(b2b_linear b2b_nonlinear)
-DATASETS=(fwi chladni_2d)
-MODELS=(linear linear_inverse nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic cinn_affine_probabilistic mixture_density_network)
+DATASETS=(burgers_1d darcy_1d)
+MODELS=(linear linear_inverse nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine cinn_additive_probabilistic mixture_density_network conditional_realnvp)
 FORWARD_MODELS=(b2b_linear b2b_nonlinear)
-SEEDS=(1)   # add more seeds if you like
+SEEDS=(1 2 3 4 5)   # add more seeds if you like
 
 #── INITIALIZE GPU STATUS ─────────────────────────────────
 mkdir -p "$STATUS_DIR"
@@ -38,7 +62,7 @@ done
 
 #── FUNCTION ENCODER WORKER ──────────────────────────────
 train_function_encoder() {
-  local dataset seed gpu count encoder_type
+  local dataset seed gpu count encoder_type exit_code
 
   # parse named args
   while (( $# )); do
@@ -52,26 +76,26 @@ train_function_encoder() {
     esac
   done
 
-  # prepare shared logdir for this dataset-seed combination
-  local shared_logdir="$LOG_BASE_DIR/$dataset/shared/seed_$seed"
-  mkdir -p "$shared_logdir"
-  local logfile="$shared_logdir/${encoder_type}_function_encoder_log.txt"
-
-  # clear the log file
-  : > "$logfile"
-
   echo "  → [$count/$TOTAL_ENCODER_JOBS] Training ${encoder_type^^} function encoder: $dataset | seed=$seed → cuda:$gpu"
 
-  # Train function encoder
-  python inverse_neural_operator/train_function_encoder.py \
+  local log_dir="$RUNS_BASE_DIR/$dataset/shared/seed_$seed"
+  local log_file="$log_dir/function_encoder_${encoder_type}.log"
+  mkdir -p "$log_dir"
+  : > "$log_file"
+
+  # Train function encoder - Python handles all path construction
+  if ! python inverse_neural_operator/train_function_encoder.py \
     --encoder_type "$encoder_type" \
     --dataset "$dataset" \
     --model "shared" \
     --seed "$seed" \
     --device "cuda:$gpu" \
-    --log_dir "$shared_logdir" \
-    >>"$logfile" 2>&1 \
-    || echo "  ✗ [$count/$TOTAL_ENCODER_JOBS] Training $encoder_type function encoder failed with exit code $?"
+    --base_dir "$BASE_DIR" \
+    >>"$log_file" 2>&1
+  then
+    exit_code=$?
+    echo "  ✗ [$count/$TOTAL_ENCODER_JOBS] Training $encoder_type function encoder failed with exit code $exit_code" | tee -a "$log_file"
+  fi
 
   # free the GPU slot
   flock "$LOCK_FILE" bash -c "
@@ -99,25 +123,25 @@ train_forward_model() {
     esac
   done
 
-  # use shared logdir for forward model (same as function encoders)
-  local shared_logdir="$LOG_BASE_DIR/$dataset/shared/seed_$seed"
-  mkdir -p "$shared_logdir"
-  local logfile="$shared_logdir/forward_${model}_log.txt"
-
-  # clear the log file
-  : > "$logfile"
-
   echo "  → [$count/$TOTAL_FORWARD_JOBS] Training forward model: $dataset | $model | seed=$seed → cuda:$gpu"
-  
-  # Train the forward model using pre-trained function encoders (save to shared dir)
-  python inverse_neural_operator/train_forward_model.py \
+
+  local log_dir="$RUNS_BASE_DIR/$dataset/shared/seed_$seed"
+  local log_file="$log_dir/forward_${model}.log"
+  mkdir -p "$log_dir"
+  : > "$log_file"
+
+  # Train the forward model - Python handles all path construction
+  if ! python inverse_neural_operator/train_forward_model.py \
     --dataset "$dataset" \
     --model "$model" \
     --seed "$seed" \
     --device "cuda:$gpu" \
-    --log_dir "$shared_logdir" \
-    >>"$logfile" 2>&1 \
-    || echo "  ✗ [$count/$TOTAL_FORWARD_JOBS] Training forward model $model failed with exit code $?"
+    --base_dir "$BASE_DIR" \
+    >>"$log_file" 2>&1
+  then
+    exit_code=$?
+    echo "  ✗ [$count/$TOTAL_FORWARD_JOBS] Training forward model $model failed with exit code $exit_code" | tee -a "$log_file"
+  fi
 
   sleep 1
 
@@ -147,53 +171,25 @@ train_model() {
     esac
   done
 
-  # prepare model-specific logdir
-  local model_logdir="$LOG_BASE_DIR/$dataset/$model/seed_$seed"
-  local shared_logdir="$LOG_BASE_DIR/$dataset/shared/seed_$seed"
-  mkdir -p "$model_logdir"
-  local logfile="$model_logdir/log.txt"
-
-  # clear the log file
-  : > "$logfile"
-
-  # Copy the pre-trained function encoders to the model directory
-  cp "$shared_logdir/input_function_encoder.pth" "$model_logdir/" || {
-    echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Failed to copy input function encoder for $dataset | $model | seed=$seed"
-    return 1
-  }
-  cp "$shared_logdir/output_function_encoder.pth" "$model_logdir/" || {
-    echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Failed to copy output function encoder for $dataset | $model | seed=$seed"
-    return 1
-  }
-  cp "$shared_logdir/input_function_encoder_params.pth" "$model_logdir/" || {
-    echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Failed to copy input function encoder params for $dataset | $model | seed=$seed"
-    return 1
-  }
-  cp "$shared_logdir/output_function_encoder_params.pth" "$model_logdir/" || {
-    echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Failed to copy output function encoder params for $dataset | $model | seed=$seed"
-    return 1
-  }
-
-  # Copy any trained forward models from shared directory to the inverse model directory
-  for forward_model_file in "$shared_logdir"/forward_*.pth; do
-    if [ -f "$forward_model_file" ]; then
-      cp "$forward_model_file" "$model_logdir/" || {
-        echo "  ⚠ [$count/$TOTAL_INVERSE_JOBS] Warning: Failed to copy forward model $(basename "$forward_model_file") for $dataset | $model | seed=$seed"
-      }
-    fi
-  done
-
   echo "  → [$count/$TOTAL_INVERSE_JOBS] Training inverse model: $dataset | $model | seed=$seed → cuda:$gpu"
-  
-  # Train the model using pre-trained function encoders
-  python inverse_neural_operator/train_model.py \
+
+  local log_dir="$RUNS_BASE_DIR/$dataset/$model/seed_$seed"
+  local log_file="$log_dir/train.log"
+  mkdir -p "$log_dir"
+  : > "$log_file"
+
+  # Train the model - Python handles all path construction and loads function encoders from shared location
+  if ! python inverse_neural_operator/train_model.py \
     --dataset "$dataset" \
     --model "$model" \
     --seed "$seed" \
     --device "cuda:$gpu" \
-    --log_dir "$model_logdir" \
-    >>"$logfile" 2>&1 \
-    || echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Training inverse model $model failed with exit code $?"
+    --base_dir "$BASE_DIR" \
+    >>"$log_file" 2>&1
+  then
+    exit_code=$?
+    echo "  ✗ [$count/$TOTAL_INVERSE_JOBS] Training inverse model $model failed with exit code $exit_code" | tee -a "$log_file"
+  fi
 
   sleep 1
 

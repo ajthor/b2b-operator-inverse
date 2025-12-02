@@ -2,10 +2,38 @@
 set -euo pipefail
 
 #── CONFIGURATION ────────────────────────────────────────
-# Update these defaults to match the environments used in run_ifno_all.sh
+
+# Parse optional --base_dir argument
+B2B_RESULTS_DIR_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --base_dir)
+      B2B_RESULTS_DIR_OVERRIDE="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+# Hierarchy: script arg > B2B_RESULTS_DIR env var > default ./results
+B2B_RESULTS_DIR="${B2B_RESULTS_DIR_OVERRIDE:-${B2B_RESULTS_DIR:-}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_BASE_DIR="$SCRIPT_DIR/results"
+BASE_DIR="${B2B_RESULTS_DIR:-$DEFAULT_BASE_DIR}"
+if [[ "$BASE_DIR" != /* ]]; then
+  BASE_DIR="$SCRIPT_DIR/$BASE_DIR"
+fi
+mkdir -p "$BASE_DIR"
+BASE_DIR="$(cd "$BASE_DIR" && pwd)"
+RUNS_BASE_DIR="$BASE_DIR/runs"
+mkdir -p "$RUNS_BASE_DIR"
+export B2B_RESULTS_DIR BASE_DIR
+echo "Resolved base dir: $BASE_DIR"
 
 # GPUs available for evaluation (use "cpu" to force CPU execution)
-GPUS=(5)
+GPUS=(0)
 ALL_GPUS=("${GPUS[@]}")
 if [ ${#ALL_GPUS[@]} -eq 0 ]; then
   echo "Error: No GPUs specified" >&2
@@ -22,10 +50,6 @@ STATUS_DIR=/tmp/gpu_status_ifno_eval
 DATASETS=(burgers_1d darcy_1d wave_scattering chladni_2d)
 SEEDS=(1 2 3 4 5)
 
-# Base directories (aligned with run_ifno_all.sh / plot scripts)
-BASE_DIR="logs_ifno"
-RESULTS_BASE_DIR="results"
-
 # Batch size for evaluation DataLoader
 BATCH_SIZE=1
 
@@ -37,7 +61,7 @@ done
 
 #── IFNO EVALUATION WORKER ─────────────────────────────────
 evaluate_ifno_dataset() {
-  local dataset gpu count
+  local dataset gpu count exit_code
 
   while (( $# )); do
     case "$1" in
@@ -48,48 +72,25 @@ evaluate_ifno_dataset() {
     esac
   done
 
-  local dataset_dir="$BASE_DIR/$dataset"
-  local output_dir="$RESULTS_BASE_DIR/$dataset/ifno"
-
-  if [ ! -d "$dataset_dir" ]; then
-    echo "  ⚠ [$count/$TOTAL_JOBS] Skipping $dataset: log directory not found at $dataset_dir"
-    flock "$LOCK_FILE" bash -c "
-      c=\$(< $STATUS_DIR/gpu_$gpu)
-      echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
-    "
-    return 1
-  fi
-
-  local has_runs=false
-  for seed in "${SEEDS[@]}"; do
-    if [ -f "$dataset_dir/seed_$seed/ifno_model.pth" ]; then
-      has_runs=true
-      break
-    fi
-  done
-
-  if [ "$has_runs" = false ]; then
-    echo "  ⚠ [$count/$TOTAL_JOBS] Skipping $dataset: no trained iFNO models found"
-    flock "$LOCK_FILE" bash -c "
-      c=\$(< $STATUS_DIR/gpu_$gpu)
-      echo \$((c-1)) > $STATUS_DIR/gpu_$gpu
-    "
-    return 1
-  fi
-
-  mkdir -p "$output_dir"
-
   echo "  → [$count/$TOTAL_JOBS] Evaluating iFNO model: $dataset → cuda:$gpu"
 
-  python inverse_neural_operator/evaluate_ifno.py \
+  local log_dir="$RUNS_BASE_DIR/$dataset/ifno"
+  local log_file="$log_dir/evaluate.log"
+  mkdir -p "$log_dir"
+  : > "$log_file"
+
+  # Run Python evaluation script - Python handles all path construction
+  if ! python inverse_neural_operator/evaluate_ifno.py \
     --dataset "$dataset" \
-    --base_dir "$BASE_DIR" \
     --seeds "${SEEDS[@]}" \
     --batch_size "$BATCH_SIZE" \
     --device "cuda:$gpu" \
-    --results_dir "$RESULTS_BASE_DIR" \
-    > "$output_dir/evaluation_log.txt" 2>&1 \
-    || echo "  ✗ [$count/$TOTAL_JOBS] Evaluation failed for $dataset (exit code: $?)"
+    --base_dir "$BASE_DIR" \
+    >>"$log_file" 2>&1
+  then
+    exit_code=$?
+    echo "  ✗ [$count/$TOTAL_JOBS] Evaluation failed for $dataset (exit code: $exit_code)" | tee -a "$log_file"
+  fi
 
   flock "$LOCK_FILE" bash -c "
     c=\$(< $STATUS_DIR/gpu_$gpu)
@@ -103,8 +104,7 @@ export -f evaluate_ifno_dataset
 export LOCK_FILE
 export STATUS_DIR
 export BATCH_SIZE
-export BASE_DIR
-export RESULTS_BASE_DIR
+export B2B_RESULTS_DIR
 export -a SEEDS
 
 #── ARGUMENT PARSING ──────────────────────────────────────
@@ -221,5 +221,9 @@ echo "════════════════════════�
 echo "  Evaluation Complete"
 echo "═══════════════════════════════════════════════════════════════"
 echo "  Evaluated $TOTAL_JOBS dataset(s)"
-echo "  Results saved to: $RESULTS_BASE_DIR/*/ifno/"
+if [ -n "$B2B_RESULTS_DIR" ]; then
+  echo "  Results saved to: $B2B_RESULTS_DIR/results/*/ifno/"
+else
+echo "  Results saved under: $RUNS_BASE_DIR/*/ifno/"
+fi
 echo "═══════════════════════════════════════════════════════════════"

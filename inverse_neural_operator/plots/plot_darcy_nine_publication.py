@@ -473,7 +473,7 @@ def main():
         description="Create publication-quality Normalized Darcy 1D plots."
     )
     parser.add_argument(
-        "--log_dir", type=str, default="logs"
+        "--log_dir", type=str, default="runs"
     )
     parser.add_argument("--results_dir", type=str, default="results/darcy_1d")
     parser.add_argument("--seed", type=int, default=1)

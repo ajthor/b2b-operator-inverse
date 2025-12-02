@@ -1,6 +1,7 @@
 import torch
 import tqdm
 import os
+from safetensors.torch import save_file, load_file
 
 
 class Encoder(torch.nn.Module):
@@ -153,7 +154,8 @@ def load(
         Loaded ConditionalAutoencoder instance
     """
     model = create_model(alpha_size, beta_size, hidden_sizes, latent_size)
-    model.load_state_dict(torch.load(path, map_location=device))
+    state_dict = torch.load(path, map_location=device, weights_only=False)
+    model.load_state_dict(state_dict)
     if device is not None:
         model = model.to(device)
     model.eval()
@@ -209,7 +211,7 @@ def load_checkpoint(
     """
     model = create_model(alpha_size, beta_size, hidden_sizes, latent_size)
 
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     if device is not None:

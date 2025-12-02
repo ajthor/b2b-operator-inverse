@@ -8,10 +8,9 @@ generates comprehensive statistics and visualizations.
 Usage:
     python inverse_neural_operator/evaluate_b2b.py \
         --dataset burgers_1d \
-        --log_base_dir /store/at46867/b2b_operator_inverse/burgers_1d \
+        --base_dir /store/b2b-operator-inverse-results \
         --seeds 1 2 3 4 5 \
-        --forward_models b2b_linear b2b_nonlinear \
-        --output_dir results/evaluations/burgers_1d
+        --forward_models b2b_linear b2b_nonlinear
 """
 
 import os
@@ -25,10 +24,11 @@ from collections import defaultdict
 import warnings
 import math
 
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.b2b.load_model import load_function_encoders, load_forward_model
-from inverse_neural_operator.data.process_data import InputFunctionEncoderDataset, OutputFunctionEncoderDataset
-from inverse_neural_operator.b2b.function_encoder import evaluate as evaluate_function_encoder
+from data.load_dataset import load_dataset
+from b2b.load_model import load_function_encoders, load_forward_model
+from data.process_data import InputFunctionEncoderDataset, OutputFunctionEncoderDataset
+from b2b.function_encoder import evaluate as evaluate_function_encoder
+from config.paths import resolve_base_dir
 
 # Try to import tensorboard for reading event files
 try:
@@ -41,17 +41,23 @@ except ImportError:
 
 
 def evaluate_function_encoders(
-    dataset_name, log_base_dir, seeds, batch_size=32, device="cpu"
+    dataset_name,
+    model_base_dir,
+    seeds,
+    batch_size=32,
+    device="cpu",
+    dataset_device="cpu",
 ):
     """
     Evaluate input and output function encoders across multiple seeds.
 
     Args:
         dataset_name: Name of the dataset
-        log_base_dir: Base directory containing seed subdirectories
+        model_base_dir: Base directory containing model files (models/dataset/)
         seeds: List of seed numbers to evaluate
         batch_size: Batch size for evaluation
         device: Device to use for evaluation
+        dataset_device: Device to keep dataset tensors on before batching
 
     Returns:
         dict: {
@@ -66,8 +72,8 @@ def evaluate_function_encoders(
     # Load params from the first available seed directory
     params = None
     for seed in seeds:
-        seed_log_dir = os.path.join(log_base_dir, "shared", f"seed_{seed}")
-        params_path = os.path.join(seed_log_dir, "params.pth")
+        seed_model_dir = os.path.join(model_base_dir, "shared", f"seed_{seed}")
+        params_path = os.path.join(seed_model_dir, "params.pth")
         if os.path.exists(params_path):
             params = torch.load(params_path, weights_only=False)
             print(f"  ✓ Loaded params from seed {seed}")
@@ -75,14 +81,14 @@ def evaluate_function_encoders(
 
     if params is None:
         raise FileNotFoundError(
-            f"Could not find params.pth in any seed directory under {log_base_dir}/shared/"
+            f"Could not find params.pth in any seed directory under {model_base_dir}/shared/"
         )
 
     # Load dataset using the actual params from training
     test_dataset, dataset_info = load_dataset(
         dataset_name=dataset_name,
         params=params,
-        device=device,
+        device=dataset_device,
         split="test",
         return_info=True,
     )
@@ -107,11 +113,15 @@ def evaluate_function_encoders(
     results = {"input": {}, "output": {}}
 
     for seed in seeds:
-        seed_log_dir = os.path.join(log_base_dir, "shared", f"seed_{seed}")
+        seed_model_dir = os.path.join(model_base_dir, "shared", f"seed_{seed}")
 
         # Check if function encoders exist
-        input_encoder_path = os.path.join(seed_log_dir, "input_function_encoder.pth")
-        output_encoder_path = os.path.join(seed_log_dir, "output_function_encoder.pth")
+        input_encoder_path = os.path.join(
+            seed_model_dir, "input_function_encoder.safetensors"
+        )
+        output_encoder_path = os.path.join(
+            seed_model_dir, "output_function_encoder.safetensors"
+        )
 
         if not os.path.exists(input_encoder_path):
             print(
@@ -130,7 +140,7 @@ def evaluate_function_encoders(
         try:
             # Load function encoders
             input_encoder, output_encoder = load_function_encoders(
-                log_dir=seed_log_dir,
+                model_dir=seed_model_dir,
                 dataset_info=dataset_info,
                 params=params,
                 device=device,
@@ -195,18 +205,25 @@ def evaluate_function_encoders(
 
 
 def evaluate_forward_models(
-    dataset_name, log_base_dir, seeds, forward_models, batch_size=32, device="cpu"
+    dataset_name,
+    model_base_dir,
+    seeds,
+    forward_models,
+    batch_size=32,
+    device="cpu",
+    dataset_device="cpu",
 ):
     """
     Evaluate forward B2B models across multiple seeds.
 
     Args:
         dataset_name: Name of the dataset
-        log_base_dir: Base directory containing seed subdirectories
+        model_base_dir: Base directory containing model files (models/dataset/)
         seeds: List of seed numbers to evaluate
         forward_models: List of forward model names (e.g., ['b2b_linear', 'b2b_nonlinear'])
         batch_size: Batch size for evaluation
         device: Device to use for evaluation
+        dataset_device: Device to keep dataset tensors on before batching
 
     Returns:
         dict: {model_name: {seed: test_loss, ...}, ...}
@@ -218,8 +235,8 @@ def evaluate_forward_models(
     # Load params from the first available seed directory
     params = None
     for seed in seeds:
-        seed_log_dir = os.path.join(log_base_dir, "shared", f"seed_{seed}")
-        params_path = os.path.join(seed_log_dir, "params.pth")
+        seed_model_dir = os.path.join(model_base_dir, "shared", f"seed_{seed}")
+        params_path = os.path.join(seed_model_dir, "params.pth")
         if os.path.exists(params_path):
             params = torch.load(params_path, weights_only=False)
             print(f"  ✓ Loaded params from seed {seed}")
@@ -227,14 +244,14 @@ def evaluate_forward_models(
 
     if params is None:
         raise FileNotFoundError(
-            f"Could not find params.pth in any seed directory under {log_base_dir}/shared/"
+            f"Could not find params.pth in any seed directory under {model_base_dir}/shared/"
         )
 
     # Load dataset using the actual params from training
     test_dataset, dataset_info = load_dataset(
         dataset_name=dataset_name,
         params=params,
-        device=device,
+        device=dataset_device,
         split="test",
         return_info=True,
     )
@@ -253,10 +270,12 @@ def evaluate_forward_models(
         print("  " + "-" * 76)
 
         for seed in seeds:
-            seed_log_dir = os.path.join(log_base_dir, "shared", f"seed_{seed}")
+            seed_model_dir = os.path.join(model_base_dir, "shared", f"seed_{seed}")
 
             # Check if forward model exists
-            forward_model_path = os.path.join(seed_log_dir, f"forward_{model_name}.pth")
+            forward_model_path = os.path.join(
+                seed_model_dir, f"forward_{model_name}.safetensors"
+            )
 
             if not os.path.exists(forward_model_path):
                 print(
@@ -269,7 +288,7 @@ def evaluate_forward_models(
             try:
                 # Load function encoders
                 input_encoder, output_encoder = load_function_encoders(
-                    log_dir=seed_log_dir,
+                    model_dir=seed_model_dir,
                     dataset_info=dataset_info,
                     params=params,
                     device=device,
@@ -277,7 +296,9 @@ def evaluate_forward_models(
 
                 # Load forward model
                 forward_model = load_forward_model(
-                    log_dir=seed_log_dir, forward_model_name=model_name, device=device
+                    model_dir=seed_model_dir,
+                    forward_model_name=model_name,
+                    device=device,
                 )
 
                 # Evaluate forward model on full test set with global relative L2 error
@@ -290,6 +311,10 @@ def evaluate_forward_models(
                 with torch.no_grad():
                     for batch in test_dataloader:
                         X, u, Y, s = batch
+                        X = X.to(device, non_blocking=True)
+                        u = u.to(device, non_blocking=True)
+                        Y = Y.to(device, non_blocking=True)
+                        s = s.to(device, non_blocking=True)
                         # Compute input coefficients
                         alpha, _ = input_encoder.compute_coefficients(X, u)
                         # Get predicted output coefficients
@@ -730,10 +755,10 @@ def main():
         help="Dataset name (e.g., burgers_1d, darcy_1d, wave_scattering)",
     )
     parser.add_argument(
-        "--log_base_dir",
+        "--base_dir",
         type=str,
-        required=True,
-        help="Base directory containing seed subdirectories (e.g., /logs/burgers_1d)",
+        default=None,
+        help="Base directory for models/results/logs (overrides B2B_RESULTS_DIR / ./results fallback).",
     )
     parser.add_argument(
         "--seeds",
@@ -762,10 +787,10 @@ def main():
         help="Device to use for evaluation (default: cpu)",
     )
     parser.add_argument(
-        "--output_dir",
+        "--dataset_device",
         type=str,
-        required=True,
-        help="Directory to save results and plots",
+        default="cpu",
+        help="Device to keep dataset tensors on before loading batches (default: cpu)",
     )
     parser.add_argument(
         "--no_plots",
@@ -780,38 +805,48 @@ def main():
 
     args = parser.parse_args()
 
+    # Construct paths from base_dir or config
+    base_dir = str(resolve_base_dir(args.base_dir))
+    model_base_dir = os.path.join(base_dir, "models", args.dataset)
+    log_base_dir = os.path.join(base_dir, "runs", args.dataset)
+    output_dir = os.path.join(base_dir, "runs", args.dataset, "shared")
+
     print("=" * 80)
     print("B2B MODEL EVALUATION")
     print("=" * 80)
     print(f"Dataset:        {args.dataset}")
-    print(f"Log Base Dir:   {args.log_base_dir}")
+    print(f"Base Dir:       {base_dir}")
+    print(f"Model Base Dir: {model_base_dir}")
     print(f"Seeds:          {args.seeds}")
     print(f"Forward Models: {args.forward_models}")
     print(f"Batch Size:     {args.batch_size}")
     print(f"Device:         {args.device}")
-    print(f"Output Dir:     {args.output_dir}")
+    print(f"Dataset Device: {args.dataset_device}")
+    print(f"Output Dir:     {output_dir}")
     print("=" * 80)
 
     # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
     # Evaluate function encoders
     function_encoder_results = evaluate_function_encoders(
         dataset_name=args.dataset,
-        log_base_dir=args.log_base_dir,
+        model_base_dir=model_base_dir,
         seeds=args.seeds,
         batch_size=args.batch_size,
         device=args.device,
+        dataset_device=args.dataset_device,
     )
 
     # Evaluate forward models
     forward_model_results = evaluate_forward_models(
         dataset_name=args.dataset,
-        log_base_dir=args.log_base_dir,
+        model_base_dir=model_base_dir,
         seeds=args.seeds,
         forward_models=args.forward_models,
         batch_size=args.batch_size,
         device=args.device,
+        dataset_device=args.dataset_device,
     )
 
     # Extract TensorBoard data
@@ -820,7 +855,7 @@ def main():
         "output_function_encoder",
     ] + args.forward_models
     tensorboard_data = extract_tensorboard_data(
-        log_base_dir=args.log_base_dir, seeds=args.seeds, model_types=model_types
+        log_base_dir=log_base_dir, seeds=args.seeds, model_types=model_types
     )
 
     # Print results tables
@@ -832,7 +867,7 @@ def main():
             function_encoder_results=function_encoder_results,
             forward_model_results=forward_model_results,
             tensorboard_data=tensorboard_data,
-            output_dir=args.output_dir,
+            output_dir=output_dir,
         )
 
     # Save CSV results
@@ -840,12 +875,12 @@ def main():
         save_csv_results(
             function_encoder_results=function_encoder_results,
             forward_model_results=forward_model_results,
-            output_dir=args.output_dir,
+            output_dir=output_dir,
         )
 
     print("\n" + "=" * 80)
     print("EVALUATION COMPLETE")
-    print(f"Results saved to: {args.output_dir}")
+    print(f"Results saved to: {output_dir}")
     print("=" * 80)
 
 

@@ -8,10 +8,11 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+from pathlib import Path
 
 import torch
 
-from inverse_neural_operator.b2b.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
@@ -534,20 +535,31 @@ def plot_model_results(
     if not os.path.exists(os.path.join(model_log_dir, "params.pth")):
         return False
 
-    # Load model parameters
-    params = torch.load(os.path.join(model_log_dir, "params.pth"), weights_only=False)
+    # Extract components from model directory path
+    # Expected format: .../models/dataset/model_name/seed_X/
+    path_parts = Path(model_log_dir).parts
+    seed = int(path_parts[-1].replace("seed_", ""))
+    model_name_from_path = path_parts[-2]
+    dataset_name = path_parts[-3]
+    # Find base_dir by going up to "models" directory
+    models_idx = path_parts.index("models")
+    base_dir = str(Path(*path_parts[:models_idx]))
 
-    # Load models
+    # Load models using new signature
     input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
-        log_dir=model_log_dir,
-        dataset_info=dataset_info,
-        params=params,
+        base_dir=base_dir,
+        dataset=dataset_name,
+        model_name=model_name,
+        seed=seed,
         device=device,
     )
 
     # Load forward model for re-simulation
+    shared_dir = os.path.join(
+        base_dir, "models", dataset_name, "shared", f"seed_{seed}"
+    )
     forward_model = load_forward_model(
-        log_dir=model_log_dir, forward_model_name="b2b_nonlinear", device=device
+        model_dir=shared_dir, forward_model_name="b2b_nonlinear", device=device
     )
 
     # Use results_dir directly (already includes dataset/model path from plot_all.sh)

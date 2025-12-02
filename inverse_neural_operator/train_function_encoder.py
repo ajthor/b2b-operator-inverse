@@ -15,11 +15,12 @@ from inverse_neural_operator.b2b.function_encoder import (
     save as save_function_encoder,
     memory_efficient_inner_product,
 )
-from inverse_neural_operator.utils.device import get_device, set_seed
-from inverse_neural_operator.utils.params import save_params
-from inverse_neural_operator.utils.checkpoints import setup_checkpoint_dir
-from inverse_neural_operator.utils.args import load_defaults_from_yaml
-from inverse_neural_operator.data.load_dataset import load_dataset
+from utils.device import get_device, set_seed
+from utils.params import save_params
+from utils.checkpoints import setup_checkpoint_dir
+from utils.args import load_defaults_from_yaml
+from data.load_dataset import load_dataset
+from config.paths import get_runs_dir, get_shared_dir
 
 torch.set_float32_matmul_precision("high")
 
@@ -43,8 +44,13 @@ parser.add_argument("--batch_size", type=int)
 parser.add_argument("--epochs", type=int)
 parser.add_argument("--learning_rate", type=float)
 
-# SummaryWriter args
-parser.add_argument("--log_dir", type=str)
+# Path args
+parser.add_argument(
+    "--base_dir",
+    type=str,
+    default=None,
+    help="Base directory for models/results/logs (overrides B2B_RESULTS_DIR / ./results fallback)",
+)
 
 # Device args
 parser.add_argument("--device", type=str)
@@ -81,12 +87,23 @@ match params.encoder_type:
     case _:
         raise ValueError(f"Unknown encoder type: {params.encoder_type}")
 
+# Function encoders use "shared" as the model name and save to shared directory
+log_dir = str(
+    get_runs_dir(
+        params.dataset, "shared", params.seed, base_dir_override=params.base_dir
+    )
+)
+shared_dir = str(
+    get_shared_dir(params.dataset, params.seed, base_dir_override=params.base_dir)
+)
+
 # Create SummaryWriter
-writer = SummaryWriter(log_dir=params.log_dir)
+writer = SummaryWriter(log_dir=log_dir)
 log_dir = writer.log_dir
 
-# Save args
-save_params(params, log_dir, filename_prefix=f"{model_name}_params")
+# Save args to shared directory (where function encoder is saved)
+os.makedirs(shared_dir, exist_ok=True)
+save_params(params, shared_dir, filename_prefix=f"{model_name}_params")
 
 # Create checkpoint directories
 params.checkpoint_dir = setup_checkpoint_dir(params.checkpoint_dir, log_dir)
@@ -159,7 +176,8 @@ train_function_encoder(
 )
 
 # Save the function encoder
+os.makedirs(shared_dir, exist_ok=True)
 save_function_encoder(
     model=function_encoder,
-    path=os.path.join(log_dir, f"{model_name}.pth"),
+    path=os.path.join(shared_dir, f"{model_name}.safetensors"),
 )

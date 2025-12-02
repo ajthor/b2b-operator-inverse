@@ -2,6 +2,7 @@ import os
 import argparse
 import json
 import random
+from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -85,11 +86,21 @@ print(f"✓ Loaded normalization stats: velocity range [{vmin:.2f}, {vmax:.2f}]"
 os.makedirs(results_dir, exist_ok=True)
 
 print(f"Loading models and generating plots...")
-# Load models
+
+# Extract components from model directory path
+path_parts = Path(log_dir).parts
+seed = int(path_parts[-1].replace("seed_", ""))
+model_name_from_path = path_parts[-2]
+dataset_name = path_parts[-3]
+models_idx = path_parts.index("models")
+base_dir = str(Path(*path_parts[:models_idx]))
+
+# Load models using new signature
 input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
-    log_dir,
-    dataset_info,
-    params,
+    base_dir=base_dir,
+    dataset=dataset_name,
+    model_name=model_name,
+    seed=seed,
     device=device,
 )
 
@@ -350,8 +361,9 @@ def plot_multiple_samples(
 # Load forward model for re-simulation (required)
 from b2b.load_model import load_forward_model
 
+shared_dir = os.path.join(base_dir, "models", dataset_name, "shared", f"seed_{seed}")
 forward_model = load_forward_model(
-    log_dir=log_dir, forward_model_name="b2b_nonlinear", device=device
+    model_dir=shared_dir, forward_model_name="b2b_nonlinear", device=device
 )
 print("✓ Loaded forward model for re-simulation")
 

@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 
 import tqdm
+from safetensors.torch import save_file, load_file
 
 LOG_2PI = math.log(2 * math.pi)
 LOG_SIGMA_MIN = -7.0
@@ -178,7 +179,8 @@ def save(model, path: str) -> None:
 
 
 def load(model, path: str, device=None):
-    model.load_state_dict(torch.load(path, map_location=device))
+    state_dict = torch.load(path, map_location=device, weights_only=False)
+    model.load_state_dict(state_dict)
     return model
 
 
@@ -194,7 +196,7 @@ def save_checkpoint(model, optimizer, epoch: int, loss: float, path: str) -> Non
 
 
 def load_checkpoint(model, path: str, optimizer=None, device=None):
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     if device is not None:

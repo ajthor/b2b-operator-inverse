@@ -261,16 +261,32 @@ def process_model(model_name, log_dir, seed, test_dataset, test_indices, dataset
         return False
 
     try:
-        params = torch.load(params_path, weights_only=False)
         print(f"Loading {model_name}...")
+
+        # Extract components from model directory path
+        path_parts = model_log_dir.parts
+        seed_from_path = int(path_parts[-1].replace("seed_", ""))
+        model_name_from_path = path_parts[-2]
+        dataset_name = path_parts[-3]
+        models_idx = path_parts.index("models")
+        base_dir = str(Path(*path_parts[:models_idx]))
+
+        # Load models using new signature
         input_function_encoder, output_function_encoder, model, evaluate_fn = load_models(
-            log_dir=str(model_log_dir), dataset_info=dataset_info, params=params, device=DEVICE)
+            base_dir=base_dir,
+            dataset=dataset_name,
+            model_name=model_name,
+            seed=seed,
+            device=DEVICE
+        )
 
         # Load forward model if available
         forward_model = None
+        params = torch.load(params_path, weights_only=False)
         if forward_model_name := getattr(params, "forward_model", None):
             try:
-                forward_model = load_forward_model(str(model_log_dir), forward_model_name=forward_model_name, device=DEVICE)
+                shared_dir = str(Path(base_dir) / "models" / dataset_name / "shared" / f"seed_{seed}")
+                forward_model = load_forward_model(model_dir=shared_dir, forward_model_name=forward_model_name, device=DEVICE)
             except Exception as exc:
                 print(f"  Warning: forward model unavailable ({exc})")
 
@@ -295,7 +311,7 @@ def main():
     parser = argparse.ArgumentParser(description="Plot Elastic Plate results.")
     parser.add_argument("--model", type=str, default=None,
                        help="Model name to plot. If omitted, plot all trained models.")
-    parser.add_argument("--log_dir", type=str, default="logs", help="Base log directory.")
+    parser.add_argument("--log_dir", type=str, default="runs", help="Base log directory.")
     parser.add_argument("--results_dir", type=str, default="results/elastic_plots", help="Output directory.")
     parser.add_argument("--n_samples", type=int, default=7, help="Number of samples to plot.")
     parser.add_argument("--seed", type=int, default=1, help="Random seed.")

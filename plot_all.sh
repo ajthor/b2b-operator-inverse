@@ -4,14 +4,40 @@ set -euo pipefail
 #── CONFIGURATION ────────────────────────────────────────
 # Same datasets and models as in run_all.sh
 
+# Parse optional --base_dir argument
+B2B_RESULTS_DIR_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --base_dir)
+      B2B_RESULTS_DIR_OVERRIDE="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+# Hierarchy: script arg > B2B_RESULTS_DIR env var > default ./results
+B2B_RESULTS_DIR="${B2B_RESULTS_DIR_OVERRIDE:-${B2B_RESULTS_DIR:-}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_BASE_DIR="$SCRIPT_DIR/results"
+BASE_DIR="${B2B_RESULTS_DIR:-$DEFAULT_BASE_DIR}"
+if [[ "$BASE_DIR" != /* ]]; then
+  BASE_DIR="$SCRIPT_DIR/$BASE_DIR"
+fi
+mkdir -p "$BASE_DIR"
+BASE_DIR="$(cd "$BASE_DIR" && pwd)"
+LOG_BASE_DIR="$BASE_DIR/models"
+RESULTS_BASE_DIR="$BASE_DIR/runs"
+mkdir -p "$LOG_BASE_DIR" "$RESULTS_BASE_DIR"
+export B2B_RESULTS_DIR BASE_DIR
+echo "Resolved base dir: $BASE_DIR"
+
 # DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d)
 # MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine conditional_realnvp mixture_density_network)
-DATASETS=(fwi)
-MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive inn_affine cinn_affine conditional_realnvp mixture_density_network)
-
-# Base directory for experiment logs - same as in run_all.sh
-LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
-RESULTS_BASE_DIR="results"
+DATASETS=(burgers_1d darcy_1d wave_scattering chladni_2d)
+MODELS=(linear_inverse linear nonlinear variational_autoencoder inn_additive cinn_additive cinn_additive_probabilistic inn_affine cinn_affine conditional_realnvp mixture_density_network)
 
 #── ARGUMENT PARSING ──────────────────────────────────────
 MODEL=""

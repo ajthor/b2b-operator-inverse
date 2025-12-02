@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 
 import tqdm
+from safetensors.torch import save_file, load_file
 
 LOG_2PI = math.log(2 * math.pi)
 
@@ -218,7 +219,8 @@ def save(model, path: str):
 
 
 def load(model, path: str, device=None):
-    model.load_state_dict(torch.load(path, map_location=device))
+    state_dict = torch.load(path, map_location=device, weights_only=False)
+    model.load_state_dict(state_dict)
     return model
 
 
@@ -241,7 +243,7 @@ def load_checkpoint(
     optimizer=None,
     device=None,
 ):
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     if device is not None:

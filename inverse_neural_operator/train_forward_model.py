@@ -5,14 +5,15 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import os
 
-from inverse_neural_operator.utils.device import get_device, set_seed
-from inverse_neural_operator.utils.params import save_params
-from inverse_neural_operator.utils.checkpoints import setup_checkpoint_dir
-from inverse_neural_operator.utils.args import load_defaults_from_yaml
-from inverse_neural_operator.utils.imports import import_model_functions
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.b2b.load_model import load_function_encoder_params, load_function_encoders
-from inverse_neural_operator.b2b.create_model import create_forward_model
+from utils.device import get_device, set_seed
+from utils.params import save_params
+from utils.checkpoints import setup_checkpoint_dir
+from utils.args import load_defaults_from_yaml
+from utils.imports import import_model_functions
+from data.load_dataset import load_dataset
+from b2b.load_model import load_function_encoder_params, load_function_encoders
+from b2b.create_model import create_forward_model
+from config.paths import get_runs_dir, get_shared_dir
 
 torch.set_float32_matmul_precision("high")
 
@@ -32,8 +33,13 @@ parser.add_argument("--epochs", type=int)
 parser.add_argument("--learning_rate", type=float)
 parser.add_argument("--lambda_u", type=float)
 
-# SummaryWriter args
-parser.add_argument("--log_dir", type=str)
+# Path args
+parser.add_argument(
+    "--base_dir",
+    type=str,
+    default=None,
+    help="Base directory for models/results/logs (overrides B2B_RESULTS_DIR / ./results fallback)",
+)
 
 # Device args
 parser.add_argument("--device", type=str)
@@ -59,12 +65,23 @@ device = get_device(params.device)
 print(f"Using device: {device}")
 set_seed(params.seed)
 
+# Forward models use "shared" as the model name and save to shared directory
+log_dir = str(
+    get_runs_dir(
+        params.dataset, "shared", params.seed, base_dir_override=params.base_dir
+    )
+)
+shared_dir = str(
+    get_shared_dir(params.dataset, params.seed, base_dir_override=params.base_dir)
+)
+
 # Create SummaryWriter
-writer = SummaryWriter(log_dir=params.log_dir)
+writer = SummaryWriter(log_dir=log_dir)
 log_dir = writer.log_dir
 
-# Save args
-save_params(params, log_dir)
+# Save args to shared directory (where forward model is saved)
+os.makedirs(shared_dir, exist_ok=True)
+save_params(params, shared_dir)
 
 # Create checkpoint directories
 params.checkpoint_dir = setup_checkpoint_dir(params.checkpoint_dir, log_dir)
@@ -74,7 +91,7 @@ train_dataset = load_dataset(params.dataset, params, device, split="train")
 test_dataset = load_dataset(params.dataset, params, device, split="test")
 dataset_info = train_dataset.get_info()
 # Load function encoder parameters to get sizes for model creation
-input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
+input_encoder_params, output_encoder_params = load_function_encoder_params(shared_dir)
 
 # Get the appropriate train/save functions based on model type
 train_model, save_model = import_model_functions(params.model, "train", "save")
@@ -90,7 +107,7 @@ model, optimizer = create_forward_model(
 
 # Load function encoders (forward models need them for training)
 input_function_encoder, output_function_encoder = load_function_encoders(
-    log_dir, dataset_info, params, device
+    shared_dir, dataset_info, params, device
 )
 
 # Train forward model
@@ -124,5 +141,7 @@ train_model(
 )
 
 # Save forward model with model-specific name in shared directory
-
-save_model(model=model, path=os.path.join(log_dir, f"forward_{params.model}.pth"))
+os.makedirs(shared_dir, exist_ok=True)
+save_model(
+    model=model, path=os.path.join(shared_dir, f"forward_{params.model}.safetensors")
+)

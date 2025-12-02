@@ -11,7 +11,7 @@ import random
 
 import torch
 
-from inverse_neural_operator.b2b.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
@@ -139,7 +139,9 @@ def plot_wave_scattering_sample(
 
     # Panel 4: Thresholded re-simulated output with continuous inset
     axes[3] = plt.subplot(1, 5, 4)
-    im4 = axes[3].imshow(s_resim_thresholded, cmap="viridis", extent=extent, origin="lower")
+    im4 = axes[3].imshow(
+        s_resim_thresholded, cmap="viridis", extent=extent, origin="lower"
+    )
     axes[3].set_title("Re-simulated Density Field ŝ(x,y) (thresholded)", fontsize=12)
     axes[3].set_xlabel("x")
     axes[3].set_ylabel("y")
@@ -147,15 +149,17 @@ def plot_wave_scattering_sample(
 
     # Add inset showing continuous version in top right corner
     from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-    ax4_inset = inset_axes(axes[3], width="33%", height="33%", loc='upper right',
-                           borderpad=0.5)
+
+    ax4_inset = inset_axes(
+        axes[3], width="33%", height="33%", loc="upper right", borderpad=0.5
+    )
     ax4_inset.imshow(s_resim_2d, cmap="viridis", extent=extent, origin="lower")
     ax4_inset.set_xticks([])
     ax4_inset.set_yticks([])
-    ax4_inset.set_title('continuous', fontsize=8, pad=2)
+    ax4_inset.set_title("continuous", fontsize=8, pad=2)
     # Add border to inset
     for spine in ax4_inset.spines.values():
-        spine.set_edgecolor('white')
+        spine.set_edgecolor("white")
         spine.set_linewidth(1.5)
 
     # Panel 5: Error Field
@@ -242,7 +246,9 @@ def plot_model_results(
     )
 
     # Load forward model for re-simulation
-    forward_model = load_forward_model(log_dir=model_log_dir, forward_model_name='b2b_nonlinear', device=device)
+    forward_model = load_forward_model(
+        log_dir=model_log_dir, forward_model_name="b2b_nonlinear", device=device
+    )
 
     # Plot results
     plot_multiple_samples(

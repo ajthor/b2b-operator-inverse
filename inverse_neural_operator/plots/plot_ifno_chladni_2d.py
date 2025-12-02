@@ -18,8 +18,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import random
 
-from inverse_neural_operator.models.ifno import create_model
-from inverse_neural_operator.data.chladni_2d import load_data
+from models.ifno import create_model
+from data.chladni_2d import load_data
 
 
 torch.manual_seed(42)
@@ -32,7 +32,7 @@ device = "cuda:5" if torch.cuda.is_available() else "cpu"
 def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     """Infer minimal IFNO hyperparameters from a saved state_dict path if possible."""
     try:
-        sd = torch.load(state_dict_path, map_location="cpu")
+        sd = torch.load(state_dict_path, map_location="cpu", weights_only=False)
     except Exception:
         return None
     cfg = {}
@@ -101,7 +101,8 @@ def visualize_ifno_results(
     ).to(device)
 
     print(f"Loading model weights from {model_path}...")
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    state_dict = torch.load(model_path, map_location=device, weights_only=False)
+    model.load_state_dict(state_dict)
     model.eval()
     print(f"Model loaded with {sum(p.numel() for p in model.parameters())} parameters")
 

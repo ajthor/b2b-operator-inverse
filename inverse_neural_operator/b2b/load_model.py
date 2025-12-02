@@ -15,37 +15,39 @@ from inverse_neural_operator.b2b.function_encoder import (
 from inverse_neural_operator.b2b.create_model import create_forward_model
 
 
-def load_function_encoder_params(log_dir: str):
+def load_function_encoder_params(model_dir: str):
     """
     Load function encoder parameters from disk.
 
     Args:
-        log_dir (str): Directory containing saved function encoder parameter files
+        model_dir (str): Directory containing saved function encoder parameter files
+                        (models/dataset/shared/seed_X/ or models/dataset/model/seed_X/)
 
     Returns:
         tuple: (input_function_encoder_params, output_function_encoder_params)
     """
     # Load input function encoder parameters
     input_function_encoder_params = torch.load(
-        os.path.join(log_dir, "input_function_encoder_params.pth"), weights_only=False
+        os.path.join(model_dir, "input_function_encoder_params.pth"), weights_only=False
     )
 
     # Load output function encoder parameters
     output_function_encoder_params = torch.load(
-        os.path.join(log_dir, "output_function_encoder_params.pth"), weights_only=False
+        os.path.join(model_dir, "output_function_encoder_params.pth"), weights_only=False
     )
 
     return input_function_encoder_params, output_function_encoder_params
 
 
 def load_function_encoders(
-    log_dir: str, dataset_info: dict, params: dict, device: str = "cpu"
+    model_dir: str, dataset_info: dict, params: dict, device: str = "cpu"
 ):
     """
     Load pre-trained function encoders from disk.
 
     Args:
-        log_dir (str): Directory containing saved function encoder files
+        model_dir (str): Directory containing saved function encoder files
+                        (models/dataset/shared/seed_X/ or models/dataset/model/seed_X/)
         dataset_info (dict): Dataset information from dataset.get_info()
         params: Parameters object containing dataset information
         device (str): Device to load encoders on
@@ -55,7 +57,7 @@ def load_function_encoders(
     """
     # Load the input function encoder
     input_function_encoder_params = torch.load(
-        os.path.join(log_dir, "input_function_encoder_params.pth"), weights_only=False
+        os.path.join(model_dir, "input_function_encoder_params.pth"), weights_only=False
     )
     input_function_encoder = create_function_encoder(
         input_size=dataset_info["X_size"],
@@ -69,13 +71,13 @@ def load_function_encoders(
     input_function_encoder.to(device)
     input_function_encoder = load_function_encoder(
         input_function_encoder,
-        os.path.join(log_dir, "input_function_encoder.pth"),
+        os.path.join(model_dir, "input_function_encoder.safetensors"),
         device=device,
     )
 
     # Load the output function encoder
     output_function_encoder_params = torch.load(
-        os.path.join(log_dir, "output_function_encoder_params.pth"), weights_only=False
+        os.path.join(model_dir, "output_function_encoder_params.pth"), weights_only=False
     )
     output_function_encoder = create_function_encoder(
         input_size=dataset_info["Y_size"],
@@ -89,19 +91,20 @@ def load_function_encoders(
     output_function_encoder.to(device)
     output_function_encoder = load_function_encoder(
         output_function_encoder,
-        os.path.join(log_dir, "output_function_encoder.pth"),
+        os.path.join(model_dir, "output_function_encoder.safetensors"),
         device=device,
     )
 
     return input_function_encoder, output_function_encoder
 
 
-def load_forward_model(log_dir: str, forward_model_name: str, device: str = "cpu"):
+def load_forward_model(model_dir: str, forward_model_name: str, device: str = "cpu"):
     """
     Load the pre-trained forward B2B operator from the specified directory.
 
     Args:
-        log_dir (str): Directory containing the forward model checkpoint and params
+        model_dir (str): Directory containing the forward model checkpoint and params
+                        (models/dataset/shared/seed_X/)
         forward_model_name (str): Forward model name (e.g., 'b2b_nonlinear', 'b2b_linear')
         device (str): Device to load the model on
 
@@ -112,10 +115,10 @@ def load_forward_model(log_dir: str, forward_model_name: str, device: str = "cpu
         FileNotFoundError: If the forward model checkpoint is not found
     """
     # Load function encoder parameters to get sizes
-    input_encoder_params, output_encoder_params = load_function_encoder_params(log_dir)
+    input_encoder_params, output_encoder_params = load_function_encoder_params(model_dir)
 
     # Load params for model configuration
-    params_path = os.path.join(log_dir, "params.pth")
+    params_path = os.path.join(model_dir, "params.pth")
     if not os.path.exists(params_path):
         raise FileNotFoundError(f"Model parameters not found at {params_path}")
 
@@ -123,8 +126,8 @@ def load_forward_model(log_dir: str, forward_model_name: str, device: str = "cpu
     # Override the model name with the forward model name
     params.model = forward_model_name
 
-    # The forward model checkpoint is named forward_{model_name}.pth
-    forward_model_path = os.path.join(log_dir, f"forward_{forward_model_name}.pth")
+    # The forward model checkpoint is named forward_{model_name}.safetensors
+    forward_model_path = os.path.join(model_dir, f"forward_{forward_model_name}.safetensors")
     if not os.path.exists(forward_model_path):
         raise FileNotFoundError(
             f"Forward model checkpoint not found at {forward_model_path}"
@@ -140,7 +143,7 @@ def load_forward_model(log_dir: str, forward_model_name: str, device: str = "cpu
     )
 
     # Load forward model weights
-    forward_model.load_state_dict(torch.load(forward_model_path, map_location=device))
+    forward_model.load_state_dict(torch.load(forward_model_path, map_location=device, weights_only=False))
     forward_model.eval()
 
     return forward_model

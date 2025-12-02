@@ -14,10 +14,9 @@ model/seed combination it
 Example usage:
     python inverse_neural_operator/evaluate_models.py \
         --dataset burgers_1d \
-        --log_base_dir /store/at46867/b2b_operator_inverse/burgers_1d \
+        --base_dir /store/b2b-operator-inverse-results \
         --models nonlinear_inverse cinn_affine \
-        --seeds 1 2 3 4 5 \
-        --output_dir results/evaluations/burgers_1d/inverse
+        --seeds 1 2 3 4 5
 """
 
 from __future__ import annotations
@@ -35,9 +34,10 @@ import torch
 from tabulate import tabulate
 from torch.utils.data import DataLoader
 
-from inverse_neural_operator.b2b.load_model import load_forward_model
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.models.load_model import load_models
+from b2b.load_model import load_forward_model
+from data.load_dataset import load_dataset
+from models.load_model import load_models
+from config.paths import resolve_base_dir
 
 
 # Order in which metrics are reported (key, human readable label)
@@ -55,7 +55,9 @@ METRIC_FIELDS: Tuple[Tuple[str, str], ...] = (
 
 def format_value(value: float | None, precision: int = 6) -> str:
     """Format numeric values, keeping blanks for missing entries."""
-    if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
+    if value is None or (
+        isinstance(value, float) and (math.isnan(value) or math.isinf(value))
+    ):
         return "—"
     return f"{value:.{precision}e}"
 
@@ -64,7 +66,13 @@ def compute_statistics(values: Iterable[float]) -> Dict[str, float]:
     """Compute standard statistics for a collection of floats."""
     values = [float(v) for v in values if v is not None]
     if not values:
-        return {"mean": float("nan"), "median": float("nan"), "std": float("nan"), "min": float("nan"), "max": float("nan")}
+        return {
+            "mean": float("nan"),
+            "median": float("nan"),
+            "std": float("nan"),
+            "min": float("nan"),
+            "max": float("nan"),
+        }
 
     arr = np.asarray(values, dtype=np.float64)
     return {
@@ -77,7 +85,7 @@ def compute_statistics(values: Iterable[float]) -> Dict[str, float]:
 
 
 def load_reference_dataset(
-    log_base_dir: str,
+    base_dir: str,
     dataset_name: str,
     model_names: Iterable[str],
     seeds: Iterable[int],
@@ -89,8 +97,10 @@ def load_reference_dataset(
     """
     for model_name in model_names:
         for seed in seeds:
-            run_dir = os.path.join(log_base_dir, model_name, f"seed_{seed}")
-            params_path = os.path.join(run_dir, "params.pth")
+            model_dir = os.path.join(
+                base_dir, "models", dataset_name, model_name, f"seed_{seed}"
+            )
+            params_path = os.path.join(model_dir, "params.pth")
             if not os.path.exists(params_path):
                 continue
 
@@ -110,7 +120,7 @@ def load_reference_dataset(
             return test_dataset, dataset_info
 
     raise FileNotFoundError(
-        f"Could not locate params.pth under {log_base_dir} "
+        f"Could not locate params.pth under {base_dir}/models/{dataset_name} "
         f"for any of the requested models {list(model_names)} and seeds {list(seeds)}."
     )
 
@@ -166,14 +176,16 @@ def accumulate_sample_metrics(
 
     # Inverse reconstruction metrics (u space)
     accumulators["u_error_sq"] += torch.sum((pred_u - u) ** 2).item()
-    accumulators["u_target_sq"] += torch.sum(u ** 2).item()
+    accumulators["u_target_sq"] += torch.sum(u**2).item()
     accumulators["u_elements"] += u.numel()
 
     # Coefficient reconstruction metrics (alpha space)
     if alpha_pred is not None and isinstance(alpha_pred, torch.Tensor):
         alpha_target, _ = input_encoder.compute_coefficients(X, u)
-        accumulators["alpha_error_sq"] += torch.sum((alpha_pred - alpha_target) ** 2).item()
-        accumulators["alpha_target_sq"] += torch.sum(alpha_target ** 2).item()
+        accumulators["alpha_error_sq"] += torch.sum(
+            (alpha_pred - alpha_target) ** 2
+        ).item()
+        accumulators["alpha_target_sq"] += torch.sum(alpha_target**2).item()
         accumulators["alpha_elements"] += alpha_target.numel()
 
     # Forward re-simulation diagnostics (beta and s space)
@@ -182,17 +194,20 @@ def accumulate_sample_metrics(
         beta_resim = forward_model(alpha_pred)
         s_resim = output_encoder(Y, beta_resim)
 
-        accumulators["beta_error_sq"] += torch.sum((beta_resim - beta_target) ** 2).item()
-        accumulators["beta_target_sq"] += torch.sum(beta_target ** 2).item()
+        accumulators["beta_error_sq"] += torch.sum(
+            (beta_resim - beta_target) ** 2
+        ).item()
+        accumulators["beta_target_sq"] += torch.sum(beta_target**2).item()
         accumulators["beta_elements"] += beta_target.numel()
 
         accumulators["s_error_sq"] += torch.sum((s_resim - s) ** 2).item()
-        accumulators["s_target_sq"] += torch.sum(s ** 2).item()
+        accumulators["s_target_sq"] += torch.sum(s**2).item()
         accumulators["s_elements"] += s.numel()
 
 
 def finalize_metrics(accumulators: Dict[str, float]) -> Dict[str, float | None]:
     """Convert accumulated sums into interpretable metrics."""
+
     def safe_ratio(numerator: float, denominator: float) -> float | None:
         if denominator <= 0.0:
             return None
@@ -204,14 +219,30 @@ def finalize_metrics(accumulators: Dict[str, float]) -> Dict[str, float | None]:
         return math.sqrt(error_sq / target_sq)
 
     metrics = {
-        "inverse_mse": safe_ratio(accumulators["u_error_sq"], accumulators["u_elements"]),
-        "inverse_rel_l2": safe_relative(accumulators["u_error_sq"], accumulators["u_target_sq"]),
-        "alpha_mse": safe_ratio(accumulators["alpha_error_sq"], accumulators["alpha_elements"]),
-        "alpha_rel_l2": safe_relative(accumulators["alpha_error_sq"], accumulators["alpha_target_sq"]),
-        "resim_coeff_mse": safe_ratio(accumulators["beta_error_sq"], accumulators["beta_elements"]),
-        "resim_coeff_rel_l2": safe_relative(accumulators["beta_error_sq"], accumulators["beta_target_sq"]),
-        "resim_pred_mse": safe_ratio(accumulators["s_error_sq"], accumulators["s_elements"]),
-        "resim_pred_rel_l2": safe_relative(accumulators["s_error_sq"], accumulators["s_target_sq"]),
+        "inverse_mse": safe_ratio(
+            accumulators["u_error_sq"], accumulators["u_elements"]
+        ),
+        "inverse_rel_l2": safe_relative(
+            accumulators["u_error_sq"], accumulators["u_target_sq"]
+        ),
+        "alpha_mse": safe_ratio(
+            accumulators["alpha_error_sq"], accumulators["alpha_elements"]
+        ),
+        "alpha_rel_l2": safe_relative(
+            accumulators["alpha_error_sq"], accumulators["alpha_target_sq"]
+        ),
+        "resim_coeff_mse": safe_ratio(
+            accumulators["beta_error_sq"], accumulators["beta_elements"]
+        ),
+        "resim_coeff_rel_l2": safe_relative(
+            accumulators["beta_error_sq"], accumulators["beta_target_sq"]
+        ),
+        "resim_pred_mse": safe_ratio(
+            accumulators["s_error_sq"], accumulators["s_elements"]
+        ),
+        "resim_pred_rel_l2": safe_relative(
+            accumulators["s_error_sq"], accumulators["s_target_sq"]
+        ),
         "num_samples": accumulators["num_samples"],
     }
 
@@ -220,9 +251,10 @@ def finalize_metrics(accumulators: Dict[str, float]) -> Dict[str, float | None]:
 
 
 def evaluate_model_for_seed(
+    base_dir: str,
+    dataset_name: str,
     model_name: str,
     seed: int,
-    run_dir: str,
     dataset,
     dataset_info,
     batch_size: int,
@@ -232,17 +264,27 @@ def evaluate_model_for_seed(
     """
     Load a specific model/seed run and compute dataset-wide metrics.
     """
-    params_path = os.path.join(run_dir, "params.pth")
+    model_dir = os.path.join(
+        base_dir, "models", dataset_name, model_name, f"seed_{seed}"
+    )
+    shared_dir = os.path.join(
+        base_dir, "models", dataset_name, "shared", f"seed_{seed}"
+    )
+
+    params_path = os.path.join(model_dir, "params.pth")
     if not os.path.exists(params_path):
-        raise FileNotFoundError(f"Missing params.pth for {model_name} seed {seed} under {run_dir}")
+        raise FileNotFoundError(
+            f"Missing params.pth for {model_name} seed {seed} under {model_dir}"
+        )
 
     params = torch.load(params_path, weights_only=False)
     params.dataset = getattr(params, "dataset", dataset_info.get("dataset", None))
 
     input_encoder, output_encoder, model, evaluate_fn = load_models(
-        log_dir=run_dir,
-        dataset_info=dataset_info,
-        params=params,
+        base_dir=base_dir,
+        dataset=dataset_name,
+        model_name=model_name,
+        seed=seed,
         device=device_str,
     )
 
@@ -250,7 +292,9 @@ def evaluate_model_for_seed(
     forward_model_name = getattr(params, "forward_model", None)
     if forward_model_name:
         try:
-            forward_model = load_forward_model(run_dir, forward_model_name, device=device_str)
+            forward_model = load_forward_model(
+                shared_dir, forward_model_name, device=device_str
+            )
         except FileNotFoundError:
             print(
                 f"  ⚠ Forward model '{forward_model_name}' not found for {model_name} seed {seed}. "
@@ -268,7 +312,9 @@ def evaluate_model_for_seed(
     if forward_model is not None:
         forward_model.eval()
 
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    dataloader = DataLoader(
+        dataset, batch_size=batch_size, shuffle=False, num_workers=0
+    )
 
     accumulators = defaultdict(float)
     accumulators.update(
@@ -425,9 +471,7 @@ def save_text_summary(
             for metric_key, _ in METRIC_FIELDS:
                 row.append(format_value(metrics.get(metric_key)))
             table_rows.append(row)
-        lines.append(
-            tabulate(table_rows, headers=headers, tablefmt="github")
-        )
+        lines.append(tabulate(table_rows, headers=headers, tablefmt="github"))
 
         stats = compute_model_statistics(seed_metrics)
         if stats:
@@ -472,10 +516,10 @@ def parse_args():
         help="Dataset name (e.g., burgers_1d, darcy_1d, wave_scattering).",
     )
     parser.add_argument(
-        "--log_base_dir",
+        "--base_dir",
         type=str,
-        required=True,
-        help="Base directory containing model subdirectories (e.g., /logs/burgers_1d).",
+        default=None,
+        help="Base directory for models/results/logs (overrides B2B_RESULTS_DIR / ./results fallback).",
     )
     parser.add_argument(
         "--models",
@@ -503,35 +547,33 @@ def parse_args():
         default="cpu",
         help="Device to use for evaluation (default: cpu).",
     )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        required=True,
-        help="Directory to store CSV and TXT summaries.",
-    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
+    # Construct paths from base_dir or config
+    base_dir = str(resolve_base_dir(args.base_dir))
+    output_dir = os.path.join(base_dir, "runs", args.dataset, "inverse")
+
     print("=" * 80)
     print("INVERSE MODEL EVALUATION")
     print("=" * 80)
     print(f"Dataset:      {args.dataset}")
-    print(f"Log Base Dir: {args.log_base_dir}")
+    print(f"Base Dir:     {base_dir}")
     print(f"Models:       {args.models}")
     print(f"Seeds:        {args.seeds}")
     print(f"Batch Size:   {args.batch_size}")
     print(f"Device:       {args.device}")
-    print(f"Output Dir:   {args.output_dir}")
+    print(f"Output Dir:   {output_dir}")
     print("=" * 80)
 
     torch_device = torch.device(args.device)
 
     print("Loading reference dataset...")
     test_dataset, dataset_info = load_reference_dataset(
-        log_base_dir=args.log_base_dir,
+        base_dir=base_dir,
         dataset_name=args.dataset,
         model_names=args.models,
         seeds=args.seeds,
@@ -540,21 +582,26 @@ def main():
     )
     print(f"  ✓ Loaded test dataset with {len(test_dataset)} samples.")
 
-    all_results: Dict[str, Dict[int, Dict[str, float | None]]] = {model_name: {} for model_name in args.models}
+    all_results: Dict[str, Dict[int, Dict[str, float | None]]] = {
+        model_name: {} for model_name in args.models
+    }
 
     for model_name in args.models:
         print(f"\nEvaluating model '{model_name}'...")
         for seed in args.seeds:
-            run_dir = os.path.join(args.log_base_dir, model_name, f"seed_{seed}")
-            if not os.path.exists(run_dir):
-                print(f"  ⚠ Skipping seed {seed}: directory not found at {run_dir}")
+            model_dir = os.path.join(
+                base_dir, "models", args.dataset, model_name, f"seed_{seed}"
+            )
+            if not os.path.exists(model_dir):
+                print(f"  ⚠ Skipping seed {seed}: directory not found at {model_dir}")
                 continue
 
             try:
                 metrics = evaluate_model_for_seed(
+                    base_dir=base_dir,
+                    dataset_name=args.dataset,
                     model_name=model_name,
                     seed=seed,
-                    run_dir=run_dir,
                     dataset=test_dataset,
                     dataset_info=dataset_info,
                     batch_size=args.batch_size,
@@ -576,14 +623,14 @@ def main():
 
     print_console_summary(all_results)
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     print("\nSaving summaries...")
-    save_csv_results(all_results, args.output_dir)
-    save_text_summary(all_results, args.output_dir)
+    save_csv_results(all_results, output_dir)
+    save_text_summary(all_results, output_dir)
 
     print("\n" + "=" * 80)
     print("EVALUATION COMPLETE")
-    print(f"Results saved to: {args.output_dir}")
+    print(f"Results saved to: {output_dir}")
     print("=" * 80)
 
 

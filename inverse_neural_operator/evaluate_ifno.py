@@ -15,9 +15,8 @@ values without coefficient encoders, so all metrics are computed in function spa
 Example usage:
     python inverse_neural_operator/evaluate_ifno.py \
         --dataset burgers_1d \
-        --base_dir logs_ifno \
-        --seeds 0 1 2 3 4 \
-        --results_dir results
+        --base_dir /store/b2b-operator-inverse-results \
+        --seeds 1 2 3 4 5
 """
 
 from __future__ import annotations
@@ -33,8 +32,9 @@ import torch
 from tabulate import tabulate
 from torch.utils.data import DataLoader
 
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.plots.utils.ifno_utils import load_ifno_model
+from data.load_dataset import load_dataset
+from plots.utils.ifno_utils import load_ifno_model
+from config.paths import resolve_base_dir
 
 
 # Order in which metrics are reported (key, human readable label)
@@ -48,7 +48,9 @@ METRIC_FIELDS: Tuple[Tuple[str, str], ...] = (
 
 def format_value(value: float | None, precision: int = 6) -> str:
     """Format numeric values, keeping blanks for missing entries."""
-    if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
+    if value is None or (
+        isinstance(value, float) and (math.isnan(value) or math.isinf(value))
+    ):
         return "—"
     return f"{value:.{precision}e}"
 
@@ -57,7 +59,13 @@ def compute_statistics(values: Iterable[float]) -> Dict[str, float]:
     """Compute standard statistics for a collection of floats."""
     values = [float(v) for v in values if v is not None]
     if not values:
-        return {"mean": float("nan"), "median": float("nan"), "std": float("nan"), "min": float("nan"), "max": float("nan")}
+        return {
+            "mean": float("nan"),
+            "median": float("nan"),
+            "std": float("nan"),
+            "min": float("nan"),
+            "max": float("nan"),
+        }
 
     arr = np.asarray(values, dtype=np.float64)
     return {
@@ -71,6 +79,7 @@ def compute_statistics(values: Iterable[float]) -> Dict[str, float]:
 
 def load_test_dataset(dataset_name: str, device: str, batch_size: int):
     """Load the test dataset for the specified dataset name."""
+
     # Create minimal params object for dataset loading
     class Params:
         pass
@@ -112,9 +121,8 @@ def _reshape_to_spatial(tensor: torch.Tensor, spatial_dims):
     if tensor.dim() == spatial_rank and tensor.shape == tuple(spatial_dims):
         tensor = tensor.unsqueeze(-1)
 
-    if (
-        tensor.dim() == spatial_rank + 1
-        and tuple(tensor.shape[:spatial_rank]) == tuple(spatial_dims)
+    if tensor.dim() == spatial_rank + 1 and tuple(tensor.shape[:spatial_rank]) == tuple(
+        spatial_dims
     ):
         return tensor
 
@@ -145,63 +153,171 @@ def accumulate_sample_metrics(
     """
     X, u_true, Y, s_true = sample
 
-    # Remove batch dimension and reshape to spatial dimensions expected by iFNO
-    X_spatial = _reshape_to_spatial(X.squeeze(0), input_spatial_dims)
-    u_true_spatial = _reshape_to_spatial(u_true.squeeze(0), input_spatial_dims)
-    Y_spatial = _reshape_to_spatial(Y.squeeze(0), output_spatial_dims)
-    s_true_spatial = _reshape_to_spatial(s_true.squeeze(0), output_spatial_dims)
+    # Remove batch dimension first - tensors come as [1, N, C]
+    X = X.squeeze(0)  # [N, C]
+    u_true = u_true.squeeze(0)  # [N, C]
+    Y = Y.squeeze(0)  # [M, C]
+    s_true = s_true.squeeze(0)  # [M, C]
+
+    # Reshape to spatial dimensions expected by iFNO
+    X_spatial = _reshape_to_spatial(X, input_spatial_dims)
+    u_true_spatial = _reshape_to_spatial(u_true, input_spatial_dims)
+    Y_spatial = _reshape_to_spatial(Y, output_spatial_dims)
+    s_true_spatial = _reshape_to_spatial(s_true, output_spatial_dims)
 
     with torch.no_grad():
-        # Inverse pass: s → u_pred (add batch dimension before model call)
-        s_input = torch.cat(
-            [Y_spatial.unsqueeze(0), s_true_spatial.unsqueeze(0)], dim=-1
-        )
-        inverse_result = model.inverse(s_input)
-        if isinstance(inverse_result, (tuple, list)):
-            u_pred = inverse_result[0]
-        else:
-            u_pred = inverse_result
-        u_pred = _trim_function_channels(u_pred, u_true_spatial.unsqueeze(0))
+        try:
+            # Inverse pass: s → u_pred (add batch dimension before model call)
+            s_input = torch.cat(
+                [Y_spatial.unsqueeze(0), s_true_spatial.unsqueeze(0)], dim=-1
+            )
+            inverse_result = model.inverse(s_input)
+            if isinstance(inverse_result, (tuple, list)):
+                u_pred = inverse_result[0]
+            else:
+                u_pred = inverse_result
+            u_pred = _trim_function_channels(u_pred, u_true_spatial.unsqueeze(0))
+        except Exception as e:
+            raise RuntimeError(
+                f"Inverse pass failed:\n"
+                f"  Y_spatial shape: {Y_spatial.shape}\n"
+                f"  s_true_spatial shape: {s_true_spatial.shape}\n"
+                f"  Y_spatial.unsqueeze(0) shape: {Y_spatial.unsqueeze(0).shape}\n"
+                f"  s_true_spatial.unsqueeze(0) shape: {s_true_spatial.unsqueeze(0).shape}\n"
+                f"  Error: {e}"
+            ) from e
 
         # Forward pass: u_pred → s_resim
+        # First check if u_pred contains NaN
+        if torch.isnan(u_pred).any():
+            raise RuntimeError(
+                f"u_pred contains NaN values after inverse pass!\n"
+                f"  u_pred shape: {u_pred.shape}\n"
+                f"  NaN count: {torch.isnan(u_pred).sum().item()}\n"
+                f"  u_pred stats: min={u_pred.min().item()}, max={u_pred.max().item()}, mean={u_pred.mean().item()}"
+            )
+
         u_input = torch.cat([X_spatial.unsqueeze(0), u_pred], dim=-1)
         forward_result = model(u_input)
         if isinstance(forward_result, (tuple, list)):
             s_resim = forward_result[0]
         else:
             s_resim = forward_result
+
         s_resim = _trim_function_channels(s_resim, s_true_spatial.unsqueeze(0))
+
+        # For asymmetric problems, reshape s_resim to match output spatial dimensions
+        # The model may return [1, input_spatial_size, output_spatial_size, channels]
+        # but we need [1, output_spatial_dims..., channels]
+        if output_spatial_dims and s_resim.shape != s_true_spatial.unsqueeze(0).shape:
+            batch_size = s_resim.shape[0]
+            output_channels = s_resim.shape[-1]
+            expected_spatial_size = int(np.prod(output_spatial_dims))
+
+            # Flatten all intermediate dimensions
+            s_resim_flat = s_resim.reshape(batch_size, -1, output_channels)
+
+            # Reshape to proper spatial format
+            if s_resim_flat.shape[1] == expected_spatial_size:
+                s_resim = s_resim_flat.reshape(
+                    batch_size, *output_spatial_dims, output_channels
+                )
+            else:
+                raise RuntimeError(
+                    f"Cannot reshape s_resim to match output spatial dims:\n"
+                    f"  s_resim shape: {s_resim.shape}\n"
+                    f"  s_resim_flat shape: {s_resim_flat.shape}\n"
+                    f"  Expected spatial size: {expected_spatial_size}\n"
+                    f"  output_spatial_dims: {output_spatial_dims}\n"
+                    f"  s_true_spatial.unsqueeze(0) shape: {s_true_spatial.unsqueeze(0).shape}"
+                )
 
     # Inverse reconstruction metrics (u space)
     # u_pred has batch dim [1, ...], u_true_spatial doesn't, so add it for comparison
-    accumulators["u_error_sq"] += torch.sum((u_pred - u_true_spatial.unsqueeze(0)) ** 2).item()
-    accumulators["u_target_sq"] += torch.sum(u_true_spatial ** 2).item()
-    accumulators["u_elements"] += u_true_spatial.numel()
+    u_true_with_batch = u_true_spatial.unsqueeze(0)
+    accumulators["u_error_sq"] += torch.sum((u_pred - u_true_with_batch) ** 2).item()
+    accumulators["u_target_sq"] += torch.sum(u_true_with_batch**2).item()
+    accumulators["u_elements"] += u_true_with_batch.numel()
 
     # Forward re-simulation metrics (s space)
-    accumulators["s_error_sq"] += torch.sum((s_resim - s_true_spatial.unsqueeze(0)) ** 2).item()
-    accumulators["s_target_sq"] += torch.sum(s_true_spatial ** 2).item()
-    accumulators["s_elements"] += s_true_spatial.numel()
+    # Check if forward pass produced NaN or inf - if so, skip this sample entirely
+    s_true_with_batch = s_true_spatial.unsqueeze(0)
+    if not torch.isfinite(s_resim).all():
+        accumulators["skipped_samples"] += 1
+        return
+
+    # Compute error and check if it's finite
+    s_error = (s_resim - s_true_with_batch) ** 2
+    s_error_sum = torch.sum(s_error).item()
+
+    if not math.isfinite(s_error_sum):
+        accumulators["skipped_samples"] += 1
+        return
+
+    accumulators["s_error_sq"] += s_error_sum
+    accumulators["s_target_sq"] += torch.sum(s_true_with_batch**2).item()
+    accumulators["s_elements"] += s_true_with_batch.numel()
 
 
 def finalize_metrics(accumulators: Dict[str, float]) -> Dict[str, float | None]:
     """Convert accumulated sums into interpretable metrics."""
-    def safe_ratio(numerator: float, denominator: float) -> float | None:
-        if denominator <= 0.0:
-            return None
-        return numerator / denominator
 
-    def safe_relative(error_sq: float, target_sq: float) -> float | None:
-        if target_sq <= 0.0 or error_sq < 0.0:
-            return None
-        return math.sqrt(error_sq / target_sq)
+    def safe_ratio(numerator: float, denominator: float, metric_name: str) -> float:
+        if denominator <= 0.0:
+            raise RuntimeError(
+                f"Cannot compute {metric_name}: denominator is {denominator}\n"
+                f"Accumulators: {accumulators}"
+            )
+        result = numerator / denominator
+        if math.isnan(result) or math.isinf(result):
+            raise RuntimeError(
+                f"Invalid {metric_name}: result is {result}\n"
+                f"  numerator={numerator}, denominator={denominator}\n"
+                f"Accumulators: {accumulators}"
+            )
+        return result
+
+    def safe_relative(error_sq: float, target_sq: float, metric_name: str) -> float:
+        if target_sq <= 0.0:
+            raise RuntimeError(
+                f"Cannot compute {metric_name}: target_sq is {target_sq}\n"
+                f"Accumulators: {accumulators}"
+            )
+        if error_sq < 0.0:
+            raise RuntimeError(
+                f"Cannot compute {metric_name}: error_sq is {error_sq}\n"
+                f"Accumulators: {accumulators}"
+            )
+        if math.isnan(error_sq) or math.isnan(target_sq):
+            raise RuntimeError(
+                f"Cannot compute {metric_name}: NaN values detected\n"
+                f"  error_sq={error_sq}, target_sq={target_sq}\n"
+                f"Accumulators: {accumulators}"
+            )
+        result = math.sqrt(error_sq / target_sq)
+        if math.isnan(result) or math.isinf(result):
+            raise RuntimeError(
+                f"Invalid {metric_name}: result is {result}\n"
+                f"  error_sq={error_sq}, target_sq={target_sq}\n"
+                f"Accumulators: {accumulators}"
+            )
+        return result
 
     metrics = {
-        "inverse_mse": safe_ratio(accumulators["u_error_sq"], accumulators["u_elements"]),
-        "inverse_rel_l2": safe_relative(accumulators["u_error_sq"], accumulators["u_target_sq"]),
-        "forward_mse": safe_ratio(accumulators["s_error_sq"], accumulators["s_elements"]),
-        "forward_rel_l2": safe_relative(accumulators["s_error_sq"], accumulators["s_target_sq"]),
+        "inverse_mse": safe_ratio(
+            accumulators["u_error_sq"], accumulators["u_elements"], "inverse_mse"
+        ),
+        "inverse_rel_l2": safe_relative(
+            accumulators["u_error_sq"], accumulators["u_target_sq"], "inverse_rel_l2"
+        ),
+        "forward_mse": safe_ratio(
+            accumulators["s_error_sq"], accumulators["s_elements"], "forward_mse"
+        ),
+        "forward_rel_l2": safe_relative(
+            accumulators["s_error_sq"], accumulators["s_target_sq"], "forward_rel_l2"
+        ),
         "num_samples": accumulators["num_samples"],
+        "skipped_samples": accumulators.get("skipped_samples", 0.0),
     }
 
     return metrics
@@ -220,7 +336,9 @@ def evaluate_ifno_for_seed(
     Load a specific iFNO model/seed run and compute dataset-wide metrics.
     """
     if not os.path.exists(checkpoint_path):
-        raise FileNotFoundError(f"Missing checkpoint for seed {seed} at {checkpoint_path}")
+        raise FileNotFoundError(
+            f"Missing checkpoint for seed {seed} at {checkpoint_path}"
+        )
 
     model = load_ifno_model(dataset_info, checkpoint_path, device=device_str)
     model.eval()
@@ -228,7 +346,9 @@ def evaluate_ifno_for_seed(
     input_spatial_dims = dataset_info.get("input_spatial_dims")
     output_spatial_dims = dataset_info.get("output_spatial_dims")
 
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    dataloader = DataLoader(
+        dataset, batch_size=batch_size, shuffle=False, num_workers=0
+    )
 
     accumulators = defaultdict(float)
     accumulators.update(
@@ -375,9 +495,7 @@ def save_text_summary(
             for metric_key, _ in METRIC_FIELDS:
                 row.append(format_value(metrics.get(metric_key)))
             table_rows.append(row)
-        lines.append(
-            tabulate(table_rows, headers=headers, tablefmt="github")
-        )
+        lines.append(tabulate(table_rows, headers=headers, tablefmt="github"))
 
         stats = compute_model_statistics(seed_metrics)
         if stats:
@@ -423,8 +541,8 @@ def parse_args():
     parser.add_argument(
         "--base_dir",
         type=str,
-        default="logs_ifno",
-        help="Base directory containing iFNO checkpoints (default: logs_ifno).",
+        default=None,
+        help="Base directory for models/results/logs (overrides B2B_RESULTS_DIR / ./results fallback).",
     )
     parser.add_argument(
         "--seeds",
@@ -445,27 +563,26 @@ def parse_args():
         default="cpu",
         help="Device to use for evaluation (default: cpu).",
     )
-    parser.add_argument(
-        "--results_dir",
-        type=str,
-        default="results",
-        help="Base directory to store results (default: results).",
-    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
+    # Construct paths from base_dir or config
+    base_dir = str(resolve_base_dir(args.base_dir))
+    models_base_dir = os.path.join(base_dir, "models", args.dataset, "ifno")
+    output_dir = os.path.join(base_dir, "runs", args.dataset, "ifno")
+
     print("=" * 80)
     print("iFNO MODEL EVALUATION")
     print("=" * 80)
-    print(f"Dataset:      {args.dataset}")
-    print(f"Base Dir:     {args.base_dir}")
-    print(f"Seeds:        {args.seeds}")
-    print(f"Batch Size:   {args.batch_size}")
-    print(f"Device:       {args.device}")
-    print(f"Results Dir:  {args.results_dir}")
+    print(f"Dataset:        {args.dataset}")
+    print(f"Models Dir:     {models_base_dir}")
+    print(f"Seeds:          {args.seeds}")
+    print(f"Batch Size:     {args.batch_size}")
+    print(f"Device:         {args.device}")
+    print(f"Output Dir:     {output_dir}")
     print("=" * 80)
 
     torch_device = torch.device(args.device)
@@ -482,9 +599,13 @@ def main():
 
     print(f"\nEvaluating iFNO model...")
     for seed in args.seeds:
-        checkpoint_path = os.path.join(args.base_dir, args.dataset, f"seed_{seed}", "ifno_model.pth")
+        checkpoint_path = os.path.join(
+            models_base_dir, f"seed_{seed}", "ifno_model.safetensors"
+        )
         if not os.path.exists(checkpoint_path):
-            print(f"  ⚠ Skipping seed {seed}: checkpoint not found at {checkpoint_path}")
+            print(
+                f"  ⚠ Skipping seed {seed}: checkpoint not found at {checkpoint_path}"
+            )
             continue
 
         try:
@@ -498,22 +619,30 @@ def main():
                 device_str=args.device,
             )
             seed_metrics[seed] = metrics
+            skipped = int(metrics.get("skipped_samples", 0))
+            skip_msg = ""
+            if skipped > 0:
+                skip_msg = f" (skipped {skipped} samples with NaN/inf)"
             print(
-                "  ✓ Seed {seed}: inverse_rel_l2={irl}, forward_rel_l2={frl}".format(
+                "  ✓ Seed {seed}: inverse_rel_l2={irl}, forward_rel_l2={frl}{skip_msg}".format(
                     seed=seed,
                     irl=format_value(metrics.get("inverse_rel_l2")),
                     frl=format_value(metrics.get("forward_rel_l2")),
+                    skip_msg=skip_msg,
                 )
             )
         except FileNotFoundError as err:
             print(f"  ⚠ Skipping seed {seed}: {err}")
         except Exception as exc:
+            import traceback
+
             print(f"  ✗ Error evaluating seed {seed}: {exc}")
+            print("  Full traceback:")
+            traceback.print_exc()
 
     print_console_summary(seed_metrics)
 
     # Save results to dataset-specific output directory
-    output_dir = os.path.join(args.results_dir, args.dataset, "ifno")
     os.makedirs(output_dir, exist_ok=True)
     print("\nSaving summaries...")
     save_csv_results(seed_metrics, output_dir)

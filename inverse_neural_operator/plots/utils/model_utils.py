@@ -13,8 +13,8 @@ from utils.imports import import_model_functions
 
 
 def load_all_models(
-    log_dir: str,
-    dataset_info,
+    base_dir: str,
+    dataset: str,
     model_names: Iterable[str],
     seed: int = 1,
     device: str = "cpu",
@@ -22,8 +22,8 @@ def load_all_models(
     """Load inverse models and shared encoders from a results directory.
 
     Args:
-        log_dir: Base directory containing model subdirectories
-        dataset_info: Dataset configuration object
+        base_dir: Base directory for models (e.g., ./results or /store/...)
+        dataset: Dataset name (e.g., 'burgers_1d', 'darcy_1d')
         model_names: Names of models to load
         seed: Random seed used during training
         device: Device to load models onto
@@ -38,19 +38,19 @@ def load_all_models(
     output_function_encoder = None
 
     for model_name in model_names:
-        model_log_dir = os.path.join(log_dir, model_name, f"seed_{seed}")
-        params_path = os.path.join(model_log_dir, "params.pth")
+        model_dir = os.path.join(base_dir, "models", dataset, model_name, f"seed_{seed}")
+        params_path = os.path.join(model_dir, "params.pth")
 
         if not os.path.exists(params_path):
             print(f"  Skipping {model_name} - not found")
             continue
 
         try:
-            params = torch.load(params_path, weights_only=False)
             inp_enc, out_enc, model, evaluate_fn = load_models(
-                log_dir=model_log_dir,
-                dataset_info=dataset_info,
-                params=params,
+                base_dir=base_dir,
+                dataset=dataset,
+                model_name=model_name,
+                seed=seed,
                 device=device,
             )
 

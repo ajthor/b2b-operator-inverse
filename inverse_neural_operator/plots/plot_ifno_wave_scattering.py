@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from inverse_neural_operator.data.wave_scattering import load_data
-from inverse_neural_operator.models.ifno import create_model
+from data.wave_scattering import load_data
+from models.ifno import create_model
 
 # Global device handle (can be overridden via CLI)
 device = (
@@ -31,7 +31,7 @@ np.random.seed(42)
 def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     """Infer IFNO hyperparameters from a saved checkpoint."""
     try:
-        state_dict = torch.load(state_dict_path, map_location="cpu")
+        state_dict = torch.load(state_dict_path, map_location="cpu", weights_only=False)
     except Exception:
         return None
 
@@ -95,7 +95,7 @@ def _prepare_model(model_path: str, dataset_info: dict):
         coordinate_dim=dataset_info["coordinate_dim"],
     ).to(device)
 
-    state_dict = torch.load(model_path, map_location=device)
+    state_dict = torch.load(model_path, map_location=device, weights_only=False)
     model.load_state_dict(state_dict)
     model.eval()
     return model

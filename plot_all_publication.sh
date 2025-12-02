@@ -4,12 +4,38 @@ set -euo pipefail
 #── CONFIGURATION ────────────────────────────────────────
 # Publication plots compare all models for a dataset, so we only need to specify datasets
 
-# DATASETS=(burgers_1d darcy_1d chladni_2d wave_scattering fwi)
-DATASETS=(burgers_1d darcy_1d chladni_2d)
+# Parse optional --base_dir argument
+B2B_RESULTS_DIR_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --base_dir)
+      B2B_RESULTS_DIR_OVERRIDE="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
-# Base directory for experiment logs
-LOG_BASE_DIR="/store/at46867/b2b_operator_inverse"
-RESULTS_BASE_DIR="results"
+# Hierarchy: script arg > B2B_RESULTS_DIR env var > default ./results
+B2B_RESULTS_DIR="${B2B_RESULTS_DIR_OVERRIDE:-${B2B_RESULTS_DIR:-}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_BASE_DIR="$SCRIPT_DIR/results"
+BASE_DIR="${B2B_RESULTS_DIR:-$DEFAULT_BASE_DIR}"
+if [[ "$BASE_DIR" != /* ]]; then
+  BASE_DIR="$SCRIPT_DIR/$BASE_DIR"
+fi
+mkdir -p "$BASE_DIR"
+BASE_DIR="$(cd "$BASE_DIR" && pwd)"
+LOG_BASE_DIR="$BASE_DIR/models"
+RESULTS_BASE_DIR="$BASE_DIR/runs"
+mkdir -p "$LOG_BASE_DIR" "$RESULTS_BASE_DIR"
+export B2B_RESULTS_DIR BASE_DIR
+echo "Resolved base dir: $BASE_DIR"
+
+# DATASETS=(burgers_1d darcy_1d chladni_2d wave_scattering fwi)
+DATASETS=(burgers_1d)
 
 #── ARGUMENT PARSING ──────────────────────────────────────
 DATASET=""

@@ -30,10 +30,10 @@ for path in (PROJECT_ROOT, PACKAGE_ROOT):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.models.load_model import load_models
-from inverse_neural_operator.b2b.load_model import load_forward_model
-from inverse_neural_operator.plots.utils.plot_utils import (
+from data.load_dataset import load_dataset
+from models.load_model import load_models
+from b2b.load_model import load_forward_model
+from plots.utils.plot_utils import (
     display_name,
     get_model_color,
 )
@@ -97,9 +97,11 @@ def infer_dataset_name(log_path: Path) -> str:
     return log_path.parent.name or DEFAULT_DATASET
 
 
-def collect_model_log_dirs(base_path: Path, seed: int, model_filter: Optional[set[str]]) -> Dict[str, Path]:
+def collect_model_log_dirs(
+    base_path: Path, seed: int, model_filter: Optional[set[str]]
+) -> Dict[str, Path]:
     seed_dir_name = f"seed_{seed}"
-    include = (lambda name: not model_filter or name in model_filter)
+    include = lambda name: not model_filter or name in model_filter
 
     if (base_path / "params.pth").exists():
         fallback = next(iter(model_filter)) if model_filter else DEFAULT_MODEL_NAME
@@ -143,14 +145,21 @@ def evaluate_coeff_noise(
             (X, u_true, Y, s_true), (X_b, u_b, Y_b, s_b) = _prepare_sample(sample)
 
             _, alpha_pred = evaluate_fn(
-                model, (X_b, u_b, Y_b, s_b), input_function_encoder, output_function_encoder
+                model,
+                (X_b, u_b, Y_b, s_b),
+                input_function_encoder,
+                output_function_encoder,
             )
             alpha_pred = alpha_pred.squeeze(0)
             alpha_true, _ = input_function_encoder.compute_coefficients(X_b, u_b)
             alpha_true = alpha_true.squeeze(0)
 
             for noise_std, stats in stats_per_noise.items():
-                alpha_noisy = alpha_pred if noise_std == 0.0 else alpha_pred + noise_std * torch.randn_like(alpha_pred)
+                alpha_noisy = (
+                    alpha_pred
+                    if noise_std == 0.0
+                    else alpha_pred + noise_std * torch.randn_like(alpha_pred)
+                )
                 alpha_noisy_b = alpha_noisy.unsqueeze(0)
                 u_noisy = input_function_encoder(X_b, alpha_noisy_b).squeeze(0)
                 beta_pred = forward_model(alpha_noisy_b)
@@ -180,13 +189,17 @@ def plot_aggregated_metric(
             noise_map[noise][model_name] = data
 
     if not noise_map:
-        print(f"⚠️  No aggregated metrics found for coefficient plotting at {output_path}")
+        print(
+            f"⚠️  No aggregated metrics found for coefficient plotting at {output_path}"
+        )
         return
 
     sorted_noises = sorted(noise_map.keys())
     models = sorted({model for data in noise_map.values() for model in data.keys()})
     if not models:
-        print(f"⚠️  No models present in aggregated coefficient metrics at {output_path}")
+        print(
+            f"⚠️  No models present in aggregated coefficient metrics at {output_path}"
+        )
         return
 
     plt.figure(figsize=(10, 5))
@@ -210,7 +223,9 @@ def plot_aggregated_metric(
 
     if not plt.gca().lines:
         plt.close()
-        print(f"⚠️  No positive {metric_key} values to plot in aggregate at {output_path}")
+        print(
+            f"⚠️  No positive {metric_key} values to plot in aggregate at {output_path}"
+        )
         return
 
     plt.title(title)
@@ -229,9 +244,7 @@ def plot_aggregated_metric(
 
 def resolve_results_root(dataset_name: str, override: Optional[str]) -> Path:
     return (
-        Path(override).resolve()
-        if override
-        else PROJECT_ROOT / "results" / dataset_name
+        Path(override).resolve() if override else PROJECT_ROOT / "runs" / dataset_name
     )
 
 
@@ -239,11 +252,30 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Evaluate Darcy inverse models under coefficient noise and save MSE metrics."
     )
-    parser.add_argument("--log_dir", type=str, default=None, help="Path to logs root (defaults to models/darcy_1d; accepts model/seed paths too)")
-    parser.add_argument("--results_dir", type=str, default=None, help="Root directory to store coefficient-noise metrics (default mirrors results/dataset)")
-    parser.add_argument("--noise_levels", type=float, nargs="*", help="Noise std values applied to inverse coefficients (default: 0,0.005,0.01,0.02,0.04)")
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Random seed for reproducibility")
-    parser.add_argument("--model", type=str, default=None, help="Optional model name filter")
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default=None,
+        help="Path to logs root (defaults to models/darcy_1d; accepts model/seed paths too)",
+    )
+    parser.add_argument(
+        "--results_dir",
+        type=str,
+        default=None,
+        help="Root directory to store coefficient-noise metrics (default mirrors results/dataset)",
+    )
+    parser.add_argument(
+        "--noise_levels",
+        type=float,
+        nargs="*",
+        help="Noise std values applied to inverse coefficients (default: 0,0.005,0.01,0.02,0.04)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=DEFAULT_SEED, help="Random seed for reproducibility"
+    )
+    parser.add_argument(
+        "--model", type=str, default=None, help="Optional model name filter"
+    )
     return parser.parse_args()
 
 
@@ -293,7 +325,9 @@ def main():
             device=device,
         )
         forward_model = load_forward_model(
-            log_dir=str(model_log_dir), forward_model_name="b2b_nonlinear", device=device
+            log_dir=str(model_log_dir),
+            forward_model_name="b2b_nonlinear",
+            device=device,
         )
 
         metrics = evaluate_coeff_noise(

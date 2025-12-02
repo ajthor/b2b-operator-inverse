@@ -4,6 +4,7 @@ from torch.utils.data import Subset, DataLoader
 
 import tqdm
 import os
+from safetensors.torch import save_file, load_file
 
 
 class ConditionalAffineCoupling(torch.nn.Module):
@@ -184,12 +185,15 @@ def create_model(
 
 
 def save(model, path):
+    """Save model weights in safetensors format."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    torch.save(model.state_dict(), path)
+    save_file(model.state_dict(), path)
 
 
 def load(model, path, device=None):
-    model.load_state_dict(torch.load(path, map_location=device))
+    """Load model weights from safetensors format."""
+    state_dict = load_file(path, device=str(device) if device else 'cpu')
+    model.load_state_dict(state_dict)
     return model
 
 
@@ -212,7 +216,7 @@ def load_checkpoint(
     optimizer=None,
     device=None,
 ):
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     if device is not None:

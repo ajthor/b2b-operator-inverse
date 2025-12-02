@@ -11,8 +11,8 @@ import torch
 import matplotlib.pyplot as plt
 from scipy.interpolate import griddata
 
-from inverse_neural_operator.models.ifno import create_model
-from inverse_neural_operator.data.elastic_plate import load_data
+from models.ifno import create_model
+from data.elastic_plate import load_data
 
 
 device = "cuda:1" if torch.cuda.is_available() else "cpu"
@@ -21,7 +21,7 @@ device = "cuda:1" if torch.cuda.is_available() else "cpu"
 def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     """Infer IFNO hyperparameters from a saved state_dict path (best-effort)."""
     try:
-        sd = torch.load(state_dict_path, map_location="cpu")
+        sd = torch.load(state_dict_path, map_location="cpu", weights_only=False)
     except Exception:
         return None
     cfg = {}
@@ -29,7 +29,9 @@ def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
     if "p1.weight" in sd:
         cfg["width"] = int(sd["p1.weight"].shape[0])
     # n_layers and modes from conv keys
-    conv_keys = [k for k in sd.keys() if k.startswith("convs.") and k.endswith(".weights")]
+    conv_keys = [
+        k for k in sd.keys() if k.startswith("convs.") and k.endswith(".weights")
+    ]
     if conv_keys:
         cfg["n_layers"] = len(conv_keys) // 2
         sample_conv = sd[conv_keys[0]]
@@ -43,11 +45,21 @@ def _infer_ifno_config_from_state_dict_path(state_dict_path: str):
 
 def create_circular_mask(x, y, center_x=0.5, center_y=0.5, radius=0.25):
     """Create a circular boolean mask for the hole in the plate."""
-    return (x - center_x) ** 2 + (y - center_y) ** 2 <= radius ** 2
+    return (x - center_x) ** 2 + (y - center_y) ** 2 <= radius**2
 
 
-def plot_displacement_field(coords, displacement, title, ax, colorbar_label='x-displacement',
-                            add_colorbar=True, vmin=None, vmax=None, cax=None, scaling_order=None):
+def plot_displacement_field(
+    coords,
+    displacement,
+    title,
+    ax,
+    colorbar_label="x-displacement",
+    add_colorbar=True,
+    vmin=None,
+    vmax=None,
+    cax=None,
+    scaling_order=None,
+):
     """Plot displacement field with circular hole using grid interpolation and contourf."""
     x_coords = coords[:, 0]
     y_coords = coords[:, 1]
@@ -61,11 +73,11 @@ def plot_displacement_field(coords, displacement, title, ax, colorbar_label='x-d
     Xi, Yi = np.meshgrid(xi, yi)
 
     # Interpolate values onto grid
-    Zi = griddata((x_coords, y_coords), displacement, (Xi, Yi), method='cubic')
+    Zi = griddata((x_coords, y_coords), displacement, (Xi, Yi), method="cubic")
 
     # Optional scaling annotation
     if scaling_order is not None:
-        scale = 10 ** -scaling_order
+        scale = 10**-scaling_order
         Zi = Zi * scale if Zi is not None else Zi
         if vmin is not None:
             vmin *= scale
@@ -77,31 +89,31 @@ def plot_displacement_field(coords, displacement, title, ax, colorbar_label='x-d
     if Zi is not None:
         Zi[hole_mask] = np.nan
 
-    im = ax.contourf(Xi, Yi, Zi, levels=100, cmap='jet', vmin=vmin, vmax=vmax)
+    im = ax.contourf(Xi, Yi, Zi, levels=100, cmap="jet", vmin=vmin, vmax=vmax)
 
     if vmin is not None and vmax is not None:
         im.set_clim(vmin, vmax)
 
     if cax is not None:
-        cbar = plt.colorbar(im, cax=cax, format='%.1f')
+        cbar = plt.colorbar(im, cax=cax, format="%.1f")
         cbar.set_label(colorbar_label, rotation=270, labelpad=16, fontsize=12)
         cbar.ax.tick_params(labelsize=11)
         cbar.ax.yaxis.get_offset_text().set_size(11)
         if scaling_order is not None:
-            cbar.ax.set_title('10^{%d}' % scaling_order, fontsize=11, pad=8)
+            cbar.ax.set_title("10^{%d}" % scaling_order, fontsize=11, pad=8)
     elif add_colorbar:
-        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, format='%.1f')
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, format="%.1f")
         cbar.set_label(colorbar_label, rotation=270, labelpad=16, fontsize=12)
         cbar.ax.tick_params(labelsize=11)
         cbar.ax.yaxis.get_offset_text().set_size(11)
         if scaling_order is not None:
-            cbar.ax.set_title('10^{%d}' % scaling_order, fontsize=11, pad=8)
+            cbar.ax.set_title("10^{%d}" % scaling_order, fontsize=11, pad=8)
 
-    ax.set_aspect('equal')
+    ax.set_aspect("equal")
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
     ax.set_title(title)
 
 
@@ -110,21 +122,21 @@ def plot_force_curve(force_coords, force_values, title, ax, label=None):
     force_y = force_coords[:, 1]
     ax.plot(force_values, force_y, linewidth=2, label=label)
     ax.set_ylim(force_y.min(), force_y.max())
-    ax.set_xlabel('Force value')
-    ax.set_ylabel('y')
+    ax.set_xlabel("Force value")
+    ax.set_ylabel("y")
     ax.set_title(title)
     ax.grid(True, alpha=0.3)
-    ax.tick_params(axis='both', which='major')
+    ax.tick_params(axis="both", which="major")
     ax.invert_xaxis()
-    ax.axvline(x=0, color='k', linestyle='--', alpha=0.5)
+    ax.axvline(x=0, color="k", linestyle="--", alpha=0.5)
     if label is not None:
-        ax.legend(loc='best')
+        ax.legend(loc="best")
 
 
 def _slice_to_function_channels(pred_tensor, target_tensor):
     """Slice predicted tensor's last dim to match function channels of the target if coordinates are concatenated."""
     if pred_tensor.shape[-1] > target_tensor.shape[-1]:
-        return pred_tensor[..., -target_tensor.shape[-1]:]
+        return pred_tensor[..., -target_tensor.shape[-1] :]
     return pred_tensor
 
 
@@ -167,55 +179,63 @@ def plot_sample(model, sample, sample_idx, save_dir):
     plot_displacement_field(
         Y_np,
         s_true_np,
-        'Observed Displacement Field',
+        "Observed Displacement Field",
         axes_inv[0],
-        colorbar_label='Displacement',
+        colorbar_label="Displacement",
         add_colorbar=True,
         scaling_order=disp_order,
     )
 
-    axes_inv[1].plot(u_true_np, X_np[:, 1], 'b-', linewidth=3, label='True Force', alpha=0.85)
-    axes_inv[1].plot(u_pred_np, X_np[:, 1], 'r--', linewidth=3, label='Predicted Force', alpha=0.85)
+    axes_inv[1].plot(
+        u_true_np, X_np[:, 1], "b-", linewidth=3, label="True Force", alpha=0.85
+    )
+    axes_inv[1].plot(
+        u_pred_np, X_np[:, 1], "r--", linewidth=3, label="Predicted Force", alpha=0.85
+    )
     axes_inv[1].set_ylim(X_np[:, 1].min(), X_np[:, 1].max())
-    axes_inv[1].set_xlabel('Force Magnitude')
-    axes_inv[1].set_ylabel('Position along Boundary (y)')
-    axes_inv[1].set_title('Forcing Function: True vs Predicted')
+    axes_inv[1].set_xlabel("Force Magnitude")
+    axes_inv[1].set_ylabel("Position along Boundary (y)")
+    axes_inv[1].set_title("Forcing Function: True vs Predicted")
     axes_inv[1].grid(True, alpha=0.3)
-    axes_inv[1].legend(loc='best')
-    axes_inv[1].axvline(x=0, color='k', linestyle=':', alpha=0.3)
+    axes_inv[1].legend(loc="best")
+    axes_inv[1].axvline(x=0, color="k", linestyle=":", alpha=0.3)
     axes_inv[1].invert_xaxis()
 
     plt.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
-    save_inv = os.path.join(save_dir, f'ifno_inverse_sample_{sample_idx}.png')
-    plt.savefig(save_inv, dpi=300, bbox_inches='tight')
+    save_inv = os.path.join(save_dir, f"ifno_inverse_sample_{sample_idx}.png")
+    plt.savefig(save_inv, dpi=300, bbox_inches="tight")
     plt.close(fig_inv)
 
     # Forward figure: Left input force, Right displacement field with GT and Pred overlay
     fig_fwd, axes_fwd = plt.subplots(1, 2, figsize=(14, 6))
 
     # Left: input force
-    axes_fwd[0].plot(u_true_np, X_np[:, 1], 'b-', linewidth=3, label='Input Force')
+    axes_fwd[0].plot(u_true_np, X_np[:, 1], "b-", linewidth=3, label="Input Force")
     axes_fwd[0].set_ylim(X_np[:, 1].min(), X_np[:, 1].max())
-    axes_fwd[0].set_xlabel('Force Magnitude')
-    axes_fwd[0].set_ylabel('Position along Boundary (y)')
-    axes_fwd[0].set_title('Input Force s(y)')
+    axes_fwd[0].set_xlabel("Force Magnitude")
+    axes_fwd[0].set_ylabel("Position along Boundary (y)")
+    axes_fwd[0].set_title("Input Force s(y)")
     axes_fwd[0].grid(True, alpha=0.3)
-    axes_fwd[0].legend(loc='best')
-    axes_fwd[0].axvline(x=0, color='k', linestyle=':', alpha=0.3)
+    axes_fwd[0].legend(loc="best")
+    axes_fwd[0].axvline(x=0, color="k", linestyle=":", alpha=0.3)
     axes_fwd[0].invert_xaxis()
 
     # Right: displacement predicted vs ground truth overlay
     # Compute common vmin/vmax based on both fields for consistent color scale
-    vmax = float(np.max(np.abs([s_true_np.max(), s_true_np.min(), s_pred_np.max(), s_pred_np.min()])))
+    vmax = float(
+        np.max(
+            np.abs([s_true_np.max(), s_true_np.min(), s_pred_np.max(), s_pred_np.min()])
+        )
+    )
     vmin = -vmax
     # Plot predicted as filled contours
     plot_displacement_field(
         Y_np,
         s_pred_np,
-        'Predicted Displacement Field',
+        "Predicted Displacement Field",
         axes_fwd[1],
-        colorbar_label='Displacement',
+        colorbar_label="Displacement",
         add_colorbar=True,
         vmin=vmin,
         vmax=vmax,
@@ -227,24 +247,28 @@ def plot_sample(model, sample, sample_idx, save_dir):
     xi = np.linspace(x_coords.min(), x_coords.max(), 200)
     yi = np.linspace(y_coords.min(), y_coords.max(), 200)
     Xi, Yi = np.meshgrid(xi, yi)
-    Zi_true = griddata((x_coords, y_coords), s_true_np, (Xi, Yi), method='cubic')
+    Zi_true = griddata((x_coords, y_coords), s_true_np, (Xi, Yi), method="cubic")
     if disp_order is not None and Zi_true is not None:
-        Zi_true = Zi_true * (10 ** -disp_order)
+        Zi_true = Zi_true * (10**-disp_order)
     # Mask circular hole on overlay
     hole_mask = create_circular_mask(Xi, Yi)
     if Zi_true is not None:
         Zi_true[hole_mask] = np.nan
-    cs = axes_fwd[1].contour(Xi, Yi, Zi_true, levels=12, colors='k', linewidths=0.7, alpha=0.7)
-    axes_fwd[1].clabel(cs, inline=True, fontsize=8, fmt='%.2f')
-    axes_fwd[1].set_title('Predicted (filled) with Ground Truth (lines)')
+    cs = axes_fwd[1].contour(
+        Xi, Yi, Zi_true, levels=12, colors="k", linewidths=0.7, alpha=0.7
+    )
+    axes_fwd[1].clabel(cs, inline=True, fontsize=8, fmt="%.2f")
+    axes_fwd[1].set_title("Predicted (filled) with Ground Truth (lines)")
 
     plt.tight_layout()
-    save_fwd = os.path.join(save_dir, f'ifno_forward_sample_{sample_idx}.png')
-    plt.savefig(save_fwd, dpi=300, bbox_inches='tight')
+    save_fwd = os.path.join(save_dir, f"ifno_forward_sample_{sample_idx}.png")
+    plt.savefig(save_fwd, dpi=300, bbox_inches="tight")
     plt.close(fig_fwd)
 
 
-def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots_elastic/"):
+def visualize_ifno_results(
+    model_path, n_samples=3, save_dir="results/ifno_plots_elastic/"
+):
     print("Loading Elastic Plate test dataset...")
     test_dataset = load_data(None, device=device, split="test")
     dataset_info = test_dataset.get_info()
@@ -274,14 +298,17 @@ def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots
     ).to(device)
 
     print(f"Loading model weights from {model_path}...")
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    state_dict = torch.load(model_path, map_location=device, weights_only=False)
+    model.load_state_dict(state_dict)
     model.eval()
     print(f"Model loaded with {sum(p.numel() for p in model.parameters())} parameters")
 
     os.makedirs(save_dir, exist_ok=True)
 
     # Select random samples
-    test_indices = random.sample(range(len(test_dataset)), min(n_samples, len(test_dataset)))
+    test_indices = random.sample(
+        range(len(test_dataset)), min(n_samples, len(test_dataset))
+    )
     print(f"Generating {len(test_indices)} visualization plots...")
     for idx in test_indices:
         sample = test_dataset[idx]
@@ -293,16 +320,25 @@ def visualize_ifno_results(model_path, n_samples=3, save_dir="results/ifno_plots
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description='Visualize IFNO results on Elastic Plate dataset')
-    parser.add_argument('--model_path', type=str,
-                        default='logs_ifno/elastic_plate/ifno_model.pth',
-                        help='Path to trained IFNO model')
-    parser.add_argument('--n_samples', type=int, default=3,
-                        help='Number of samples to visualize')
-    parser.add_argument('--save_dir', type=str, default='results/ifno_plots_elastic/',
-                        help='Directory to save visualization plots')
-    parser.add_argument('--seed', type=int, default=42,
-                        help='Random seed')
+    parser = argparse.ArgumentParser(
+        description="Visualize IFNO results on Elastic Plate dataset"
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default="logs_ifno/elastic_plate/ifno_model.pth",
+        help="Path to trained IFNO model",
+    )
+    parser.add_argument(
+        "--n_samples", type=int, default=3, help="Number of samples to visualize"
+    )
+    parser.add_argument(
+        "--save_dir",
+        type=str,
+        default="results/ifno_plots_elastic/",
+        help="Directory to save visualization plots",
+    )
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
     args = parser.parse_args()
 
@@ -312,7 +348,9 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.model_path):
         print(f"Model file not found: {args.model_path}")
-        print("Please train the model first using: python train_ifno_standalone.py --dataset elastic_plate")
+        print(
+            "Please train the model first using: python train_ifno_standalone.py --dataset elastic_plate"
+        )
         raise SystemExit(1)
 
     visualize_ifno_results(
@@ -320,7 +358,3 @@ if __name__ == "__main__":
         n_samples=args.n_samples,
         save_dir=args.save_dir,
     )
-
-
-
-

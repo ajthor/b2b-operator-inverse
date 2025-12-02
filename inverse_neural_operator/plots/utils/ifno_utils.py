@@ -10,7 +10,7 @@ from typing import Dict, Tuple
 import numpy as np
 import torch
 
-from inverse_neural_operator.models.ifno import create_model
+from models.ifno import create_model
 
 
 @dataclass
@@ -25,13 +25,19 @@ class IFNOConfig:
     intermediate_dim: int = 32
 
 
-def _infer_ifno_config_from_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, int]:
+def _infer_ifno_config_from_state_dict(
+    state_dict: Dict[str, torch.Tensor],
+) -> Dict[str, int]:
     """Infer missing architectural hyperparameters directly from saved weights."""
     inferred = {}
     if "p1.weight" in state_dict:
         inferred["width"] = int(state_dict["p1.weight"].shape[0])
 
-    conv_keys = [k for k in state_dict.keys() if k.startswith("convs.") and k.endswith(".weights")]
+    conv_keys = [
+        k
+        for k in state_dict.keys()
+        if k.startswith("convs.") and k.endswith(".weights")
+    ]
     if conv_keys:
         inferred["n_layers"] = len(conv_keys) // 2  # two conv tensors per layer
         sample_conv = state_dict[conv_keys[0]]
@@ -44,12 +50,14 @@ def _infer_ifno_config_from_state_dict(state_dict: Dict[str, torch.Tensor]) -> D
     return inferred
 
 
-def load_ifno_model(dataset_info: Dict, checkpoint_path: str, device: str = "cpu") -> torch.nn.Module:
+def load_ifno_model(
+    dataset_info: Dict, checkpoint_path: str, device: str = "cpu"
+) -> torch.nn.Module:
     """Create an IFNO model with dataset-aware shapes and load weights from checkpoint."""
     if not checkpoint_path:
         raise ValueError("Missing IFNO checkpoint path.")
 
-    state_dict = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     cfg = IFNOConfig().__dict__.copy()
     cfg.update(_infer_ifno_config_from_state_dict(state_dict))
 
@@ -121,10 +129,9 @@ def collect_ifno_predictions(
         if tensor.dim() == spatial_rank and tensor.shape == tuple(spatial_dims):
             tensor = tensor.unsqueeze(-1)
 
-        if (
-            tensor.dim() == spatial_rank + 1
-            and tuple(tensor.shape[:spatial_rank]) == tuple(spatial_dims)
-        ):
+        if tensor.dim() == spatial_rank + 1 and tuple(
+            tensor.shape[:spatial_rank]
+        ) == tuple(spatial_dims):
             return tensor
 
         feature_dim = tensor.shape[-1]

@@ -4,5 +4,6 @@ matplotlib
 numpy
 scipy
 torch
+safetensors
 torch-tb-profiler
 scikit-image

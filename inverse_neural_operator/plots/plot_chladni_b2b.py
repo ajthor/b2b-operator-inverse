@@ -13,7 +13,7 @@ import random
 
 import torch
 
-from inverse_neural_operator.b2b.load_model import (
+from b2b.load_model import (
     load_function_encoders,
     load_forward_model,
 )
@@ -41,7 +41,9 @@ def plot_input_function_encoder_realizations(
     random.seed(seed)
 
     # Randomly select samples from input encoder dataset
-    indices = random.sample(range(len(input_encoder_dataset)), min(n_samples, len(input_encoder_dataset)))
+    indices = random.sample(
+        range(len(input_encoder_dataset)), min(n_samples, len(input_encoder_dataset))
+    )
 
     with torch.no_grad():
         # Collect coefficients, spatial coordinates, and ground truth from actual data samples
@@ -61,7 +63,9 @@ def plot_input_function_encoder_realizations(
             X = X.unsqueeze(0).to(device)
 
             # Compute coefficients from example points
-            alpha, _ = input_function_encoder.compute_coefficients(example_xs, example_ys)
+            alpha, _ = input_function_encoder.compute_coefficients(
+                example_xs, example_ys
+            )
             alphas.append(alpha)
             all_xs.append(X)
             all_us.append(u)
@@ -97,20 +101,29 @@ def plot_input_function_encoder_realizations(
         vmax = max(abs(diff.min()), abs(diff.max()))
 
         # Plot difference map
-        im = ax.imshow(diff, cmap='seismic', origin='lower', extent=[0, 1, 0, 1],
-                      vmin=-vmax, vmax=vmax)
-        ax.set_title(f'Sample {indices[idx]}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('x', fontsize=8)
-        ax.set_ylabel('y', fontsize=8)
+        im = ax.imshow(
+            diff,
+            cmap="seismic",
+            origin="lower",
+            extent=[0, 1, 0, 1],
+            vmin=-vmax,
+            vmax=vmax,
+        )
+        ax.set_title(f"Sample {indices[idx]}\nMSE: {mse:.2e}", fontsize=9)
+        ax.set_xlabel("x", fontsize=8)
+        ax.set_ylabel("y", fontsize=8)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle(f'Input Function Encoder - Reconstruction Error (GT - Recon) (seed={seed})',
-                 fontsize=14, fontweight='bold')
+    fig.suptitle(
+        f"Input Function Encoder - Reconstruction Error (GT - Recon) (seed={seed})",
+        fontsize=14,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"  ✓ Saved: {save_path}")
 
     plt.close()
@@ -134,7 +147,9 @@ def plot_output_function_encoder_realizations(
     random.seed(seed)
 
     # Randomly select samples from output encoder dataset (using same seed as input encoder)
-    indices = random.sample(range(len(output_encoder_dataset)), min(n_samples, len(output_encoder_dataset)))
+    indices = random.sample(
+        range(len(output_encoder_dataset)), min(n_samples, len(output_encoder_dataset))
+    )
 
     with torch.no_grad():
         # Collect coefficients, spatial coordinates, and ground truth from actual data samples
@@ -154,7 +169,9 @@ def plot_output_function_encoder_realizations(
             Y = Y.unsqueeze(0).to(device)
 
             # Compute coefficients from example points
-            beta, _ = output_function_encoder.compute_coefficients(example_xs, example_ys)
+            beta, _ = output_function_encoder.compute_coefficients(
+                example_xs, example_ys
+            )
             betas.append(beta)
             all_ys.append(Y)
             all_ss.append(s)
@@ -190,20 +207,29 @@ def plot_output_function_encoder_realizations(
         vmax = max(abs(diff.min()), abs(diff.max()))
 
         # Plot difference map
-        im = ax.imshow(diff, cmap='seismic', origin='lower', extent=[0, 1, 0, 1],
-                      vmin=-vmax, vmax=vmax)
-        ax.set_title(f'Sample {indices[idx]}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('x', fontsize=8)
-        ax.set_ylabel('y', fontsize=8)
+        im = ax.imshow(
+            diff,
+            cmap="seismic",
+            origin="lower",
+            extent=[0, 1, 0, 1],
+            vmin=-vmax,
+            vmax=vmax,
+        )
+        ax.set_title(f"Sample {indices[idx]}\nMSE: {mse:.2e}", fontsize=9)
+        ax.set_xlabel("x", fontsize=8)
+        ax.set_ylabel("y", fontsize=8)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle(f'Output Function Encoder - Reconstruction Error (GT - Recon) (seed={seed})',
-                 fontsize=14, fontweight='bold')
+    fig.suptitle(
+        f"Output Function Encoder - Reconstruction Error (GT - Recon) (seed={seed})",
+        fontsize=14,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"  ✓ Saved: {save_path}")
 
     plt.close()
@@ -280,27 +306,38 @@ def plot_forward_model_performance(
         vmax = max(abs(diff.min()), abs(diff.max()))
 
         # Plot difference
-        im = ax.imshow(diff, cmap='seismic', origin='lower', extent=[0, 1, 0, 1],
-                      vmin=-vmax, vmax=vmax)
-        ax.set_title(f'Sample {sample_idx}\nMSE: {mse:.2e}', fontsize=9)
-        ax.set_xlabel('x', fontsize=8)
-        ax.set_ylabel('y', fontsize=8)
+        im = ax.imshow(
+            diff,
+            cmap="seismic",
+            origin="lower",
+            extent=[0, 1, 0, 1],
+            vmin=-vmax,
+            vmax=vmax,
+        )
+        ax.set_title(f"Sample {sample_idx}\nMSE: {mse:.2e}", fontsize=9)
+        ax.set_xlabel("x", fontsize=8)
+        ax.set_ylabel("y", fontsize=8)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle(f'{model_name} Forward Model - Prediction Error (True - Pred) (seed={seed})',
-                 fontsize=14, fontweight='bold')
+    fig.suptitle(
+        f"{model_name} Forward Model - Prediction Error (True - Pred) (seed={seed})",
+        fontsize=14,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"  ✓ Saved: {save_path}")
 
     plt.close()
 
 
 # Parse command line arguments
-parser = argparse.ArgumentParser(description="Plot B2B model performance for Chladni 2D dataset.")
+parser = argparse.ArgumentParser(
+    description="Plot B2B model performance for Chladni 2D dataset."
+)
 parser.add_argument(
     "--log_dir",
     type=str,
@@ -310,7 +347,7 @@ parser.add_argument(
 parser.add_argument(
     "--results_dir",
     type=str,
-    default="results",
+    default="runs",
     help="Base results directory for saving plots",
 )
 parser.add_argument(
@@ -400,7 +437,11 @@ plot_output_function_encoder_realizations(
 )
 
 # Determine which forward models to plot
-forward_models = ["b2b_linear", "b2b_nonlinear"] if args.forward_model == "all" else [args.forward_model]
+forward_models = (
+    ["b2b_linear", "b2b_nonlinear"]
+    if args.forward_model == "all"
+    else [args.forward_model]
+)
 
 # Plot forward model performance
 for forward_model_name in forward_models:
@@ -422,7 +463,9 @@ for forward_model_name in forward_models:
             model_name=forward_model_name,
             n_samples=args.n_samples,
             seed=args.seed,
-            save_path=os.path.join(shared_results_dir, f"{forward_model_name}_performance.png"),
+            save_path=os.path.join(
+                shared_results_dir, f"{forward_model_name}_performance.png"
+            ),
         )
     except FileNotFoundError as e:
         print(f"  ⚠ {forward_model_name} not found, skipping...")

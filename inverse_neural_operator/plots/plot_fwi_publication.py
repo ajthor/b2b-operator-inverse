@@ -372,20 +372,24 @@ def main():
         description="Create publication-quality FWI plots."
     )
     parser.add_argument(
-        "--log_dir", type=str, default="/store/at46867/b2b_operator_inverse"
+        "--base_dir", type=str, default="/store/at46867/b2b_operator_inverse",
+        help="Base directory for models and results"
     )
     parser.add_argument("--results_dir", type=str, default="results/fwi")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--sample_index", type=int, default=None)
+    parser.add_argument("--dataset", type=str, default="fwi")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    log_dir = os.path.join(args.log_dir, "fwi")
-    if not os.path.exists(log_dir):
-        print(f"ERROR: log directory not found: {log_dir}")
+    base_dir = args.base_dir
+    model_dir = os.path.join(base_dir, "models", args.dataset)
+    log_dir = os.path.join(base_dir, "runs", args.dataset)
+    if not os.path.exists(model_dir):
+        print(f"ERROR: model directory not found: {model_dir}")
         raise SystemExit(1)
 
     # Load normalization statistics
@@ -396,7 +400,7 @@ def main():
         f"✓ Loaded normalization stats: velocity range [{stats['models_min']:.2f}, {stats['models_max']:.2f}]"
     )
 
-    params = find_params(log_dir, MODELS_TO_PLOT, args.seed)
+    params = find_params(model_dir, MODELS_TO_PLOT, args.seed)
     test_dataset, dataset_info = load_dataset(
         params.dataset, params, device, split="test", return_info=True
     )
@@ -404,7 +408,7 @@ def main():
 
     print("Loading models...")
     models_dict, input_enc, output_enc = load_all_models(
-        log_dir, dataset_info, MODELS_TO_PLOT, seed=args.seed, device=device
+        base_dir, args.dataset, MODELS_TO_PLOT, seed=args.seed, device=device
     )
 
     if not models_dict:
@@ -413,7 +417,7 @@ def main():
 
     # Load forward model for re-simulation
     forward_model = load_forward_model(
-        log_dir, args.seed, forward_model_name="b2b_nonlinear", device=device
+        base_dir, args.dataset, args.seed, forward_model_name="b2b_nonlinear", device=device
     )
 
     # Use the specified models (don't rank them)
