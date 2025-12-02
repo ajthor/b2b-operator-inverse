@@ -1,0 +1,30 @@
+# Default arguments for train_ifno_standalone.py
+dataset: darcy_1d
+model: ifno
+
+batch_size: 20
+epochs: 500
+learning_rate: 0.001
+
+epochs_vae: 200
+epochs_ifno: 200
+lr_vae: 0.0001
+lr_ifno: 0.005
+lr_forward: 0.0001
+lr_backward: 0.00005
+
+n_layers: 3
+width: 64
+modes: 16
+vae_latent_dim: 24
+beta: 2.0
+
+seed: 42
+
+checkpoint_interval: 100
+resume: false
+
+num_workers: 0
+prefetch_factor: null
+
+dataset_device: cpu

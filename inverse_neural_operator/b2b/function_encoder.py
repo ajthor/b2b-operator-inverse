@@ -57,7 +57,6 @@ def cholesky_least_squares(
 
     chol, info = torch.linalg.cholesky_ex(G_reg)
     if torch.any(info > 0):
-        # Fall back to general solve if decomposition failed for any batch
         coefficients = torch.linalg.solve(G_reg, F)
     else:
         coefficients = torch.cholesky_solve(F.unsqueeze(-1), chol).squeeze(-1)
