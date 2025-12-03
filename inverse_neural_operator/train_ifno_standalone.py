@@ -23,6 +23,7 @@ from models.ifno import (
 from config.paths import get_model_dir, get_runs_dir
 from utils.params import save_params
 from utils.device import set_seed, dataset_on_cpu
+from utils.args import load_defaults_from_yaml
 from utils.distributed import (
     init_distributed_mode,
     cleanup_distributed,
@@ -79,9 +80,7 @@ def main():
         type=float,
         help="IFNO pretraining learning rate (paper: 5e-3)",
     )
-    parser.add_argument(
-        "--lr_forward", type=float, help="Joint training learning rate"
-    )
+    parser.add_argument("--lr_forward", type=float, help="Joint training learning rate")
     parser.add_argument(
         "--lr_backward",
         type=float,
@@ -105,9 +104,7 @@ def main():
         type=int,
         help="Number of Fourier modes (paper: {8,12,16,32})",
     )
-    parser.add_argument(
-        "--vae_latent_dim", type=int, help="VAE latent dimension"
-    )
+    parser.add_argument("--vae_latent_dim", type=int, help="VAE latent dimension")
     parser.add_argument(
         "--beta", type=float, help="Beta parameter for softplus activation"
     )
@@ -140,9 +137,7 @@ def main():
     )
 
     # Load defaults from YAML
-    defaults_path = os.path.join(
-        os.path.dirname(__file__), "train_ifno_defaults.yaml"
-    )
+    defaults_path = os.path.join(os.path.dirname(__file__), "train_ifno_defaults.yaml")
     defaults = load_defaults_from_yaml(defaults_path)
     parser.set_defaults(**defaults)
 
@@ -294,6 +289,12 @@ def main():
             shuffle=False,
         )
         if dist_config.is_distributed
+        else None
+    )
+
+    prefetch_factor = (
+        args.prefetch_factor
+        if effective_num_workers > 0 and args.prefetch_factor is not None
         else None
     )
 

@@ -12,6 +12,19 @@ from neuralop.layers.fno_block import FNOBlocks
 from utils.distributed import is_main_process
 
 
+def _move_to_device(sample, device):
+    """Recursively move tensors in ``sample`` to ``device``."""
+    if device is None:
+        return sample
+    if torch.is_tensor(sample):
+        return sample.to(device, non_blocking=True)
+    if isinstance(sample, dict):
+        return {k: _move_to_device(v, device) for k, v in sample.items()}
+    if isinstance(sample, (list, tuple)):
+        return type(sample)(_move_to_device(v, device) for v in sample)
+    return sample
+
+
 # Simple 1D Fourier Layer for IFNO compatibility
 class SimpleFourierLayer1D(nn.Module):
     def __init__(self, in_channels, out_channels, modes):
@@ -1461,6 +1474,7 @@ def train(
             train_loss = 0.0
 
             for batch in train_dataloader:
+                batch = _move_to_device(batch, device)
                 vae_optimizer.zero_grad()
                 loss = ifno_vae_loss(model, batch)
                 loss.backward()
@@ -1492,6 +1506,7 @@ def train(
             train_backward_loss = 0.0
 
             for batch in train_dataloader:
+                batch = _move_to_device(batch, device)
                 # Forward pass training
                 ifno_optimizer.zero_grad()
                 forward_loss = ifno_forward_loss(model, batch)
@@ -1548,6 +1563,7 @@ def train(
         train_backward_loss = 0.0
 
         for batch in train_dataloader:
+            batch = _move_to_device(batch, device)
             X, u, Y, s = batch
             batch_size = u.shape[0]
 
@@ -1669,6 +1685,7 @@ def train(
 
         with torch.no_grad():
             for batch in test_dataloader:
+                batch = _move_to_device(batch, device)
                 X, u, Y, s = batch
                 batch_size = u.shape[0]
 
@@ -1803,9 +1820,11 @@ def test_model(model, test_dataloader, input_function_encoder, output_function_e
     """Test the IFNO model with compatibility for main training framework"""
     model.eval()
     total_test_loss = 0.0
+    model_device = next(model.parameters()).device
 
     with torch.no_grad():
         for batch in test_dataloader:
+            batch = _move_to_device(batch, model_device)
             forward_loss, backward_loss = ifno_joint_loss(model, batch)
             total_loss = forward_loss + backward_loss
             total_test_loss += total_loss.item()

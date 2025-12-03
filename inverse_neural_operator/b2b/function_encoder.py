@@ -116,7 +116,7 @@ def save(model, path):
 
 def load(model, path, device=None):
     """Load model weights from safetensors format."""
-    state_dict = load_file(path, device=str(device) if device else 'cpu')
+    state_dict = load_file(path, device=str(device) if device else "cpu")
     model.load_state_dict(state_dict)
     return model
 
@@ -222,6 +222,7 @@ def train(
 
     train_iter = make_iterator(next_sampler_epoch)
 
+    log_interval = 1
     tqdm_bar = tqdm.tqdm(range(start_epoch, total_steps))
     while current_step < total_steps:
         model.train()
@@ -245,16 +246,24 @@ def train(
         scaler.step(optimizer)
         scaler.update()
 
-        summary_writer.add_scalars(
-            "loss/train", {model_name: running_loss / accumulation_steps}, current_step
-        )
-
-        avg_test_loss = test_model(
-            model=model, test_dataloader=test_dataloader, epoch=current_step
-        )
-        summary_writer.add_scalars("loss/test", {model_name: avg_test_loss}, current_step)
+        if current_step % log_interval == 0:
+            summary_writer.add_scalars(
+                "loss/train",
+                {model_name: running_loss / accumulation_steps},
+                current_step,
+            )
+            avg_test_loss = test_model(
+                model=model, test_dataloader=test_dataloader, epoch=current_step
+            )
+            summary_writer.add_scalars(
+                "loss/test", {model_name: avg_test_loss}, current_step
+            )
+            tqdm_bar.set_postfix_str(f"loss {avg_test_loss:.4e}")
 
         if checkpoint_interval > 0 and (current_step + 1) % checkpoint_interval == 0:
+            avg_test_loss = test_model(
+                model=model, test_dataloader=test_dataloader, epoch=current_step
+            )
             save_checkpoint(
                 model, optimizer, current_step + 1, avg_test_loss, checkpoint_path
             )
