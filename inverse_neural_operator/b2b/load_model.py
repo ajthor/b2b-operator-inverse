@@ -6,6 +6,7 @@ This module provides functionality to load trained B2B models from disk.
 
 import os
 import torch
+from safetensors.torch import load_file
 
 from inverse_neural_operator.b2b.function_encoder import (
     create_model as create_function_encoder,
@@ -142,8 +143,9 @@ def load_forward_model(model_dir: str, forward_model_name: str, device: str = "c
         device=device,
     )
 
-    # Load forward model weights
-    forward_model.load_state_dict(torch.load(forward_model_path, map_location=device, weights_only=False))
+    # Load forward model weights (safetensors format)
+    state_dict = load_file(forward_model_path, device=str(device))
+    forward_model.load_state_dict(state_dict)
     forward_model.eval()
 
     return forward_model

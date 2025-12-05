@@ -55,7 +55,7 @@ def load_models(
     params = torch.load(params_path, weights_only=False)
 
     # Load dataset to get dataset_info
-    from data.load_dataset import load_dataset
+    from inverse_neural_operator.data.load_dataset import load_dataset
     dataset_obj = load_dataset(dataset, params, device, split="test")
     dataset_info = dataset_obj.get_info()
 

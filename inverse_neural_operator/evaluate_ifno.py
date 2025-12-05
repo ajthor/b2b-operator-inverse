@@ -33,7 +33,7 @@ from tabulate import tabulate
 from torch.utils.data import DataLoader
 
 from data.load_dataset import load_dataset
-from plots.utils.ifno_utils import load_ifno_model
+from inverse_neural_operator.plots.utils.ifno_utils import load_ifno_model
 from config.paths import resolve_base_dir
 
 

@@ -55,11 +55,11 @@ def publication_display_name(model_name: str) -> str:
     return PUBLICATION_DISPLAY_OVERRIDES.get(model_name, display_name(model_name))
 
 INVERSE_MODELS = (
- #   "linear",
+#    "linear",
     "linear_inverse",
     "nonlinear",
     "inn_affine",
- #   "inn_additive",
+#    "inn_additive",
     "cinn_affine",
     "variational_autoencoder",
     "conditional_realnvp",
@@ -90,10 +90,10 @@ def create_circular_mask(x, y, center=(0.5, 0.5), radius=0.25):
     return (x - center[0]) ** 2 + (y - center[1]) ** 2 <= radius**2
 
 
-def load_ifno_model(dataset_info, device="cpu", ifno_path="logs_ifno/elastic_plate/ifno_model.pth"):
+def load_ifno_model(dataset_info, device="cpu", ifno_path="results/models/elastic_plate/ifno/seed_1/ifno_model.safetensors"):
     """Load IFNO model for elastic plate problem."""
     if not os.path.exists(ifno_path):
-        print(f"IFNO model not found at {ifno_path}")
+        print(f"  IFNO model not found at {ifno_path}")
         return None
 
     # Create IFNO model with dataset-specific configuration
@@ -584,7 +584,7 @@ def main():
         description="Create publication-quality Elastic Plate plots."
     )
     parser.add_argument(
-        "--log_dir", type=str, default="runs"
+        "--log_dir", type=str, default="results/models"
     )
     parser.add_argument("--results_dir", type=str, default="results/elastic_plate")
     parser.add_argument("--seed", type=int, default=1)

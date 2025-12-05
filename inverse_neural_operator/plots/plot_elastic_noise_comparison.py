@@ -2,8 +2,8 @@
 Full Elastic Plate coefficient-noise evaluation pipeline with plotting.
 
 For each trained model found in the logs, the script applies Gaussian noise to
-the predicted inverse coefficients (alpha) at several preset levels, recomputes
-inverse/forward/coefficient MSEs, saves per-model and aggregated metrics, and
+the observed outputs at several preset levels, recomputes inverse predictions,
+measures relative L2 errors, saves per-model and aggregated metrics, and
 generates publication-style comparison plots using shared utilities.
 
 Example:
@@ -31,9 +31,10 @@ for path in (PROJECT_ROOT, PACKAGE_ROOT):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from data.load_dataset import load_dataset
-from models.load_model import load_models
-from plots.utils.plot_utils import (
+from inverse_neural_operator.data.load_dataset import load_dataset
+from inverse_neural_operator.models.load_model import load_models
+from inverse_neural_operator.models.ifno import create_model as create_ifno_model, load as load_ifno_weights
+from inverse_neural_operator.plots.utils.plot_utils import (
     display_name,
     get_model_color,
     setup_publication_style,
@@ -46,34 +47,85 @@ DEFAULT_NOISE_LEVELS = [0.0, 0.02, 0.04, 0.06, 0.08, 0.1]
 DEFAULT_MODEL_NAME = "model"
 EXCLUDED_PLOT_MODELS = {"linear"}
 EXCLUDED_METRIC_MODELS = {"linear", "linear_inverse", "inn_affine"}
+DEFAULT_IFNO_PATH = "results/models/elastic_plate/ifno/seed_1/ifno_model.safetensors"
 
 device = "cpu"
 
 
+def load_ifno_model(dataset_info, device="cpu", ifno_path=None):
+    """Load IFNO model for elastic plate problem."""
+    if ifno_path is None:
+        ifno_path = DEFAULT_IFNO_PATH
+
+    if not os.path.exists(ifno_path):
+        print(f"  IFNO model not found at {ifno_path}")
+        return None
+
+    print(f"  Loading IFNO model from {ifno_path}...")
+
+    # Create IFNO model with dataset-specific configuration
+    ifno_model = create_ifno_model(
+        input_size=None,
+        modes1=16,
+        modes2=16,
+        width=64,
+        beta=2.0,
+        n_layers=3,
+        padding=20,
+        vae_latent_dim=24,
+        intermediate_dim=32,
+        input_spatial_dims=dataset_info["input_spatial_dims"],
+        output_spatial_dims=dataset_info["output_spatial_dims"],
+        input_function_channels=dataset_info["input_function_channels"],
+        output_function_channels=dataset_info["output_function_channels"],
+        coordinate_dim=dataset_info["coordinate_dim"],
+    ).to(device)
+
+    # Load weights
+    load_ifno_weights(ifno_model, ifno_path, device=device)
+    ifno_model.eval()
+
+    print(f"  ✓ Loaded IFNO model")
+    return ifno_model
+
+
 @dataclass
 class NoiseStats:
-    inverse_sq: float = 0.0
+    """Accumulates relative L2 errors for noise sensitivity analysis.
+
+    Relative L2 error: ||u_pred - u_true||_2 / ||u_true||_2
+    """
+
+    inverse_rel_l2_sum: float = 0.0
     inverse_count: int = 0
-    coeff_sq: float = 0.0
+    coeff_rel_l2_sum: float = 0.0
     coeff_count: int = 0
 
     def update_inverse(self, u_pred, u_true) -> None:
-        self.inverse_sq += torch.sum((u_pred - u_true) ** 2).item()
-        self.inverse_count += u_true.numel()
+        """Compute and accumulate relative L2 error for inverse prediction."""
+        diff_norm = torch.norm(u_pred - u_true).item()
+        true_norm = torch.norm(u_true).item()
+        if true_norm > 0:
+            self.inverse_rel_l2_sum += diff_norm / true_norm
+        self.inverse_count += 1
 
     def update_coeff(self, alpha_noisy, alpha_true) -> None:
-        self.coeff_sq += torch.sum((alpha_noisy - alpha_true) ** 2).item()
-        self.coeff_count += alpha_true.numel()
+        """Compute and accumulate relative L2 error for coefficient prediction."""
+        diff_norm = torch.norm(alpha_noisy - alpha_true).item()
+        true_norm = torch.norm(alpha_true).item()
+        if true_norm > 0:
+            self.coeff_rel_l2_sum += diff_norm / true_norm
+        self.coeff_count += 1
 
     def to_metrics(self, noise_std: float) -> Dict[str, float]:
-        def mse(total_sq: float, count: int) -> float:
-            return total_sq / count if count else 0.0
+        def mean_rel_l2(total_sum: float, count: int) -> float:
+            return total_sum / count if count else 0.0
 
         return {
             "noise_std": noise_std,
-            "inverse_mse": mse(self.inverse_sq, self.inverse_count),
+            "inverse_rel_l2": mean_rel_l2(self.inverse_rel_l2_sum, self.inverse_count),
             "inverse_count": self.inverse_count,
-            "coeff_mse": mse(self.coeff_sq, self.coeff_count),
+            "coeff_rel_l2": mean_rel_l2(self.coeff_rel_l2_sum, self.coeff_count),
             "coeff_count": self.coeff_count,
         }
 
@@ -117,7 +169,8 @@ def collect_model_log_dirs(
 
     model_dirs = {}
     for entry in base_path.iterdir():
-        if entry.name == "shared" or not entry.is_dir():
+        # Skip shared directory and ifno (handled separately)
+        if entry.name in ("shared", "ifno") or not entry.is_dir():
             continue
         seed_dir = entry / seed_dir_name
         if (seed_dir / "params.pth").exists() and include(entry.name):
@@ -186,6 +239,55 @@ def evaluate_coeff_noise(
                 )
                 stats.update_coeff(alpha_noisy, alpha_true)
 
+    return {
+        (format_noise_value(level) if level > 0 else "0"): stats.to_metrics(level)
+        for level, stats in stats_per_noise.items()
+    }
+
+
+def evaluate_coeff_noise_ifno(
+    ifno_model,
+    dataset,
+    noise_levels: List[float],
+) -> Dict[str, Dict[str, float]]:
+    """Evaluate IFNO model under observation noise.
+
+    IFNO doesn't use function encoders or return alpha coefficients,
+    so we only compute inverse relative L2 error (not coefficient error).
+    """
+    stats_per_noise = {level: NoiseStats() for level in noise_levels}
+
+    ifno_model.eval()
+
+    with torch.no_grad():
+        for sample in dataset:
+            (X, u_true, Y, s_true), (X_b, u_b, Y_b, s_b) = _prepare_sample(sample)
+
+            for noise_std, stats in stats_per_noise.items():
+                # Apply noise to observed outputs
+                noise_tensor = (
+                    torch.zeros_like(s_b)
+                    if noise_std == 0.0
+                    else noise_std * torch.randn_like(s_b)
+                )
+                s_noisy = s_b + noise_tensor
+
+                # IFNO inverse: s_observed -> u_pred
+                s_input = torch.cat([Y_b, s_noisy], dim=-1)
+                result = ifno_model.inverse(s_input)
+
+                if isinstance(result, tuple):
+                    pred_u, _ = result
+                else:
+                    pred_u = result
+
+                # Extract function values only (IFNO may output coordinates + values)
+                if pred_u.shape[-1] > u_true.shape[-1]:
+                    pred_u = pred_u[..., -u_true.shape[-1]:]
+
+                stats.update_inverse(pred_u.squeeze(0), u_true)
+
+    # Return metrics (note: coeff_mse will be 0 for IFNO since we don't have alpha coefficients)
     return {
         (format_noise_value(level) if level > 0 else "0"): stats.to_metrics(level)
         for level, stats in stats_per_noise.items()
@@ -269,7 +371,6 @@ def plot_aggregated_metric(
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.3)
     ax.set_xticks(sorted_noises)
-    ax.set_yscale("log")
     fig.suptitle(title, y=1.01)
     legend_axes = fig.add_axes([0.10, 0.86, 0.90, 0.10], frameon=False)
     legend_axes.axis("off")
@@ -303,7 +404,7 @@ def resolve_results_root(dataset_name: str, override: Optional[str]) -> Path:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Evaluate Elastic Plate inverse models under coefficient noise and save MSE metrics."
+        description="Evaluate Elastic Plate inverse models under observation noise and save relative L2 metrics."
     )
     parser.add_argument(
         "--log_dir",
@@ -343,7 +444,7 @@ def main():
     base_log_dir = (
         Path(args.log_dir).resolve()
         if args.log_dir
-        else PROJECT_ROOT / "runs" / DEFAULT_DATASET
+        else PROJECT_ROOT / "results" / "models" / DEFAULT_DATASET
     )
     if not base_log_dir.exists():
         print(f"✗ Log directory not found: {base_log_dir}")
@@ -373,11 +474,22 @@ def main():
             params.dataset, params, device, split="test", return_info=True
         )
 
+        # Derive base_dir from model_log_dir
+        # model_log_dir is like "results/models/elastic_plate/nonlinear/seed_1"
+        # base_dir should be "results"
+        path_parts = model_log_dir.parts
+        if "models" in path_parts:
+            models_idx = path_parts.index("models")
+            base_dir = str(Path(*path_parts[:models_idx])) if models_idx > 0 else "."
+        else:
+            base_dir = str(model_log_dir.parents[3]) if len(model_log_dir.parents) > 3 else "."
+
         try:
             input_encoder, output_encoder, model, evaluate_fn = load_models(
-                log_dir=str(model_log_dir),
-                dataset_info=dataset_info,
-                params=params,
+                base_dir=base_dir,
+                dataset=dataset_name,
+                model_name=model_name,
+                seed=args.seed,
                 device=device,
             )
         except Exception as exc:
@@ -400,6 +512,42 @@ def main():
 
         aggregated.setdefault(dataset_name, {})[model_name] = metrics
 
+    # Evaluate IFNO model if available
+    # We need dataset_info for IFNO, so load from one of the models' params
+    if aggregated:
+        first_dataset = next(iter(aggregated.keys()))
+        results_root = resolve_results_root(first_dataset, args.results_dir)
+
+        # Load dataset for IFNO evaluation (use params from any model)
+        first_model_dir = next(iter(model_log_dirs.values()))
+        params = torch.load(first_model_dir / "params.pth", weights_only=False)
+        test_dataset, dataset_info = load_dataset(
+            params.dataset, params, device, split="test", return_info=True
+        )
+
+        # Construct IFNO path based on base_log_dir
+        ifno_path = base_log_dir / "ifno" / f"seed_{args.seed}" / "ifno_model.safetensors"
+
+        ifno_model = load_ifno_model(dataset_info, device=device, ifno_path=str(ifno_path))
+        if ifno_model is not None:
+            print("Evaluating IFNO under observation noise...")
+            ifno_metrics = evaluate_coeff_noise_ifno(
+                ifno_model=ifno_model,
+                dataset=test_dataset,
+                noise_levels=noise_levels,
+            )
+
+            # Save IFNO metrics
+            ifno_results_dir = results_root / "ifno"
+            os.makedirs(ifno_results_dir, exist_ok=True)
+            ifno_metrics_path = ifno_results_dir / "coefficient_noise_metrics.json"
+            with ifno_metrics_path.open("w", encoding="utf-8") as f:
+                json.dump(ifno_metrics, f, indent=2)
+            print(f"✓ ifno: saved coefficient-noise metrics → {ifno_metrics_path}")
+
+            # Add to aggregated results
+            aggregated[first_dataset]["ifno"] = ifno_metrics
+
     for dataset_name, data in aggregated.items():
         summary_root = resolve_results_root(dataset_name, args.results_dir)
         os.makedirs(summary_root, exist_ok=True)
@@ -409,17 +557,17 @@ def main():
         print(f"✓ Saved aggregated metrics → {summary_path}")
         plot_aggregated_metric(
             data,
-            metric_key="inverse_mse",
+            metric_key="inverse_rel_l2",
             title="Noise Sensitivity (Input Space)",
-            ylabel="Inverse MSE (log scale)",
+            ylabel="L2 Error",
             xlabel="Observation noise std",
             output_path=summary_root / "coefficient_noise_plot.png",
         )
         plot_aggregated_metric(
             data,
-            metric_key="coeff_mse",
+            metric_key="coeff_rel_l2",
             title="Coefficient Noise Sensitivity (Aggregated Coefficients)",
-            ylabel="Coefficient MSE (log scale)",
+            ylabel="L2 Error",
             output_path=summary_root / "coefficient_noise_coeff_plot.png",
             xlabel="Coefficient noise std",
         )

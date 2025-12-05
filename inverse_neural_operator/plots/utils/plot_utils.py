@@ -131,7 +131,7 @@ def load_forward_model(
     shared_log_dir = os.path.join(log_dir, "shared", f"seed_{seed}")
     try:
         forward_model = load_b2b_forward_model(
-            log_dir=shared_log_dir, forward_model_name=forward_model_name, device=device
+            model_dir=shared_log_dir, forward_model_name=forward_model_name, device=device
         )
         forward_model.eval()
         print(f"  Loaded forward model: {forward_model_name}")

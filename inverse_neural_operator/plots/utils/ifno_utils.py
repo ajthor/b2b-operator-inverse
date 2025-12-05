@@ -9,8 +9,9 @@ from typing import Dict, Tuple
 
 import numpy as np
 import torch
+from safetensors.torch import load_file
 
-from models.ifno import create_model
+from inverse_neural_operator.models.ifno import create_model
 
 
 @dataclass
@@ -57,7 +58,14 @@ def load_ifno_model(
     if not checkpoint_path:
         raise ValueError("Missing IFNO checkpoint path.")
 
-    state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    # Try safetensors format first, fall back to PyTorch
+    try:
+        state_dict = load_file(checkpoint_path, device="cpu")
+    except Exception:
+        state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        # Handle checkpoint dict format
+        if isinstance(state_dict, dict) and "model_state_dict" in state_dict:
+            state_dict = state_dict["model_state_dict"]
     cfg = IFNOConfig().__dict__.copy()
     cfg.update(_infer_ifno_config_from_state_dict(state_dict))
 

@@ -8,13 +8,13 @@ from typing import Dict, Iterable, List, Tuple
 import numpy as np
 import torch
 
-from models.load_model import load_models
-from utils.imports import import_model_functions
+from inverse_neural_operator.models.load_model import load_models
+from inverse_neural_operator.utils.imports import import_model_functions
 
 
 def load_all_models(
-    base_dir: str,
-    dataset: str,
+    log_dir: str,
+    dataset_info,
     model_names: Iterable[str],
     seed: int = 1,
     device: str = "cpu",
@@ -22,8 +22,8 @@ def load_all_models(
     """Load inverse models and shared encoders from a results directory.
 
     Args:
-        base_dir: Base directory for models (e.g., ./results or /store/...)
-        dataset: Dataset name (e.g., 'burgers_1d', 'darcy_1d')
+        log_dir: Full path to dataset results (e.g., 'results/models/elastic_plate')
+        dataset_info: Dataset info dict from load_dataset() (used to extract dataset name)
         model_names: Names of models to load
         seed: Random seed used during training
         device: Device to load models onto
@@ -37,8 +37,21 @@ def load_all_models(
     input_function_encoder = None
     output_function_encoder = None
 
+    # Derive base_dir and dataset from log_dir
+    # log_dir is like "results/models/elastic_plate"
+    # base_dir should be "results", dataset should be "elastic_plate"
+    parts = log_dir.rstrip(os.sep).split(os.sep)
+    dataset = parts[-1]  # Last component is the dataset name
+    # Find "models" in path and get base_dir as everything before it
+    if "models" in parts:
+        models_idx = parts.index("models")
+        base_dir = os.sep.join(parts[:models_idx]) if models_idx > 0 else "."
+    else:
+        # Fallback: assume log_dir is base_dir/dataset format
+        base_dir = os.sep.join(parts[:-1]) if len(parts) > 1 else "."
+
     for model_name in model_names:
-        model_dir = os.path.join(base_dir, "models", dataset, model_name, f"seed_{seed}")
+        model_dir = os.path.join(log_dir, model_name, f"seed_{seed}")
         params_path = os.path.join(model_dir, "params.pth")
 
         if not os.path.exists(params_path):

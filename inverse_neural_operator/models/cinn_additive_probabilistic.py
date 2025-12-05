@@ -212,13 +212,22 @@ def create_model(
 
 def save(model, path):
     """Save model weights in safetensors format."""
+
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    save_file(model.state_dict(), path)
+    torch.save(model.state_dict(), path)
 
 
 def load(model, path, device=None):
-    """Load model weights from safetensors format."""
-    state_dict = load_file(path, device=str(device) if device else 'cpu')
+    """Load model weights from safetensors or PyTorch format."""
+    try:
+        # Try safetensors format first
+        state_dict = load_file(path, device=str(device) if device else 'cpu')
+    except Exception:
+        # Fall back to PyTorch format
+        state_dict = torch.load(path, map_location=device, weights_only=False)
+        # Handle case where it's a checkpoint dict with model_state_dict key
+        if isinstance(state_dict, dict) and "model_state_dict" in state_dict:
+            state_dict = state_dict["model_state_dict"]
     model.load_state_dict(state_dict)
     return model
 
