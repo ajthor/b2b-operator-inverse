@@ -13,6 +13,7 @@ To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator
 """
 
 import os
+from pathlib import Path
 import argparse
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -634,8 +635,8 @@ def main():
     parser.add_argument(
         "--ifno_checkpoint",
         type=str,
-        default="logs_ifno/wave_scattering/seed_0/ifno_model.pth",
-        help="Path to trained IFNO weights (set empty to skip).",
+        default="",
+        help="Optional override for IFNO checkpoint path (otherwise auto-detected).",
     )
     args = parser.parse_args()
 
@@ -643,8 +644,16 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
 
+    results_dir = os.path.abspath(args.results_dir)
     dataset = "wave_scattering"
-    log_dir = os.path.join(args.log_dir, dataset)
+    models_root = args.log_dir
+    log_dir = os.path.join(models_root, dataset)
+    if not os.path.exists(log_dir):
+        alt_root = os.path.join(models_root, "models")
+        alt_log_dir = os.path.join(alt_root, dataset)
+        if os.path.exists(alt_log_dir):
+            models_root = alt_root
+            log_dir = alt_log_dir
 
     if not os.path.exists(log_dir):
         print(f"✗ Log directory not found: {log_dir}")
@@ -661,11 +670,19 @@ def main():
         params.dataset, params, device, split="test", return_info=True
     )
     print(f"✓ Loaded {len(test_dataset)} test samples")
+    cache_path = os.path.join(results_dir, "plot_cache.json")
+    cache_key = f"seed_{args.seed}"
+    cache_metadata = {"dataset": params.dataset, "seed": int(args.seed)}
 
     # Load models
     print("\nLoading models...")
+    normalized_root = os.path.normpath(models_root)
+    if os.path.basename(normalized_root) == "models":
+        models_base_dir = os.path.dirname(normalized_root)
+    else:
+        models_base_dir = models_root
     models_dict, input_enc, output_enc = load_all_models(
-        log_dir, dataset_info, INVERSE_MODELS, args.seed, device
+        models_base_dir, params.dataset, INVERSE_MODELS, args.seed, device
     )
 
     if not models_dict:
@@ -674,6 +691,7 @@ def main():
 
     forward_model = load_forward_model(log_dir, args.seed, device=device)
     output_transform = make_output_transform(forward_model, output_enc)
+    repo_root = Path(__file__).resolve().parents[2]
 
     # Evaluate models and select best performers
     models_to_plot, sample_idx = select_models_and_sample(
@@ -685,9 +703,35 @@ def main():
         max_models=MAX_MODELS,
         sample_index=args.sample_index,
         device=device,
+        cache_path=cache_path,
+        cache_metadata=cache_metadata,
+        cache_key=cache_key,
     )
 
-    ifno_checkpoint = args.ifno_checkpoint.strip() if args.ifno_checkpoint else ""
+    default_ifno_checkpoint = os.path.join(
+        models_base_dir,
+        "models",
+        params.dataset,
+        "ifno",
+        f"seed_{args.seed}",
+        "ifno_model.safetensors",
+    )
+    manual_ifno = args.ifno_checkpoint.strip() if args.ifno_checkpoint else ""
+    if manual_ifno:
+        manual_ifno = os.path.abspath(manual_ifno)
+        if not os.path.exists(manual_ifno):
+            raise SystemExit(
+                f"ERROR: IFNO checkpoint override not found: {manual_ifno}"
+            )
+        ifno_checkpoint = manual_ifno
+    else:
+        if os.path.exists(default_ifno_checkpoint):
+            ifno_checkpoint = default_ifno_checkpoint
+        else:
+            raise SystemExit(
+                f"ERROR: IFNO checkpoint not found: {default_ifno_checkpoint}\n"
+                "       Please train IFNO or provide --ifno_checkpoint."
+            )
     include_ifno = bool(ifno_checkpoint)
     if include_ifno and not os.path.exists(ifno_checkpoint):
         print(
@@ -729,8 +773,8 @@ def main():
             )
 
     print("Rendering figure...")
-    plot_comparison(sample_idx, final_model_order, predictions, meta, args.results_dir)
-    print(f"SUCCESS: Created publication figure → {args.results_dir}")
+    plot_comparison(sample_idx, final_model_order, predictions, meta, results_dir)
+    print(f"SUCCESS: Created publication figure → {results_dir}")
 
 
 if __name__ == "__main__":

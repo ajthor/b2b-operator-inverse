@@ -4,12 +4,12 @@ import os
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
-from inverse_neural_operator.data.process_data import (
+from data.process_data import (
     InputFunctionEncoderDataset,
     OutputFunctionEncoderDataset,
 )
 
-from inverse_neural_operator.b2b.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     train as train_function_encoder,
     save as save_function_encoder,

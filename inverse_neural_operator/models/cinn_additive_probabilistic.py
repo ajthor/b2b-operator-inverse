@@ -107,10 +107,10 @@ class ConditionalInvertibleNeuralNetworkProbabilistic(torch.nn.Module):
         super(ConditionalInvertibleNeuralNetworkProbabilistic, self).__init__()
         # Interleaved sequence of coupling and normalization layers
         self.layers = torch.nn.ModuleList(layers)
-        # Convenience list for code that inspects coupling layers (e.g., to read input_size)
-        self.coupling_layers = torch.nn.ModuleList(
-            [m for m in self.layers if isinstance(m, ConditionalAdditiveCoupling)]
-        )
+        # Keep an unregistered view for convenience without duplicating modules in state_dict
+        self.coupling_layers = [
+            m for m in self.layers if isinstance(m, ConditionalAdditiveCoupling)
+        ]
 
     def forward(self, alpha, beta):
         """

@@ -31,10 +31,10 @@ for path in (PROJECT_ROOT, PACKAGE_ROOT):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from inverse_neural_operator.data.load_dataset import load_dataset
-from inverse_neural_operator.models.load_model import load_models
-from inverse_neural_operator.models.ifno import create_model as create_ifno_model, load as load_ifno_weights
-from inverse_neural_operator.plots.utils.plot_utils import (
+from data.load_dataset import load_dataset
+from models.load_model import load_models
+from models.ifno import create_model as create_ifno_model, load as load_ifno_weights
+from plots.utils.plot_utils import (
     display_name,
     get_model_color,
     setup_publication_style,
@@ -283,7 +283,7 @@ def evaluate_coeff_noise_ifno(
 
                 # Extract function values only (IFNO may output coordinates + values)
                 if pred_u.shape[-1] > u_true.shape[-1]:
-                    pred_u = pred_u[..., -u_true.shape[-1]:]
+                    pred_u = pred_u[..., -u_true.shape[-1] :]
 
                 stats.update_inverse(pred_u.squeeze(0), u_true)
 
@@ -482,7 +482,9 @@ def main():
             models_idx = path_parts.index("models")
             base_dir = str(Path(*path_parts[:models_idx])) if models_idx > 0 else "."
         else:
-            base_dir = str(model_log_dir.parents[3]) if len(model_log_dir.parents) > 3 else "."
+            base_dir = (
+                str(model_log_dir.parents[3]) if len(model_log_dir.parents) > 3 else "."
+            )
 
         try:
             input_encoder, output_encoder, model, evaluate_fn = load_models(
@@ -526,9 +528,13 @@ def main():
         )
 
         # Construct IFNO path based on base_log_dir
-        ifno_path = base_log_dir / "ifno" / f"seed_{args.seed}" / "ifno_model.safetensors"
+        ifno_path = (
+            base_log_dir / "ifno" / f"seed_{args.seed}" / "ifno_model.safetensors"
+        )
 
-        ifno_model = load_ifno_model(dataset_info, device=device, ifno_path=str(ifno_path))
+        ifno_model = load_ifno_model(
+            dataset_info, device=device, ifno_path=str(ifno_path)
+        )
         if ifno_model is not None:
             print("Evaluating IFNO under observation noise...")
             ifno_metrics = evaluate_coeff_noise_ifno(

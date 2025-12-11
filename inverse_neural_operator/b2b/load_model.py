@@ -8,12 +8,12 @@ import os
 import torch
 from safetensors.torch import load_file
 
-from inverse_neural_operator.b2b.function_encoder import (
+from b2b.function_encoder import (
     create_model as create_function_encoder,
     load as load_function_encoder,
     memory_efficient_inner_product,
 )
-from inverse_neural_operator.b2b.create_model import create_forward_model
+from b2b.create_model import create_forward_model
 
 
 def load_function_encoder_params(model_dir: str):
@@ -34,7 +34,8 @@ def load_function_encoder_params(model_dir: str):
 
     # Load output function encoder parameters
     output_function_encoder_params = torch.load(
-        os.path.join(model_dir, "output_function_encoder_params.pth"), weights_only=False
+        os.path.join(model_dir, "output_function_encoder_params.pth"),
+        weights_only=False,
     )
 
     return input_function_encoder_params, output_function_encoder_params
@@ -78,7 +79,8 @@ def load_function_encoders(
 
     # Load the output function encoder
     output_function_encoder_params = torch.load(
-        os.path.join(model_dir, "output_function_encoder_params.pth"), weights_only=False
+        os.path.join(model_dir, "output_function_encoder_params.pth"),
+        weights_only=False,
     )
     output_function_encoder = create_function_encoder(
         input_size=dataset_info["Y_size"],
@@ -116,7 +118,9 @@ def load_forward_model(model_dir: str, forward_model_name: str, device: str = "c
         FileNotFoundError: If the forward model checkpoint is not found
     """
     # Load function encoder parameters to get sizes
-    input_encoder_params, output_encoder_params = load_function_encoder_params(model_dir)
+    input_encoder_params, output_encoder_params = load_function_encoder_params(
+        model_dir
+    )
 
     # Load params for model configuration
     params_path = os.path.join(model_dir, "params.pth")
@@ -128,7 +132,9 @@ def load_forward_model(model_dir: str, forward_model_name: str, device: str = "c
     params.model = forward_model_name
 
     # The forward model checkpoint is named forward_{model_name}.safetensors
-    forward_model_path = os.path.join(model_dir, f"forward_{forward_model_name}.safetensors")
+    forward_model_path = os.path.join(
+        model_dir, f"forward_{forward_model_name}.safetensors"
+    )
     if not os.path.exists(forward_model_path):
         raise FileNotFoundError(
             f"Forward model checkpoint not found at {forward_model_path}"

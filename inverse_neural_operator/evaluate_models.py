@@ -27,7 +27,7 @@ import csv
 import math
 import os
 from collections import defaultdict
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -38,6 +38,7 @@ from b2b.load_model import load_forward_model
 from data.load_dataset import load_dataset
 from models.load_model import load_models
 from config.paths import resolve_base_dir
+from report_utils import build_summary_rows
 
 
 # Order in which metrics are reported (key, human readable label)
@@ -82,6 +83,16 @@ def compute_statistics(values: Iterable[float]) -> Dict[str, float]:
         "min": float(np.min(arr)),
         "max": float(np.max(arr)),
     }
+
+
+def _safe_float(value: Optional[str]) -> Optional[float]:
+    """Convert strings from CSV back to floats, tolerating blanks."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def load_reference_dataset(
@@ -379,6 +390,18 @@ def compute_model_statistics(seed_results: Dict[int, Dict[str, float | None]]):
     return stats
 
 
+def collect_metric_statistics(
+    seed_metrics: Dict[int, Dict[str, float | None]],
+) -> Dict[str, Dict[str, float]]:
+    """Return ordered statistics keyed by human-readable metric labels."""
+    stats = compute_model_statistics(seed_metrics)
+    ordered: Dict[str, Dict[str, float]] = {}
+    for metric_key, label in METRIC_FIELDS:
+        if metric_key in stats:
+            ordered[label] = stats[metric_key]
+    return ordered
+
+
 def print_console_summary(all_results: Dict[str, Dict[int, Dict[str, float | None]]]):
     """Print a concise summary to stdout."""
     for model_name, seed_metrics in all_results.items():
@@ -448,61 +471,208 @@ def save_csv_results(
     print(f"  ✓ Saved CSV summary to {csv_path}")
 
 
+def save_per_model_reports(
+    all_results: Dict[str, Dict[int, Dict[str, float | None]]],
+    output_dir: str,
+):
+    """Write per-model CSV/TXT reports inside dedicated subdirectories."""
+    import csv
+
+    fieldnames = ["seed", "num_samples"] + [key for key, _ in METRIC_FIELDS]
+
+    for model_name, seed_metrics in all_results.items():
+        model_dir = os.path.join(output_dir, model_name)
+        os.makedirs(model_dir, exist_ok=True)
+
+        csv_path = os.path.join(model_dir, "evaluation_results.csv")
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for seed in sorted(seed_metrics.keys()):
+                row = {"seed": seed}
+                for key in fieldnames[1:]:
+                    row[key] = seed_metrics[seed].get(key)
+                writer.writerow(row)
+        print(f"  ✓ Saved per-seed CSV for {model_name} to {csv_path}")
+
+        metric_stats = collect_metric_statistics(seed_metrics)
+        txt_lines: List[str] = [f"{model_name} Evaluation"]
+        if seed_metrics:
+            headers = ["Seed"] + [label for _, label in METRIC_FIELDS]
+            table_rows = []
+            for seed in sorted(seed_metrics.keys()):
+                metrics = seed_metrics[seed]
+                row = [str(seed)]
+                for metric_key, _ in METRIC_FIELDS:
+                    row.append(format_value(metrics.get(metric_key)))
+                table_rows.append(row)
+            txt_lines.append(tabulate(table_rows, headers=headers, tablefmt="github"))
+        else:
+            txt_lines.append("  (no valid runs found)")
+
+        if metric_stats:
+            txt_lines.append("")
+            txt_lines.append("Aggregate Statistics")
+            summary_headers = [
+                "Metric",
+                "Mean ± Std (Rel L2)",
+                "Median",
+                "Min",
+                "Max",
+            ]
+            rows = list(build_summary_rows(metric_stats))
+            txt_lines.append(tabulate(rows, headers=summary_headers, tablefmt="github"))
+
+        txt_path = os.path.join(model_dir, "evaluation_summary.txt")
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(txt_lines).rstrip() + "\n")
+        print(f"  ✓ Saved summary TXT for {model_name} to {txt_path}")
+
+        if metric_stats:
+            summary_csv = os.path.join(model_dir, "evaluation_summary.csv")
+            with open(summary_csv, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Metric", "Mean", "Std", "Median", "Min", "Max"])
+                for metric, stats in metric_stats.items():
+                    writer.writerow(
+                        [
+                            metric,
+                            stats.get("mean"),
+                            stats.get("std"),
+                            stats.get("median"),
+                            stats.get("min"),
+                            stats.get("max"),
+                        ]
+                    )
+            print(f"  ✓ Saved summary CSV for {model_name} to {summary_csv}")
+
+
 def save_text_summary(
     all_results: Dict[str, Dict[int, Dict[str, float | None]]],
     output_dir: str,
 ):
-    """Write a readable text summary with per-seed tables and aggregate stats."""
+    """Write a concise text summary with aggregate statistics only."""
     txt_path = os.path.join(output_dir, "inverse_evaluation_summary.txt")
     os.makedirs(output_dir, exist_ok=True)
 
     lines: List[str] = []
+    summary_headers = [
+        "Metric",
+        "Mean ± Std (Rel L2)",
+        "Median",
+        "Min",
+        "Max",
+    ]
+
     for model_name, seed_metrics in all_results.items():
         lines.append(f"Model: {model_name}")
-        if not seed_metrics:
+        metric_stats = collect_metric_statistics(seed_metrics)
+        if not metric_stats:
             lines.append("  (no valid runs found)\n")
             continue
 
-        headers = ["Seed"] + [label for _, label in METRIC_FIELDS]
-        table_rows = []
-        for seed in sorted(seed_metrics.keys()):
-            metrics = seed_metrics[seed]
-            row = [str(seed)]
-            for metric_key, _ in METRIC_FIELDS:
-                row.append(format_value(metrics.get(metric_key)))
-            table_rows.append(row)
-        lines.append(tabulate(table_rows, headers=headers, tablefmt="github"))
-
-        stats = compute_model_statistics(seed_metrics)
-        if stats:
-            stat_rows = []
-            for metric_key, label in METRIC_FIELDS:
-                if metric_key not in stats:
-                    continue
-                metric_stats = stats[metric_key]
-                stat_rows.append(
-                    [
-                        label,
-                        format_value(metric_stats["mean"]),
-                        format_value(metric_stats["median"]),
-                        format_value(metric_stats["std"]),
-                        format_value(metric_stats["min"]),
-                        format_value(metric_stats["max"]),
-                    ]
-                )
-            lines.append(
-                tabulate(
-                    stat_rows,
-                    headers=["Metric", "Mean", "Median", "Std", "Min", "Max"],
-                    tablefmt="github",
-                )
-            )
+        rows = list(build_summary_rows(metric_stats))
+        lines.append(tabulate(rows, headers=summary_headers, tablefmt="github"))
         lines.append("")  # spacer
 
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines).rstrip() + "\n")
 
     print(f"  ✓ Saved TXT summary to {txt_path}")
+
+
+def load_ifno_summary_stats(base_dir: str, dataset_name: str):
+    """Load aggregate iFNO metrics if they have been evaluated."""
+    import csv
+
+    summary_path = os.path.join(
+        base_dir, "runs", dataset_name, "ifno", "ifno_evaluation_summary.csv"
+    )
+    if not os.path.exists(summary_path):
+        return {}
+
+    stats: Dict[str, Dict[str, float]] = {}
+    with open(summary_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            metric = row.get("Metric")
+            if not metric:
+                continue
+            stats[metric] = {
+                "mean": _safe_float(row.get("Mean")),
+                "std": _safe_float(row.get("Std")),
+                "median": _safe_float(row.get("Median")),
+                "min": _safe_float(row.get("Min")),
+                "max": _safe_float(row.get("Max")),
+            }
+    return stats
+
+
+def save_consolidated_summary(
+    all_results: Dict[str, Dict[int, Dict[str, float | None]]],
+    base_dir: str,
+    dataset_name: str,
+):
+    """
+    Combine inverse-model statistics with iFNO results inside the shared folder.
+    """
+    shared_dir = os.path.join(base_dir, "runs", dataset_name, "shared")
+    os.makedirs(shared_dir, exist_ok=True)
+
+    consolidated: Dict[str, Dict[str, Dict[str, float]]] = {}
+
+    for model_name, seed_metrics in all_results.items():
+        metric_stats = collect_metric_statistics(seed_metrics)
+        for metric_label, stats in metric_stats.items():
+            consolidated.setdefault(metric_label, {})[model_name] = stats
+
+    ifno_stats = load_ifno_summary_stats(base_dir, dataset_name)
+    for metric_label, stats in ifno_stats.items():
+        consolidated.setdefault(metric_label, {})["iFNO"] = stats
+
+    if not consolidated:
+        print("  ⚠ Skipping consolidated summary: no metrics available.")
+        return
+
+    headers = [
+        "Model",
+        "Mean ± Std (Rel L2)",
+        "Median",
+        "Min",
+        "Max",
+    ]
+    lines: List[str] = ["Inverse & iFNO Consolidated Summary"]
+    for metric_label in sorted(consolidated.keys()):
+        lines.append("")
+        lines.append(f"Metric: {metric_label}")
+        rows = list(build_summary_rows(consolidated[metric_label]))
+        lines.append(tabulate(rows, headers=headers, tablefmt="github"))
+
+    txt_path = os.path.join(shared_dir, "inverse_ifno_consolidated_summary.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines).rstrip() + "\n")
+    print(f"  ✓ Saved consolidated TXT to {txt_path}")
+
+    import csv
+
+    csv_path = os.path.join(shared_dir, "inverse_ifno_consolidated_summary.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Metric", "Model", "Mean", "Std", "Median", "Min", "Max"])
+        for metric_label in sorted(consolidated.keys()):
+            for model_name, stats in consolidated[metric_label].items():
+                writer.writerow(
+                    [
+                        metric_label,
+                        model_name,
+                        stats.get("mean"),
+                        stats.get("std"),
+                        stats.get("median"),
+                        stats.get("min"),
+                        stats.get("max"),
+                    ]
+                )
+    print(f"  ✓ Saved consolidated CSV to {csv_path}")
 
 
 def parse_args():
@@ -555,7 +725,7 @@ def main():
 
     # Construct paths from base_dir or config
     base_dir = str(resolve_base_dir(args.base_dir))
-    output_dir = os.path.join(base_dir, "runs", args.dataset, "inverse")
+    output_dir = os.path.join(base_dir, "runs", args.dataset)
 
     print("=" * 80)
     print("INVERSE MODEL EVALUATION")
@@ -566,7 +736,7 @@ def main():
     print(f"Seeds:        {args.seeds}")
     print(f"Batch Size:   {args.batch_size}")
     print(f"Device:       {args.device}")
-    print(f"Output Dir:   {output_dir}")
+    print(f"Reports Dir:  {output_dir}")
     print("=" * 80)
 
     torch_device = torch.device(args.device)
@@ -627,6 +797,8 @@ def main():
     print("\nSaving summaries...")
     save_csv_results(all_results, output_dir)
     save_text_summary(all_results, output_dir)
+    save_per_model_reports(all_results, output_dir)
+    save_consolidated_summary(all_results, base_dir, args.dataset)
 
     print("\n" + "=" * 80)
     print("EVALUATION COMPLETE")

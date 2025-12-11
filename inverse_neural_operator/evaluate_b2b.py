@@ -2,8 +2,7 @@
 Evaluate B2B models (function encoders and forward models) across multiple seeds.
 
 This script loads all trained function encoders and forward B2B models from multiple
-seed directories, computes test errors, extracts TensorBoard training curves, and
-generates comprehensive statistics and visualizations.
+seed directories, computes test errors, and generates comprehensive CSV/TXT reports.
 
 Usage:
     python inverse_neural_operator/evaluate_b2b.py \
@@ -19,9 +18,7 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 from tabulate import tabulate
-import matplotlib.pyplot as plt
 from collections import defaultdict
-import warnings
 import math
 
 from data.load_dataset import load_dataset
@@ -29,15 +26,7 @@ from b2b.load_model import load_function_encoders, load_forward_model
 from data.process_data import InputFunctionEncoderDataset, OutputFunctionEncoderDataset
 from b2b.function_encoder import evaluate as evaluate_function_encoder
 from config.paths import resolve_base_dir
-
-# Try to import tensorboard for reading event files
-try:
-    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-
-    TENSORBOARD_AVAILABLE = True
-except ImportError:
-    TENSORBOARD_AVAILABLE = False
-    warnings.warn("TensorBoard not available. Loss curves will not be extracted.")
+from report_utils import build_summary_rows
 
 
 def evaluate_function_encoders(
@@ -110,7 +99,10 @@ def evaluate_function_encoders(
         num_workers=0,
     )
 
-    results = {"input": {}, "output": {}}
+    results = {
+        "input": {"rel_l2": {}, "mse": {}},
+        "output": {"rel_l2": {}, "mse": {}},
+    }
 
     for seed in seeds:
         seed_model_dir = os.path.join(model_base_dir, "shared", f"seed_{seed}")
@@ -146,13 +138,15 @@ def evaluate_function_encoders(
                 device=device,
             )
 
-            # Evaluate encoders on full test set with global relative L2 errors
+            # Evaluate encoders on full test set with global relative L2 + MSE
             input_encoder.eval()
             output_encoder.eval()
             total_input_sq_error = 0.0
             total_input_sq_target = 0.0
+            total_input_elements = 0
             total_output_sq_error = 0.0
             total_output_sq_target = 0.0
+            total_output_elements = 0
 
             with torch.no_grad():
                 for batch in input_test_dataloader:
@@ -167,6 +161,7 @@ def evaluate_function_encoders(
                     )
                     total_input_sq_error += torch.sum((u_pred - ys) ** 2).item()
                     total_input_sq_target += torch.sum(ys**2).item()
+                    total_input_elements += ys.numel()
 
                 for batch in output_test_dataloader:
                     example_xs, example_ys, xs, ys = batch
@@ -180,10 +175,16 @@ def evaluate_function_encoders(
                     )
                     total_output_sq_error += torch.sum((s_pred - ys) ** 2).item()
                     total_output_sq_target += torch.sum(ys**2).item()
+                    total_output_elements += ys.numel()
 
             input_l2_error = (
                 math.sqrt(total_input_sq_error / total_input_sq_target)
                 if total_input_sq_target > 0
+                else float("nan")
+            )
+            input_mse = (
+                total_input_sq_error / total_input_elements
+                if total_input_elements > 0
                 else float("nan")
             )
             output_l2_error = (
@@ -191,11 +192,20 @@ def evaluate_function_encoders(
                 if total_output_sq_target > 0
                 else float("nan")
             )
+            output_mse = (
+                total_output_sq_error / total_output_elements
+                if total_output_elements > 0
+                else float("nan")
+            )
 
-            results["input"][seed] = input_l2_error
-            print(f"    Input Encoder Test Relative L2 Error: {input_l2_error:.6e}")
-            results["output"][seed] = output_l2_error
-            print(f"    Output Encoder Test Relative L2 Error: {output_l2_error:.6e}")
+            results["input"]["rel_l2"][seed] = input_l2_error
+            results["input"]["mse"][seed] = input_mse
+            print(f"    Input Encoder Relative L2: {input_l2_error:.6e}")
+            print(f"    Input Encoder MSE:        {input_mse:.6e}")
+            results["output"]["rel_l2"][seed] = output_l2_error
+            results["output"]["mse"][seed] = output_mse
+            print(f"    Output Encoder Relative L2: {output_l2_error:.6e}")
+            print(f"    Output Encoder MSE:        {output_mse:.6e}")
 
         except Exception as e:
             print(f"  ✗ Error evaluating seed {seed}: {e}")
@@ -263,7 +273,10 @@ def evaluate_forward_models(
         num_workers=0,
     )
 
-    results = defaultdict(dict)
+    def _new_metric_dict():
+        return {"rel_l2": {}, "mse": {}}
+
+    results = defaultdict(_new_metric_dict)
 
     for model_name in forward_models:
         print(f"\n  Model: {model_name}")
@@ -307,6 +320,7 @@ def evaluate_forward_models(
                 output_encoder.eval()
                 total_sq_error = 0.0
                 total_sq_target = 0.0
+                total_elements = 0
 
                 with torch.no_grad():
                     for batch in test_dataloader:
@@ -323,108 +337,25 @@ def evaluate_forward_models(
                         s_pred = output_encoder(Y, beta_pred)
                         total_sq_error += torch.sum((s_pred - s) ** 2).item()
                         total_sq_target += torch.sum(s**2).item()
+                        total_elements += s.numel()
 
                 if total_sq_target > 0:
                     test_l2_error = math.sqrt(total_sq_error / total_sq_target)
                 else:
                     test_l2_error = float("nan")
-                results[model_name][seed] = test_l2_error
+                test_mse = (
+                    total_sq_error / total_elements
+                    if total_elements > 0
+                    else float("nan")
+                )
+                results[model_name]["rel_l2"][seed] = test_l2_error
+                results[model_name]["mse"][seed] = test_mse
                 print(f"      Test Relative L2 Error: {test_l2_error:.6e}")
+                print(f"      Test MSE:             {test_mse:.6e}")
 
             except Exception as e:
                 print(f"    ✗ Error evaluating seed {seed}: {e}")
                 continue
-
-    return dict(results)
-
-
-def extract_tensorboard_data(log_base_dir, seeds, model_types):
-    """
-    Extract training curves from TensorBoard event files.
-
-    Args:
-        log_base_dir: Base directory containing seed subdirectories
-        seeds: List of seed numbers to process
-        model_types: List of model types to extract (e.g., ['input_function_encoder', 'output_function_encoder'])
-
-    Returns:
-        dict: {
-            model_type: {
-                seed: {
-                    'train': [(step, value), ...],
-                    'test': [(step, value), ...]
-                }
-            }
-        }
-    """
-    if not TENSORBOARD_AVAILABLE:
-        return {}
-
-    print("\n" + "=" * 80)
-    print("Extracting TensorBoard Data")
-    print("=" * 80)
-
-    results = defaultdict(lambda: defaultdict(dict))
-
-    for seed in seeds:
-        seed_log_dir = os.path.join(log_base_dir, "shared", f"seed_{seed}")
-
-        if not os.path.exists(seed_log_dir):
-            print(f"  ⚠ Skipping seed {seed}: directory not found")
-            continue
-
-        print(f"  → Processing seed {seed}...")
-
-        total_events_found = 0
-
-        for model_type in model_types:
-            try:
-                # Look for subdirectories with train and test logs
-                # Pattern: loss_train_{model_type}/ and loss_test_{model_type}/
-                train_dir = os.path.join(seed_log_dir, f"loss_train_{model_type}")
-                test_dir = os.path.join(seed_log_dir, f"loss_test_{model_type}")
-
-                # Extract train data
-                if os.path.exists(train_dir):
-                    try:
-                        event_acc = EventAccumulator(train_dir)
-                        event_acc.Reload()
-                        available_tags = event_acc.Tags().get("scalars", [])
-
-                        # The tag is usually just the model name or a simple key
-                        for tag in available_tags:
-                            train_events = event_acc.Scalars(tag)
-                            results[model_type][seed]["train"] = [
-                                (e.step, e.value) for e in train_events
-                            ]
-                            total_events_found += len(train_events)
-                            break  # Usually just one tag per directory
-                    except Exception as e:
-                        print(f"    ⚠ Could not read train data for {model_type}: {e}")
-
-                # Extract test data
-                if os.path.exists(test_dir):
-                    try:
-                        event_acc = EventAccumulator(test_dir)
-                        event_acc.Reload()
-                        available_tags = event_acc.Tags().get("scalars", [])
-
-                        # The tag is usually just the model name or a simple key
-                        for tag in available_tags:
-                            test_events = event_acc.Scalars(tag)
-                            results[model_type][seed]["test"] = [
-                                (e.step, e.value) for e in test_events
-                            ]
-                            total_events_found += len(test_events)
-                            break  # Usually just one tag per directory
-                    except Exception as e:
-                        print(f"    ⚠ Could not read test data for {model_type}: {e}")
-
-            except Exception as e:
-                print(f"    ✗ Error processing {model_type}: {e}")
-                continue
-
-        print(f"    ✓ Extracted {total_events_found} scalar values")
 
     return dict(results)
 
@@ -452,6 +383,12 @@ def compute_statistics(results_dict):
     }
 
 
+METRIC_LABELS = {
+    "rel_l2": "Relative L2 Error",
+    "mse": "Mean Squared Error",
+}
+
+
 def print_results_tables(function_encoder_results, forward_model_results):
     """
     Print evaluation results in formatted tables.
@@ -464,65 +401,19 @@ def print_results_tables(function_encoder_results, forward_model_results):
     print("EVALUATION RESULTS")
     print("=" * 80)
 
-    # Input Function Encoder Table
-    if function_encoder_results["input"]:
-        print("\n--- Input Function Encoder ---")
-        table_data = []
-        for seed in sorted(function_encoder_results["input"].keys()):
-            loss = function_encoder_results["input"][seed]
-            table_data.append([seed, f"{loss:.6e}"])
-
-        # Add statistics
-        stats = compute_statistics(function_encoder_results["input"])
-        table_data.append(["---", "---"])
-        table_data.append(["Mean", f"{stats['mean']:.6e}"])
-        table_data.append(["Median", f"{stats['median']:.6e}"])
-        table_data.append(["Std", f"{stats['std']:.6e}"])
-        table_data.append(["Min", f"{stats['min']:.6e}"])
-        table_data.append(["Max", f"{stats['max']:.6e}"])
-
-        print(
-            tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid")
-        )
-    else:
-        print("\n--- Input Function Encoder ---")
-        print("  No results available")
-
-    # Output Function Encoder Table
-    if function_encoder_results["output"]:
-        print("\n--- Output Function Encoder ---")
-        table_data = []
-        for seed in sorted(function_encoder_results["output"].keys()):
-            loss = function_encoder_results["output"][seed]
-            table_data.append([seed, f"{loss:.6e}"])
-
-        # Add statistics
-        stats = compute_statistics(function_encoder_results["output"])
-        table_data.append(["---", "---"])
-        table_data.append(["Mean", f"{stats['mean']:.6e}"])
-        table_data.append(["Median", f"{stats['median']:.6e}"])
-        table_data.append(["Std", f"{stats['std']:.6e}"])
-        table_data.append(["Min", f"{stats['min']:.6e}"])
-        table_data.append(["Max", f"{stats['max']:.6e}"])
-
-        print(
-            tabulate(table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid")
-        )
-    else:
-        print("\n--- Output Function Encoder ---")
-        print("  No results available")
-
-    # Forward Model Tables
-    for model_name in sorted(forward_model_results.keys()):
-        if forward_model_results[model_name]:
-            print(f"\n--- Forward Model: {model_name} ---")
+    def _print_component(component_name, metrics_dict):
+        has_data = False
+        for metric_key, metric_label in METRIC_LABELS.items():
+            values = metrics_dict.get(metric_key, {})
+            if not values:
+                continue
+            has_data = True
             table_data = []
-            for seed in sorted(forward_model_results[model_name].keys()):
-                loss = forward_model_results[model_name][seed]
+            for seed in sorted(values.keys()):
+                loss = values[seed]
                 table_data.append([seed, f"{loss:.6e}"])
 
-            # Add statistics
-            stats = compute_statistics(forward_model_results[model_name])
+            stats = compute_statistics(values)
             table_data.append(["---", "---"])
             table_data.append(["Mean", f"{stats['mean']:.6e}"])
             table_data.append(["Median", f"{stats['median']:.6e}"])
@@ -530,140 +421,22 @@ def print_results_tables(function_encoder_results, forward_model_results):
             table_data.append(["Min", f"{stats['min']:.6e}"])
             table_data.append(["Max", f"{stats['max']:.6e}"])
 
-            print(
-                tabulate(
-                    table_data, headers=["Seed", "Relative L2 Error"], tablefmt="grid"
-                )
-            )
-        else:
-            print(f"\n--- Forward Model: {model_name} ---")
+            print(f"\n--- {component_name} ({metric_label}) ---")
+            print(tabulate(table_data, headers=["Seed", metric_label], tablefmt="grid"))
+
+        if not has_data:
+            print(f"\n--- {component_name} ---")
             print("  No results available")
 
-    print("\n" + "=" * 80)
+    _print_component("Input Function Encoder", function_encoder_results["input"])
+    _print_component("Output Function Encoder", function_encoder_results["output"])
 
-
-def generate_plots(
-    function_encoder_results, forward_model_results, tensorboard_data, output_dir
-):
-    """
-    Generate visualization plots for evaluation results.
-
-    Args:
-        function_encoder_results: Results from evaluate_function_encoders
-        forward_model_results: Results from evaluate_forward_models
-        tensorboard_data: TensorBoard time series data
-        output_dir: Directory to save plots
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    print("\n" + "=" * 80)
-    print("Generating Plots")
-    print("=" * 80)
-
-    if not tensorboard_data:
-        print("  ⚠ No TensorBoard data available for plotting")
-        return
-
-    # Group models for combined plots (excluding b2b_linear)
-    model_groups = {
-        "Function Encoders": ["input_function_encoder", "output_function_encoder"],
-        "Forward Model": ["b2b_nonlinear"],
-    }
-
-    for group_name, model_types in model_groups.items():
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-        colors = plt.cm.tab10(np.linspace(0, 1, len(model_types)))
-
-        any_data_plotted = False
-
-        for idx, model_type in enumerate(model_types):
-            if model_type not in tensorboard_data:
-                continue
-
-            seed_data = tensorboard_data[model_type]
-            if not seed_data:
-                continue
-
-            # Extract test loss data from all seeds
-            test_data_by_step = defaultdict(list)
-            for data in seed_data.values():
-                if "test" not in data or not data["test"]:
-                    continue
-                for step, value in data["test"]:
-                    test_data_by_step[step].append(value)
-
-            if not test_data_by_step:
-                continue
-
-            # Compute median and std across seeds for each step
-            steps = sorted(test_data_by_step.keys())
-            medians = []
-            stds = []
-            for s in steps:
-                values = test_data_by_step[s]
-                if len(values) > 0:
-                    medians.append(np.median(values))
-                    stds.append(np.std(values))
-                else:
-                    medians.append(np.nan)
-                    stds.append(np.nan)
-
-            medians_array = np.array(medians)
-            stds_array = np.array(stds)
-
-            # Plot median line
-            label = model_type.replace("_", " ").title()
-            ax.plot(
-                steps,
-                medians_array,
-                label=label,
-                color=colors[idx],
-                linewidth=2.5,
-                alpha=0.9,
-                zorder=10,
-            )
-
-            # Plot std as shaded region (use log space for better visibility)
-            # Convert to log space, add/subtract std, then convert back
-            log_medians = np.log10(
-                medians_array + 1e-12
-            )  # Add small epsilon to avoid log(0)
-            log_stds = stds_array / (medians_array * np.log(10) + 1e-12)
-
-            upper = 10 ** (log_medians + log_stds)
-            lower = 10 ** (log_medians - log_stds)
-
-            ax.fill_between(
-                steps, lower, upper, color=colors[idx], alpha=0.25, zorder=5
-            )
-
-            any_data_plotted = True
-
-        if not any_data_plotted:
-            plt.close()
-            print(f"  ⚠ Skipping {group_name}: No data available")
-            continue
-
-        ax.set_xlabel("Step", fontsize=12)
-        ax.set_ylabel("Test Loss", fontsize=12)
-        ax.set_title(
-            f"{group_name}\nTest Loss (Median ± Std across seeds)",
-            fontsize=13,
-            fontweight="bold",
+    for model_name in sorted(forward_model_results.keys()):
+        _print_component(
+            f"Forward Model: {model_name}", forward_model_results[model_name]
         )
-        ax.set_yscale("log")
-        ax.grid(True, alpha=0.3, linewidth=0.5)
-        ax.legend(fontsize=10, loc="best", framealpha=0.9)
 
-        plt.tight_layout()
-        filename = group_name.lower().replace(" ", "_") + "_test_loss.png"
-        plot_path = os.path.join(output_dir, filename)
-        plt.savefig(plot_path, dpi=150, bbox_inches="tight")
-        plt.close()
-        print(f"  ✓ Saved: {plot_path}")
-
-    print("=" * 80)
+    print("\n" + "=" * 80)
 
 
 def save_csv_results(function_encoder_results, forward_model_results, output_dir):
@@ -683,65 +456,137 @@ def save_csv_results(function_encoder_results, forward_model_results, output_dir
     print("Saving CSV Results")
     print("=" * 80)
 
-    # Input encoder CSV
-    if function_encoder_results["input"]:
-        csv_path = os.path.join(output_dir, "input_encoder_results.csv")
+    metric_order = list(METRIC_LABELS.keys())
+    stat_fields = [
+        ("Mean", "mean"),
+        ("Median", "median"),
+        ("Std", "std"),
+        ("Min", "min"),
+        ("Max", "max"),
+    ]
+
+    def _has_values(metrics_dict):
+        return any(metrics_dict.get(key) for key in metric_order)
+
+    def _write_component_csv(csv_path, metrics_dict):
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Seed", "Relative L2 Error"])
-            for seed in sorted(function_encoder_results["input"].keys()):
-                writer.writerow([seed, function_encoder_results["input"][seed]])
+            header = ["Seed"] + [METRIC_LABELS[key] for key in metric_order]
+            writer.writerow(header)
 
-            stats = compute_statistics(function_encoder_results["input"])
+            seeds = set()
+            for key in metric_order:
+                seeds.update(metrics_dict.get(key, {}).keys())
+            for seed in sorted(seeds):
+                row = [seed]
+                for key in metric_order:
+                    value = metrics_dict.get(key, {}).get(seed)
+                    row.append("" if value is None else value)
+                writer.writerow(row)
+
             writer.writerow([])
-            writer.writerow(["Statistic", "Value"])
-            writer.writerow(["Mean", stats["mean"]])
-            writer.writerow(["Median", stats["median"]])
-            writer.writerow(["Std", stats["std"]])
-            writer.writerow(["Min", stats["min"]])
-            writer.writerow(["Max", stats["max"]])
+            writer.writerow(
+                ["Statistic"] + [METRIC_LABELS[key] for key in metric_order]
+            )
+
+            metric_stats = {
+                key: compute_statistics(metrics_dict.get(key, {}))
+                for key in metric_order
+            }
+            for label, field in stat_fields:
+                row = [label]
+                for key in metric_order:
+                    row.append(metric_stats[key][field])
+                writer.writerow(row)
+
+    # Input encoder CSV
+    if _has_values(function_encoder_results["input"]):
+        csv_path = os.path.join(output_dir, "input_encoder_results.csv")
+        _write_component_csv(csv_path, function_encoder_results["input"])
         print(f"  ✓ Saved: {csv_path}")
 
     # Output encoder CSV
-    if function_encoder_results["output"]:
+    if _has_values(function_encoder_results["output"]):
         csv_path = os.path.join(output_dir, "output_encoder_results.csv")
-        with open(csv_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Seed", "Relative L2 Error"])
-            for seed in sorted(function_encoder_results["output"].keys()):
-                writer.writerow([seed, function_encoder_results["output"][seed]])
-
-            stats = compute_statistics(function_encoder_results["output"])
-            writer.writerow([])
-            writer.writerow(["Statistic", "Value"])
-            writer.writerow(["Mean", stats["mean"]])
-            writer.writerow(["Median", stats["median"]])
-            writer.writerow(["Std", stats["std"]])
-            writer.writerow(["Min", stats["min"]])
-            writer.writerow(["Max", stats["max"]])
+        _write_component_csv(csv_path, function_encoder_results["output"])
         print(f"  ✓ Saved: {csv_path}")
 
     # Forward model CSVs
     for model_name in sorted(forward_model_results.keys()):
-        if forward_model_results[model_name]:
-            csv_path = os.path.join(output_dir, f"{model_name}_results.csv")
-            with open(csv_path, "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["Seed", "Relative L2 Error"])
-                for seed in sorted(forward_model_results[model_name].keys()):
-                    writer.writerow([seed, forward_model_results[model_name][seed]])
-
-                stats = compute_statistics(forward_model_results[model_name])
-                writer.writerow([])
-                writer.writerow(["Statistic", "Value"])
-                writer.writerow(["Mean", stats["mean"]])
-                writer.writerow(["Median", stats["median"]])
-                writer.writerow(["Std", stats["std"]])
-                writer.writerow(["Min", stats["min"]])
-                writer.writerow(["Max", stats["max"]])
-            print(f"  ✓ Saved: {csv_path}")
+        metrics_dict = forward_model_results[model_name]
+        if not _has_values(metrics_dict):
+            continue
+        csv_path = os.path.join(output_dir, f"{model_name}_results.csv")
+        _write_component_csv(csv_path, metrics_dict)
+        print(f"  ✓ Saved: {csv_path}")
 
     print("=" * 80)
+
+
+def collect_component_statistics(function_encoder_results, forward_model_results):
+    """Aggregate statistics across all evaluated components."""
+    stats = {}
+
+    def _add_component_stats(component_name, metrics_dict):
+        for metric_key, metric_label in METRIC_LABELS.items():
+            values = metrics_dict.get(metric_key, {})
+            if not values:
+                continue
+            stats[f"{component_name} ({metric_label})"] = compute_statistics(values)
+
+    _add_component_stats("Input Function Encoder", function_encoder_results["input"])
+    _add_component_stats("Output Function Encoder", function_encoder_results["output"])
+
+    for model_name, model_results in forward_model_results.items():
+        _add_component_stats(f"Forward Model: {model_name}", model_results)
+
+    return stats
+
+
+def save_summary_reports(component_stats, output_dir):
+    """
+    Persist aggregate statistics to human-readable TXT and machine-readable CSV files.
+    """
+    if not component_stats:
+        return
+
+    import csv
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    headers = [
+        "Component",
+        "Mean ± Std (Rel L2)",
+        "Median",
+        "Min",
+        "Max",
+    ]
+    rows = list(build_summary_rows(component_stats))
+
+    txt_path = os.path.join(output_dir, "b2b_evaluation_summary.txt")
+    table = tabulate(rows, headers=headers, tablefmt="github")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("B2B Evaluation Summary\n")
+        f.write(table + "\n")
+    print(f"  ✓ Saved summary: {txt_path}")
+
+    csv_path = os.path.join(output_dir, "b2b_evaluation_summary.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Component", "Mean", "Std", "Median", "Min", "Max"])
+        for component in sorted(component_stats.keys()):
+            stats = component_stats[component]
+            writer.writerow(
+                [
+                    component,
+                    stats.get("mean"),
+                    stats.get("std"),
+                    stats.get("median"),
+                    stats.get("min"),
+                    stats.get("max"),
+                ]
+            )
+    print(f"  ✓ Saved summary CSV: {csv_path}")
 
 
 def main():
@@ -793,11 +638,6 @@ def main():
         help="Device to keep dataset tensors on before loading batches (default: cpu)",
     )
     parser.add_argument(
-        "--no_plots",
-        action="store_true",
-        help="Skip generating plots",
-    )
-    parser.add_argument(
         "--no_csv",
         action="store_true",
         help="Skip saving CSV files",
@@ -808,7 +648,6 @@ def main():
     # Construct paths from base_dir or config
     base_dir = str(resolve_base_dir(args.base_dir))
     model_base_dir = os.path.join(base_dir, "models", args.dataset)
-    log_base_dir = os.path.join(base_dir, "runs", args.dataset)
     output_dir = os.path.join(base_dir, "runs", args.dataset, "shared")
 
     print("=" * 80)
@@ -849,26 +688,8 @@ def main():
         dataset_device=args.dataset_device,
     )
 
-    # Extract TensorBoard data
-    model_types = [
-        "input_function_encoder",
-        "output_function_encoder",
-    ] + args.forward_models
-    tensorboard_data = extract_tensorboard_data(
-        log_base_dir=log_base_dir, seeds=args.seeds, model_types=model_types
-    )
-
     # Print results tables
     print_results_tables(function_encoder_results, forward_model_results)
-
-    # Generate plots
-    if not args.no_plots:
-        generate_plots(
-            function_encoder_results=function_encoder_results,
-            forward_model_results=forward_model_results,
-            tensorboard_data=tensorboard_data,
-            output_dir=output_dir,
-        )
 
     # Save CSV results
     if not args.no_csv:
@@ -877,6 +698,11 @@ def main():
             forward_model_results=forward_model_results,
             output_dir=output_dir,
         )
+
+    component_stats = collect_component_statistics(
+        function_encoder_results, forward_model_results
+    )
+    save_summary_reports(component_stats, output_dir)
 
     print("\n" + "=" * 80)
     print("EVALUATION COMPLETE")

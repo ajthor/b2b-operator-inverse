@@ -25,7 +25,7 @@ import argparse
 import math
 import os
 from collections import defaultdict
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -33,8 +33,9 @@ from tabulate import tabulate
 from torch.utils.data import DataLoader
 
 from data.load_dataset import load_dataset
-from inverse_neural_operator.plots.utils.ifno_utils import load_ifno_model
+from plots.utils.ifno_utils import load_ifno_model
 from config.paths import resolve_base_dir
+from report_utils import build_summary_rows
 
 
 # Order in which metrics are reported (key, human readable label)
@@ -405,6 +406,18 @@ def compute_model_statistics(seed_results: Dict[int, Dict[str, float | None]]):
     return stats
 
 
+def collect_metric_statistics(
+    seed_metrics: Dict[int, Dict[str, float | None]],
+) -> Dict[str, Dict[str, float]]:
+    """Return ordered statistics keyed by human-readable metric labels."""
+    stats = compute_model_statistics(seed_metrics)
+    ordered: Dict[str, Dict[str, float]] = {}
+    for metric_key, label in METRIC_FIELDS:
+        if metric_key in stats:
+            ordered[label] = stats[metric_key]
+    return ordered
+
+
 def print_console_summary(seed_metrics: Dict[int, Dict[str, float | None]]):
     """Print a concise summary to stdout."""
     if not seed_metrics:
@@ -471,16 +484,20 @@ def save_csv_results(
                 row[key] = metrics.get(key)
             writer.writerow(row)
 
-    print(f"  ✓ Saved CSV summary to {csv_path}")
+    print(f"  ✓ Saved per-seed CSV to {csv_path}")
 
 
 def save_text_summary(
     seed_metrics: Dict[int, Dict[str, float | None]],
     output_dir: str,
+    metric_stats: Optional[Dict[str, Dict[str, float]]] = None,
 ):
     """Write a readable text summary with per-seed tables and aggregate stats."""
-    txt_path = os.path.join(output_dir, "evaluation_summary.txt")
+    txt_path = os.path.join(output_dir, "ifno_evaluation_summary.txt")
     os.makedirs(output_dir, exist_ok=True)
+
+    if metric_stats is None:
+        metric_stats = collect_metric_statistics(seed_metrics)
 
     lines: List[str] = []
     lines.append("iFNO Model Evaluation")
@@ -497,35 +514,51 @@ def save_text_summary(
             table_rows.append(row)
         lines.append(tabulate(table_rows, headers=headers, tablefmt="github"))
 
-        stats = compute_model_statistics(seed_metrics)
-        if stats:
-            stat_rows = []
-            for metric_key, label in METRIC_FIELDS:
-                if metric_key not in stats:
-                    continue
-                metric_stats = stats[metric_key]
-                stat_rows.append(
-                    [
-                        label,
-                        format_value(metric_stats["mean"]),
-                        format_value(metric_stats["median"]),
-                        format_value(metric_stats["std"]),
-                        format_value(metric_stats["min"]),
-                        format_value(metric_stats["max"]),
-                    ]
-                )
-            lines.append(
-                tabulate(
-                    stat_rows,
-                    headers=["Metric", "Mean", "Median", "Std", "Min", "Max"],
-                    tablefmt="github",
-                )
-            )
+    if metric_stats:
+        lines.append("")
+        lines.append("Aggregate Metrics")
+        summary_headers = [
+            "Metric",
+            "Mean ± Std (Rel L2)",
+            "Median",
+            "Min",
+            "Max",
+        ]
+        rows = list(build_summary_rows(metric_stats))
+        lines.append(tabulate(rows, headers=summary_headers, tablefmt="github"))
 
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines).rstrip() + "\n")
 
     print(f"  ✓ Saved TXT summary to {txt_path}")
+
+
+def save_summary_csv(
+    metric_stats: Dict[str, Dict[str, float]],
+    output_dir: str,
+):
+    """Persist aggregate statistics to CSV for spreadsheet imports."""
+    if not metric_stats:
+        return
+
+    import csv
+
+    csv_path = os.path.join(output_dir, "ifno_evaluation_summary.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Metric", "Mean", "Std", "Median", "Min", "Max"])
+        for metric, stats in metric_stats.items():
+            writer.writerow(
+                [
+                    metric,
+                    stats.get("mean"),
+                    stats.get("std"),
+                    stats.get("median"),
+                    stats.get("min"),
+                    stats.get("max"),
+                ]
+            )
+    print(f"  ✓ Saved summary CSV to {csv_path}")
 
 
 def parse_args():
@@ -646,7 +679,9 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     print("\nSaving summaries...")
     save_csv_results(seed_metrics, output_dir)
-    save_text_summary(seed_metrics, output_dir)
+    metric_stats = collect_metric_statistics(seed_metrics)
+    save_summary_csv(metric_stats, output_dir)
+    save_text_summary(seed_metrics, output_dir, metric_stats)
 
     print("\n" + "=" * 80)
     print("EVALUATION COMPLETE")

@@ -14,6 +14,7 @@ To run: cd /workspaces/b2b-operator-inverse && python -m inverse_neural_operator
 import argparse
 import os
 import random
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -221,8 +222,8 @@ def main():
     parser.add_argument(
         "--ifno_checkpoint",
         type=str,
-        default="logs_ifno/burgers_1d/seed_0/ifno_model.pth",
-        help="Path to trained IFNO weights (set to empty string to skip).",
+        default="",
+        help="Optional override for IFNO checkpoint path (otherwise auto-detected).",
     )
     args = parser.parse_args()
 
@@ -230,19 +231,37 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    log_dir = os.path.join(args.log_dir, "burgers_1d")
+    results_dir = os.path.abspath(args.results_dir)
+    dataset_name = "burgers_1d"
+    models_root = args.log_dir
+    log_dir = os.path.join(models_root, dataset_name)
+    if not os.path.exists(log_dir):
+        alt_root = os.path.join(models_root, "models")
+        alt_log_dir = os.path.join(alt_root, dataset_name)
+        if os.path.exists(alt_log_dir):
+            models_root = alt_root
+            log_dir = alt_log_dir
     if not os.path.exists(log_dir):
         print(f"ERROR: log directory not found: {log_dir}")
         raise SystemExit(1)
 
     params = find_params(log_dir, list(INVERSE_MODELS), args.seed)
+    cache_path = os.path.join(results_dir, "plot_cache.json")
+    cache_key = f"seed_{args.seed}"
+    cache_metadata = {"dataset": params.dataset, "seed": int(args.seed)}
+    normalized_root = os.path.normpath(models_root)
+    if os.path.basename(normalized_root) == "models":
+        models_base_dir = os.path.dirname(normalized_root)
+    else:
+        models_base_dir = models_root
     test_dataset, dataset_info = load_dataset(
         params.dataset, params, device, split="test", return_info=True
     )
+    repo_root = Path(__file__).resolve().parents[2]
 
     print("Loading models...")
     models_dict, input_enc, output_enc = load_all_models(
-        log_dir, dataset_info, INVERSE_MODELS, seed=args.seed, device=device
+        models_base_dir, params.dataset, INVERSE_MODELS, seed=args.seed, device=device
     )
 
     if not models_dict:
@@ -262,9 +281,35 @@ def main():
         max_models=MAX_MODELS,
         sample_index=args.sample_index,
         device=device,
+        cache_path=cache_path,
+        cache_metadata=cache_metadata,
+        cache_key=cache_key,
     )
 
-    ifno_checkpoint = args.ifno_checkpoint.strip() if args.ifno_checkpoint else ""
+    default_ifno_checkpoint = os.path.join(
+        models_base_dir,
+        "models",
+        params.dataset,
+        "ifno",
+        f"seed_{args.seed}",
+        "ifno_model.safetensors",
+    )
+    manual_ifno = args.ifno_checkpoint.strip() if args.ifno_checkpoint else ""
+    if manual_ifno:
+        manual_ifno = os.path.abspath(manual_ifno)
+        if not os.path.exists(manual_ifno):
+            raise SystemExit(
+                f"ERROR: IFNO checkpoint override not found: {manual_ifno}"
+            )
+        ifno_checkpoint = manual_ifno
+    else:
+        if os.path.exists(default_ifno_checkpoint):
+            ifno_checkpoint = default_ifno_checkpoint
+        else:
+            raise SystemExit(
+                f"ERROR: IFNO checkpoint not found: {default_ifno_checkpoint}\n"
+                "       Please train IFNO or provide --ifno_checkpoint."
+            )
     include_ifno = bool(ifno_checkpoint)
     if include_ifno and not os.path.exists(ifno_checkpoint):
         print(
@@ -310,9 +355,9 @@ def main():
         meta,
         forward_model,
         output_enc,
-        args.results_dir,
+        results_dir,
     )
-    print(f"SUCCESS: Created publication figure → {args.results_dir}")
+    print(f"SUCCESS: Created publication figure → {results_dir}")
 
 
 if __name__ == "__main__":

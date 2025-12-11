@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from safetensors.torch import load_file
 
-from inverse_neural_operator.models.ifno import create_model
+from models.ifno import create_model
 
 
 @dataclass
@@ -58,14 +58,29 @@ def load_ifno_model(
     if not checkpoint_path:
         raise ValueError("Missing IFNO checkpoint path.")
 
-    # Try safetensors format first, fall back to PyTorch
+    state_dict = None
+    load_errors = []
+
+    # IFNO checkpoints are saved with safetensors, but keep a torch.load fallback
     try:
         state_dict = load_file(checkpoint_path, device="cpu")
-    except Exception:
-        state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        # Handle checkpoint dict format
-        if isinstance(state_dict, dict) and "model_state_dict" in state_dict:
-            state_dict = state_dict["model_state_dict"]
+    except Exception as exc:
+        load_errors.append(f"safetensors load failed: {exc}")
+
+    if state_dict is None:
+        try:
+            state_dict = torch.load(
+                checkpoint_path, map_location="cpu", weights_only=False
+            )
+        except Exception as exc:
+            load_errors.append(f"torch.load failed: {exc}")
+
+    if state_dict is None:
+        raise RuntimeError(
+            f"Failed to load IFNO checkpoint at {checkpoint_path}.\n"
+            + "\n".join(load_errors)
+        )
+
     cfg = IFNOConfig().__dict__.copy()
     cfg.update(_infer_ifno_config_from_state_dict(state_dict))
 

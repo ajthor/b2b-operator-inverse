@@ -11,15 +11,15 @@ def get_model_module_path(model_name):
         model_name: Name of the model (e.g., "nonlinear", "deeponet")
 
     Returns:
-        str: Module path (e.g., "inverse_neural_operator.models.nonlinear",
-            "inverse_neural_operator.b2b.deeponet")
+        str: Module path (e.g., "models.nonlinear",
+            "b2b.deeponet")
     """
     # Handle special cases for b2b package models
     if model_name in ["b2b_nonlinear", "b2b_linear", "deeponet"]:
-        return f"inverse_neural_operator.b2b.{model_name}"
+        return f"b2b.{model_name}"
     else:
         # All other models follow models.{model_name} pattern
-        return f"inverse_neural_operator.models.{model_name}"
+        return f"models.{model_name}"
 
 
 def import_model_functions(model_name, *function_names):

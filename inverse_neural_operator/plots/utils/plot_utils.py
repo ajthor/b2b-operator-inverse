@@ -9,7 +9,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import torch
 
-from inverse_neural_operator.b2b.load_model import load_forward_model as load_b2b_forward_model
+from b2b.load_model import load_forward_model as load_b2b_forward_model
 
 
 # Display names for models
@@ -131,7 +131,9 @@ def load_forward_model(
     shared_log_dir = os.path.join(log_dir, "shared", f"seed_{seed}")
     try:
         forward_model = load_b2b_forward_model(
-            model_dir=shared_log_dir, forward_model_name=forward_model_name, device=device
+            model_dir=shared_log_dir,
+            forward_model_name=forward_model_name,
+            device=device,
         )
         forward_model.eval()
         print(f"  Loaded forward model: {forward_model_name}")
