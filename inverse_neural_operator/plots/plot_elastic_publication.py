@@ -387,6 +387,8 @@ def collect_elastic_predictions(
     }
 
     for model_name in models_to_plot:
+        if model_name == "ifno":
+            continue
         if model_name not in models_dict:
             print(f"  WARNING: {model_name} not in models_dict")
             continue
@@ -653,6 +655,12 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--sample_index", type=int, default=None)
     parser.add_argument(
+        "--ifno_checkpoint",
+        type=str,
+        default="",
+        help="Optional override for IFNO checkpoint path.",
+    )
+    parser.add_argument(
         "--num_random_plots",
         type=int,
         default=5,
@@ -673,6 +681,18 @@ def main():
     if not os.path.exists(log_dir):
         print(f"✗ Log directory not found: {log_dir}")
         exit(1)
+
+    normalized_log_dir = os.path.normpath(log_dir)
+    parts = normalized_log_dir.split(os.sep)
+    if "models" in parts:
+        models_idx = parts.index("models")
+        if normalized_log_dir.startswith(os.sep):
+            base_parts = [p for p in parts[1:models_idx]]
+            models_base_dir = os.path.join(os.sep, *base_parts) if base_parts else os.sep
+        else:
+            models_base_dir = os.path.join(*parts[:models_idx]) if models_idx > 0 else "."
+    else:
+        models_base_dir = os.path.dirname(normalized_log_dir)
 
     # Load dataset
     print("Loading dataset...")
@@ -715,18 +735,44 @@ def main():
         print(f"  {publication_display_name(name)}: {model_inverse_mse[name]:.6e}")
 
     # Load IFNO model
+    default_ifno_checkpoint = os.path.join(
+        models_base_dir,
+        "models",
+        dataset,
+        "ifno",
+        f"seed_{args.seed}",
+        "ifno_model.safetensors",
+    )
+    manual_ifno = args.ifno_checkpoint.strip()
+    if manual_ifno:
+        ifno_checkpoint = os.path.abspath(manual_ifno)
+        if not os.path.exists(ifno_checkpoint):
+            print(f"✗ IFNO checkpoint override not found: {ifno_checkpoint}")
+            exit(1)
+    else:
+        ifno_checkpoint = default_ifno_checkpoint
+
     print("\nLoading IFNO model...")
-    ifno_model = load_ifno_model(dataset_info, device=DEVICE)
+    if os.path.exists(ifno_checkpoint):
+        ifno_model = load_ifno_model(
+            dataset_info, device=DEVICE, ifno_path=ifno_checkpoint
+        )
+    else:
+        print(
+            f"  IFNO model not found at {ifno_checkpoint}. "
+            "Proceeding without IFNO visualizations."
+        )
+        ifno_model = None
     ifno_mse = None
 
-    # Evaluate models and select best performers (get top MAX_MODELS to have room for IFNO)
-    models_to_plot, sample_idx, per_model_losses = select_models_and_sample(
+    # Evaluate models and select best performers
+    b2b_models_to_plot, sample_idx, per_model_losses = select_models_and_sample(
         test_dataset,
         models_dict,
         input_enc,
         output_enc,
         forward_model,
-        max_models=MAX_MODELS,  # Get top MAX_MODELS models
+        max_models=MAX_MODELS,
         sample_index=args.sample_index,
         device=DEVICE,
         return_metrics=True,
@@ -737,9 +783,9 @@ def main():
         )
         for name, losses in per_model_losses.items()
     }
-    print("\nRe-simulation MSE summary:")
-    for name in sorted(resim_mse, key=resim_mse.get):
-        val = resim_mse[name]
+    print("\nRe-simulation MSE summary (B2B models):")
+    for name in sorted(b2b_models_to_plot, key=lambda n: resim_mse.get(n, float("inf"))):
+        val = resim_mse.get(name, float("inf"))
         display = "inf" if not np.isfinite(val) else f"{val:.6e}"
         print(f"  {publication_display_name(name)}: {display}")
 
@@ -780,21 +826,29 @@ def main():
     else:
         print("  IFNO model not available; skipping IFNO evaluation.")
 
-    models_with_errors = [
-        (name, resim_mse.get(name, float("inf"))) for name in resim_mse.keys()
-    ]
-    if ifno_mse is not None:
-        models_with_errors.append(("ifno", ifno_mse))
-    models_with_errors.sort(key=lambda x: x[1])
-    ranking_title = (
-        f"\nTop {MAX_MODELS} models by re-simulation MSE (including IFNO):"
-        if ifno_mse is not None
-        else f"\nTop {MAX_MODELS} models by re-simulation MSE:"
-    )
-    print(ranking_title)
-    for name, error in models_with_errors[:MAX_MODELS]:
-        print(f"  {publication_display_name(name)}: {error:.6e}")
-    models_to_plot = [name for name, _ in models_with_errors[:MAX_MODELS]]
+    include_ifno = ifno_model is not None
+    if include_ifno and len(b2b_models_to_plot) >= MAX_MODELS:
+        dropped = b2b_models_to_plot[-1]
+        print(
+            f"\n  Reserving panel for IFNO: dropping lowest-ranked B2B model ({publication_display_name(dropped)})"
+        )
+        b2b_models_to_plot = b2b_models_to_plot[:-1]
+
+    final_model_order = list(b2b_models_to_plot)
+    if include_ifno:
+        final_model_order.append("ifno")
+
+    print("\nModels selected for visualization (display order):")
+    for name in final_model_order:
+        if name == "ifno":
+            if ifno_mse is not None:
+                print(f"  IFNO: {ifno_mse:.6e}")
+            else:
+                print("  IFNO: (visualization only)")
+        else:
+            val = resim_mse.get(name, float("inf"))
+            display = "inf" if not np.isfinite(val) else f"{val:.6e}"
+            print(f"  {publication_display_name(name)}: {display}")
 
     num_plots = max(1, args.num_random_plots)
     if args.sample_index is not None:
@@ -817,7 +871,7 @@ def main():
         print(f"\nCollecting predictions for sample {idx}...")
         predictions, meta = collect_elastic_predictions(
             test_dataset[idx],
-            models_to_plot,
+            final_model_order,
             models_dict,
             input_enc,
             output_enc,
@@ -828,7 +882,7 @@ def main():
         )
 
         print("Rendering figure...")
-        plot_comparison(idx, models_to_plot, predictions, meta, args.results_dir)
+        plot_comparison(idx, final_model_order, predictions, meta, args.results_dir)
 
     print(f"SUCCESS: Created publication figure(s) → {args.results_dir}")
 

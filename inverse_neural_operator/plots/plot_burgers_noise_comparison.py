@@ -1,14 +1,13 @@
 """
-Full Darcy measurement-noise evaluation pipeline with plotting.
+Full Burgers measurement-noise evaluation pipeline with plotting.
 
-For each trained model found in the logs, the script applies additive Gaussian
-noise to the observed measurements before passing them through the inverse
-model, computes relative L2 errors for the reconstructed fields and latent
-coefficients, saves per-model and aggregated metrics, and generates comparison
-plots.
+For each trained model found in the logs, the script injects additive Gaussian
+noise into the observed measurements before running the inverse model, records
+relative L2 errors for the reconstructed fields and latent coefficients, saves
+per-model metrics, and generates comparison plots.
 
 Example:
-    python -m inverse_neural_operator.plots.plot_darcy_noise_comparison
+    python -m inverse_neural_operator.plots.plot_burgers_noise_comparison
 """
 
 import argparse
@@ -33,15 +32,11 @@ for path in (PROJECT_ROOT, PACKAGE_ROOT):
 
 from data.load_dataset import load_dataset
 from models.load_model import load_models
-from plots.utils.plot_utils import (
-    display_name,
-    get_model_color,
-)
+from plots.utils.plot_utils import display_name, get_model_color
 
-
-DEFAULT_DATASET = "darcy_1d"
+DEFAULT_DATASET = "burgers_1d"
 DEFAULT_SEED = 1
-DEFAULT_NOISE_LEVELS = [0.0, 0.005, 0.01, 0.02, 0.04]
+DEFAULT_NOISE_LEVELS = [0.0, 0.02, 0.04, 0.06, 0.08, 0.1]
 DEFAULT_MODEL_NAME = "model"
 
 device = "cpu"
@@ -49,7 +44,7 @@ device = "cpu"
 
 @dataclass
 class NoiseStats:
-    """Accumulates relative L2 errors for measurement-noise sensitivity analysis."""
+    """Accumulates relative L2 errors under measurement noise."""
 
     inverse_rel_l2_sum: float = 0.0
     inverse_count: int = 0
@@ -262,13 +257,13 @@ def resolve_results_root(dataset_name: str, override: Optional[str]) -> Path:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Evaluate Darcy inverse models under measurement noise and save relative L2 metrics."
+        description="Evaluate Burgers inverse models under measurement noise and save relative L2 metrics."
     )
     parser.add_argument(
         "--log_dir",
         type=str,
         default=None,
-        help="Path to logs root (defaults to results/models/darcy_1d; accepts model/seed paths too)",
+        help="Path to logs root (defaults to results/models/burgers_1d; accepts model/seed paths too)",
     )
     parser.add_argument(
         "--results_dir",
@@ -280,7 +275,7 @@ def parse_args():
         "--noise_levels",
         type=float,
         nargs="*",
-        help="Noise std values applied to observed measurements (default: 0,0.005,0.01,0.02,0.04)",
+        help="Noise std values applied to observed measurements (default: 0,0.02,0.04,0.06,0.08,0.1)",
     )
     parser.add_argument(
         "--seed", type=int, default=DEFAULT_SEED, help="Random seed for reproducibility"
@@ -350,6 +345,7 @@ def main():
         except Exception as exc:
             print(f"✗ {model_name}: failed to load model ({exc}); skipping.")
             continue
+
         metrics = evaluate_measurement_noise(
             model=model,
             evaluate_fn=evaluate_fn,

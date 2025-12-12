@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -235,15 +236,27 @@ class VAE2D(nn.Module):
         self.latent_dim = latent_dim
         self.input_size = input_size  # (H, W) tuple
         self.in_channels = in_channels  # Store for decoder output
-        modules = []
+
         if hidden_dims is None:
             hidden_dims = [32, 64, 128, 256, 512]
 
+        encoder_layers = []
+        constructed_dims = []
+        current_channels = in_channels
+        current_h, current_w = input_size
+
         for h_dim in hidden_dims:
-            modules.append(
+            next_h = max(1, (current_h + 1) // 2)
+            next_w = max(1, (current_w + 1) // 2)
+
+            # Avoid collapsing very small grids to a single pixel
+            if min(next_h, next_w) < 2:
+                break
+
+            encoder_layers.append(
                 nn.Sequential(
                     nn.Conv2d(
-                        in_channels,
+                        current_channels,
                         out_channels=h_dim,
                         kernel_size=3,
                         stride=2,
@@ -252,12 +265,32 @@ class VAE2D(nn.Module):
                     nn.GELU(),
                 )
             )
-            in_channels = h_dim
+            constructed_dims.append(h_dim)
+            current_channels = h_dim
+            current_h, current_w = next_h, next_w
 
-        self.encoder = nn.Sequential(*modules)
+        if not encoder_layers:
+            # Fallback to a single stride-1 layer for extremely small grids
+            encoder_layers.append(
+                nn.Sequential(
+                    nn.Conv2d(
+                        in_channels,
+                        out_channels=hidden_dims[0],
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                    ),
+                    nn.GELU(),
+                )
+            )
+            constructed_dims.append(hidden_dims[0])
+            current_channels = hidden_dims[0]
 
-        # Cache encoder output channels before reversing hidden_dims
-        self.encoder_out_channels = hidden_dims[-1]
+        self.encoder_hidden_dims = constructed_dims
+        self.encoder = nn.Sequential(*encoder_layers)
+
+        # Cache encoder output channels before building decoder
+        self.encoder_out_channels = current_channels
 
         # Calculate actual flattened size after convolutions using a dummy forward pass
         with torch.no_grad():
@@ -270,16 +303,17 @@ class VAE2D(nn.Module):
         self.fc_mu = nn.Linear(self.encoded_size, latent_dim)
         self.fc_var = nn.Linear(self.encoded_size, latent_dim)
 
-        modules = []
+        decoder_layers = []
         self.decoder_input = nn.Linear(latent_dim, self.encoded_size)
-        hidden_dims.reverse()
+        decoder_dims = list(self.encoder_hidden_dims)
+        decoder_dims.reverse()
 
-        for i in range(len(hidden_dims) - 1):
-            modules.append(
+        for i in range(len(decoder_dims) - 1):
+            decoder_layers.append(
                 nn.Sequential(
                     nn.ConvTranspose2d(
-                        hidden_dims[i],
-                        hidden_dims[i + 1],
+                        decoder_dims[i],
+                        decoder_dims[i + 1],
                         kernel_size=3,
                         stride=2,
                         padding=1,
@@ -289,11 +323,12 @@ class VAE2D(nn.Module):
                 )
             )
 
-        self.decoder = nn.Sequential(*modules)
+        self.decoder = nn.Sequential(*decoder_layers)
+        final_channels = decoder_dims[-1] if decoder_dims else self.encoder_out_channels
         self.final_layer = nn.Sequential(
             nn.ConvTranspose2d(
-                hidden_dims[-1],
-                hidden_dims[-1],
+                final_channels,
+                final_channels,
                 kernel_size=3,
                 stride=2,
                 padding=1,
@@ -301,7 +336,7 @@ class VAE2D(nn.Module):
             ),
             nn.GELU(),
             nn.Conv2d(
-                hidden_dims[-1], out_channels=self.in_channels, kernel_size=3, padding=1
+                final_channels, out_channels=self.in_channels, kernel_size=3, padding=1
             ),
         )
 
@@ -521,7 +556,6 @@ class IFNO(nn.Module):
         self.modes1 = modes1
         self.modes2 = modes2
         self.width = width
-        self.padding = padding
         self.n_layers = n_layers
 
         # Dataset-adaptive parameters
@@ -554,6 +588,17 @@ class IFNO(nn.Module):
 
         # Spatial structure dimension (for operations, based on structure not coordinates)
         self.spatial_ndim = len(input_spatial_dims)
+
+        # Adaptive padding based on available resolution
+        min_spatial_dim = max(1, min(self.input_spatial_dims))
+        auto_padding = max(1, min_spatial_dim // 4)
+        max_valid_padding = max(1, min_spatial_dim - 2)
+        if padding is None:
+            desired_padding = auto_padding
+        else:
+            desired_padding = min(padding, max_valid_padding)
+        # Always prefer smaller padding on coarser grids
+        self.padding = max(1, min(desired_padding, auto_padding))
 
         print(f"iFNO Configuration:")
         print(f"  Input spatial dims: {self.input_spatial_dims}")
@@ -1160,6 +1205,18 @@ def create_model(
     Returns:
         IFNO instance
     """
+    def _clamp_modes(value, dim):
+        if dim is None or dim < 2:
+            return max(1, value)
+        return max(1, min(value, dim // 2))
+
+    spatial_dims = input_spatial_dims or ()
+    dim1 = spatial_dims[0] if len(spatial_dims) >= 1 else None
+    dim2 = spatial_dims[1] if len(spatial_dims) >= 2 else dim1
+
+    modes1 = _clamp_modes(modes1, dim1)
+    modes2 = _clamp_modes(modes2, dim2)
+
     return IFNO(
         modes1=modes1,
         modes2=modes2,
@@ -1424,6 +1481,9 @@ def train(
 
     Maintains compatibility with existing training framework
     """
+    vae_joint_weight = 0.1
+    kl_joint_weight = 0.01
+
     if lr_backward is None:
         lr_backward = lr_forward * 0.5
 
@@ -1468,7 +1528,7 @@ def train(
                 vae_optimizer.zero_grad()
                 loss = ifno_vae_loss(model, batch)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+                torch.nn.utils.clip_grad_norm_(model.vae_net.parameters(), max_norm=2.0)
                 vae_optimizer.step()
                 train_loss += loss.item()
 
@@ -1500,7 +1560,7 @@ def train(
                 ifno_optimizer.zero_grad()
                 forward_loss = ifno_forward_loss(model, batch)
                 forward_loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                torch.nn.utils.clip_grad_norm_(ifno_params, max_norm=5.0)
                 ifno_optimizer.step()
                 train_forward_loss += forward_loss.item()
 
@@ -1508,7 +1568,7 @@ def train(
                 ifno_optimizer.zero_grad()
                 backward_loss = ifno_backward_loss(model, batch)
                 backward_loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                torch.nn.utils.clip_grad_norm_(ifno_params, max_norm=5.0)
                 ifno_optimizer.step()
                 train_backward_loss += backward_loss.item()
 
@@ -1651,11 +1711,9 @@ def train(
                 grid_loss = 0.0
 
             # Combined backward loss (like provided implementation)
+            combined_vae_loss = vae_reconstruction_loss + kl_joint_weight * kl_loss
             backward_loss = (
-                inverse_reconstruction_loss
-                + vae_reconstruction_loss
-                + 0.01 * kl_loss
-                + grid_loss
+                inverse_reconstruction_loss + grid_loss + vae_joint_weight * combined_vae_loss
             )
             backward_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
@@ -1748,7 +1806,9 @@ def train(
                     grid_loss = 0.0
 
                 test_backward_loss += (
-                    inverse_reconstruction_loss + vae_reconstruction_loss + grid_loss
+                    inverse_reconstruction_loss
+                    + grid_loss
+                    + vae_joint_weight * vae_reconstruction_loss
                 ).item()
 
         avg_test_forward = test_forward_loss / len(test_dataloader)

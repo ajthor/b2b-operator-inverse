@@ -75,8 +75,8 @@ def load_all_models(
     """Load inverse models and shared encoders from a results directory.
 
     Args:
-        log_dir: Full path to dataset results (e.g., 'results/models/elastic_plate')
-        dataset_info: Dataset info dict from load_dataset() (used to extract dataset name)
+        log_dir: Base directory or dataset log directory containing trained models.
+        dataset_info: Dataset info or dataset name (used to locate models directory).
         model_names: Names of models to load
         seed: Random seed used during training
         device: Device to load models onto
@@ -86,29 +86,82 @@ def load_all_models(
         input_function_encoder: Shared input encoder
         output_function_encoder: Shared output encoder
     """
+
+    def _infer_dataset_name(dataset_info_obj, default_name):
+        if isinstance(dataset_info_obj, str):
+            return dataset_info_obj
+        if isinstance(dataset_info_obj, dict):
+            for key in ("dataset", "dataset_name", "name"):
+                if key in dataset_info_obj:
+                    return dataset_info_obj[key]
+        if hasattr(dataset_info_obj, "dataset"):
+            return getattr(dataset_info_obj, "dataset")
+        return default_name
+
+    def _resolve_dataset_dir(base_path, dataset_name):
+        normalized = os.path.abspath(base_path)
+        candidates: List[str] = []
+
+        if dataset_name:
+            # Prefer explicit models/<dataset> layout which matches training outputs.
+            candidates.append(os.path.join(normalized, "models", dataset_name))
+            # Handle case where log_dir already points to models/
+            if os.path.basename(normalized) == "models":
+                candidates.append(os.path.join(normalized, dataset_name))
+            # Handle case where log_dir already points to dataset dir.
+            if os.path.basename(normalized) == dataset_name:
+                parent = os.path.dirname(normalized)
+                candidates.append(normalized)
+                candidates.append(os.path.join(parent, "models", dataset_name))
+            # Next, allow base/dataset style
+            candidates.append(os.path.join(normalized, dataset_name))
+
+        # Finally, fall back to the base path as last resort.
+        candidates.append(normalized)
+
+        # Deduplicate while preserving order.
+        seen = set()
+        deduped = []
+        for path in candidates:
+            if path not in seen:
+                deduped.append(path)
+                seen.add(path)
+
+        for candidate in deduped:
+            if os.path.isdir(candidate):
+                return candidate
+
+        # Fall back to default models/<dataset> or normalized path even if they don't exist.
+        return os.path.join(normalized, "models", dataset_name) if dataset_name else normalized
+
+    def _derive_base_dir(dataset_dir):
+        parts = dataset_dir.rstrip(os.sep).split(os.sep)
+        if "models" in parts:
+            idx = parts.index("models")
+            return os.sep.join(parts[:idx]) if idx > 0 else "."
+        return os.path.dirname(dataset_dir)
+
     models_dict = {}
     input_function_encoder = None
     output_function_encoder = None
 
-    # Derive base_dir and dataset from log_dir
-    # log_dir is like "results/models/elastic_plate"
-    # base_dir should be "results", dataset should be "elastic_plate"
-    parts = log_dir.rstrip(os.sep).split(os.sep)
-    dataset = parts[-1]  # Last component is the dataset name
-    # Find "models" in path and get base_dir as everything before it
-    if "models" in parts:
-        models_idx = parts.index("models")
-        base_dir = os.sep.join(parts[:models_idx]) if models_idx > 0 else "."
-    else:
-        # Fallback: assume log_dir is base_dir/dataset format
-        base_dir = os.sep.join(parts[:-1]) if len(parts) > 1 else "."
+    normalized_log_dir = os.path.abspath(log_dir)
+    default_dataset = os.path.basename(normalized_log_dir.rstrip(os.sep))
+    dataset = _infer_dataset_name(dataset_info, default_dataset)
+    dataset_dir = _resolve_dataset_dir(normalized_log_dir, dataset)
+    base_dir = _derive_base_dir(dataset_dir)
+    print(f"  Model lookup: dataset='{dataset}', dataset_dir='{dataset_dir}', base_dir='{base_dir}'")
+
+    if not os.path.isdir(dataset_dir):
+        print(f"  Warning: Dataset directory not found at {dataset_dir}")
+        return models_dict, input_function_encoder, output_function_encoder
 
     for model_name in model_names:
-        model_dir = os.path.join(log_dir, model_name, f"seed_{seed}")
+        model_dir = os.path.join(dataset_dir, model_name, f"seed_{seed}")
         params_path = os.path.join(model_dir, "params.pth")
 
         if not os.path.exists(params_path):
-            print(f"  Skipping {model_name} - not found")
+            print(f"  Skipping {model_name} - not found (expected {params_path})")
             continue
 
         try:
