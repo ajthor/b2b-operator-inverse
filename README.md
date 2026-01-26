@@ -1,15 +1,172 @@
-## Results directory configuration
+# Inverse Neural Operator
 
-Training, evaluation, and plotting scripts write artifacts under a single base
-directory that follows this precedence:
+Inverse neural operator models and utilities for solving inverse problems.
 
-1. The `--base_dir` command-line option (when provided).
-2. The `B2B_RESULTS_DIR` environment variable.
-3. The fallback `./results` directory relative to the repository root.
+## System Requirements
 
-Python entry points and shell launchers all use this same order, so you can pick
-whichever mechanism best fits your workflow. For multi-user systems it is common
-to export `B2B_RESULTS_DIR=/store/<user>/b2b_operator_inverse` (or similar) and
-run the provided scripts without additional arguments. When experimenting
-locally, simply omit the environment variable and the project will write to
-`./results`.
+### Software Dependencies
+
+- Python >= 3.8
+- PyTorch >= 2.0
+- NumPy
+- SciPy
+- Matplotlib
+- datasets
+- safetensors
+- torch-tb-profiler
+- scikit-image
+- function-encoder (https://github.com/ajthor/function-encoder.git)
+
+### Operating Systems
+
+This software has been tested on:
+- Linux (various distributions)
+- macOS
+
+### Hardware Requirements
+
+- **GPU**: NVIDIA GPU with CUDA support is highly recommended for training and inference. The code can run on CPU but performance will be significantly reduced.
+- **Tested on**: NVIDIA RTX A5000
+- **Memory**: Sufficient RAM to load datasets (varies by dataset size)
+
+## Installation Guide
+
+### Using Dev Container (Recommended)
+
+This repository provides a dev container configuration for Docker:
+
+1. Install Docker on your system
+2. Install VS Code with the Dev Containers extension
+3. Open this repository in VS Code
+4. When prompted, click "Reopen in Container" or run the command "Dev Containers: Reopen in Container"
+
+The container will automatically set up the complete development environment.
+
+### Manual Installation
+
+Alternatively, install dependencies manually:
+
+```bash
+pip install -r requirements.txt
+```
+
+Or install as a package:
+
+```bash
+pip install -e .
+```
+
+**Note**: Installation time for dependencies varies (5-30 minutes) depending on your internet connection and whether PyTorch/CUDA components need to be downloaded.
+
+## Demo
+
+### Data Preparation
+
+Sample datasets can be downloaded from Hugging Face:
+- https://huggingface.co/ajthor/b2b-inverse-operator/tree/main
+
+Download the appropriate dataset(s) and place them in your configured data directory.
+
+### Running the Demo
+
+The demo workflow consists of three stages:
+
+1. **Training**: Train models using the `run_*.sh` scripts
+   ```bash
+   bash run_all.sh          # Train all models
+   bash run_ifno_all.sh     # Train IFNO models
+   ```
+
+2. **Evaluation**: Generate evaluation metrics and reports
+   ```bash
+   bash evaluate_b2b_all.sh      # Evaluate B2B models
+   bash evaluate_ifno_all.sh     # Evaluate IFNO models
+   bash evaluate_inverse_all.sh  # Evaluate inverse models
+   ```
+
+3. **Plotting**: Generate publication-quality plots
+   ```bash
+   bash plot_all.sh                 # Generate all plots
+   bash plot_all_publication.sh     # Generate publication plots
+   ```
+
+**Configuration**: Modify the environment variables and script parameters at the start of each bash script to select specific models and datasets to run.
+
+### Expected Output
+
+- Training scripts will save model checkpoints and training logs to the results directory
+- Evaluation scripts will generate performance metrics, tables, and numerical results
+- Plotting scripts will create visualization plots saved as image files
+
+### Expected Runtime
+
+- **Demo**: < 5 minutes (using pre-trained models and small dataset samples)
+- **Full training**: Several hours for most datasets on NVIDIA RTX A5000
+- **FWI dataset training**: Several days on NVIDIA RTX A5000
+
+## Instructions for Use
+
+### Results Directory Configuration
+
+Training, evaluation, and plotting scripts write artifacts under a single base directory that follows this precedence:
+
+1. The `--base_dir` command-line option (when provided)
+2. The `B2B_RESULTS_DIR` environment variable
+3. The fallback `./results` directory relative to the repository root
+
+For multi-user systems, it is common to export `B2B_RESULTS_DIR=/store/<user>/b2b_operator_inverse` (or similar) and run the provided scripts without additional arguments. When experimenting locally, simply omit the environment variable and the project will write to `./results`.
+
+### Running on Your Own Data
+
+1. Prepare your dataset in the appropriate format (see dataset documentation)
+2. Update the dataset paths in the training scripts
+3. Modify hyperparameters in the script headers as needed
+4. Run the training pipeline:
+   ```bash
+   bash run_*.sh
+   ```
+5. Evaluate and visualize results:
+   ```bash
+   bash evaluate_*.sh
+   bash plot_*.sh
+   ```
+
+### Available Training Scripts
+
+- `train_model.py` - Train main inverse operator model
+- `train_forward_model.py` - Train forward operator model
+- `train_function_encoder.py` - Train function encoder component
+- `train_ifno_standalone.py` - Train IFNO standalone model
+
+### Available Evaluation Scripts
+
+- `evaluate_models.py` - Evaluate all models
+- `evaluate_b2b.py` - Evaluate B2B models specifically
+- `evaluate_ifno.py` - Evaluate IFNO models specifically
+
+## Reproduction Instructions
+
+To reproduce the quantitative results presented in the manuscript:
+
+1. Download all datasets from the Hugging Face repository (link above)
+2. Run the complete training pipeline using the `run_*.sh` scripts
+3. Generate evaluation metrics using the `evaluate_*.sh` scripts:
+   - Tables and numerical data in the manuscript are generated by the `evaluate_*` scripts
+   - Results will be saved in the configured results directory
+4. Generate figures using the `plot_all_publication.sh` script
+
+The detailed functionality and pseudocode descriptions can be found in multiple sections of the manuscript (main text, methods section, and supplementary materials).
+
+## License
+
+This software is licensed under the MIT License - see the LICENSE file for details.
+
+## Citation
+
+If you use this software in your research, please cite our paper:
+
+[Citation information to be added upon publication]
+
+## Contact
+
+For questions or issues, please open an issue on the GitHub repository or contact the corresponding author(s).
