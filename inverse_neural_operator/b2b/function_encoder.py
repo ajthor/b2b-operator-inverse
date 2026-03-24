@@ -12,6 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from function_encoder.function_encoder import FunctionEncoder, least_squares
 from function_encoder.losses import basis_normalization_loss, residual_loss
+from function_encoder.model.activations import Sine, init_siren
 from function_encoder.model.tensor_layers import ParallelLinear
 
 
@@ -55,20 +56,42 @@ def create_model(
         FunctionEncoder instance
     """
     layer_sizes = [input_size] + list(hidden_sizes) + [output_size]
+    # layers = []
+    # for idx, (in_features, out_features) in enumerate(
+    #     zip(layer_sizes[:-1], layer_sizes[1:])
+    # ):
+    #     layers.append(
+    #         ParallelLinear(
+    #             num_tensors=n_basis,
+    #             in_features=in_features,
+    #             out_features=out_features,
+    #             bias=bias,
+    #         )
+    #     )
+    #     if idx < len(layer_sizes) - 2:
+    #         layers.append(copy.deepcopy(activation))
+    #
+    # basis_functions = torch.nn.Sequential(*layers)
+
+    omega_0 = 30.0
     layers = []
     for idx, (in_features, out_features) in enumerate(
         zip(layer_sizes[:-1], layer_sizes[1:])
     ):
         layers.append(
-            ParallelLinear(
-                num_tensors=n_basis,
-                in_features=in_features,
-                out_features=out_features,
-                bias=bias,
+            init_siren(
+                ParallelLinear(
+                    num_tensors=n_basis,
+                    in_features=in_features,
+                    out_features=out_features,
+                    bias=bias,
+                ),
+                layer_idx=idx,
+                omega_0=omega_0,
             )
         )
         if idx < len(layer_sizes) - 2:
-            layers.append(copy.deepcopy(activation))
+            layers.append(Sine(omega_0=omega_0))
 
     basis_functions = torch.nn.Sequential(*layers)
     basis_functions.num_heads = n_basis
