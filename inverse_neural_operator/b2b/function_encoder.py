@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 
 from function_encoder.function_encoder import FunctionEncoder, least_squares
-from function_encoder.losses import basis_normalization_loss, residual_loss
+from function_encoder.losses import basis_orthonormality_loss
 from function_encoder.model.activations import Sine, init_siren
 from function_encoder.model.tensor_layers import ParallelLinear
 
@@ -160,12 +160,7 @@ def loss_function(model, batch):
     y_pred = model(xs, coefficients)
 
     pred_loss = torch.nn.functional.mse_loss(y_pred, ys)
-
-    norm_loss = basis_normalization_loss(G)
-    # G = model.basis_functions(xs)
-    # K = model.inner_product(G, G)
-    # K = K + torch.eye(K.shape[1], device=K.device)
-    # norm_loss = ((torch.diagonal(K, dim1=-2, dim2=-1) - 1) ** 2).mean()
+    norm_loss = basis_orthonormality_loss(G, device=ys.device)
 
     return pred_loss + norm_loss
 
