@@ -1,17 +1,18 @@
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from torch.utils.data import Subset, DataLoader
-from safetensors.torch import save_file, load_file
+import copy
+import functools
+import os
 
-from function_encoder.model.mlp import MultiHeadedMLP, MLP
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import tqdm
+from safetensors.torch import save_file, load_file
+from torch.utils.data import DataLoader, Subset
+from torch.utils.tensorboard import SummaryWriter
+
 from function_encoder.function_encoder import FunctionEncoder, least_squares
 from function_encoder.losses import basis_normalization_loss, residual_loss
-import functools
-
-import tqdm
-import os
-from torch.utils.tensorboard import SummaryWriter
+from function_encoder.model.tensor_layers import ParallelLinear
 
 
 def memory_efficient_inner_product(f: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
@@ -35,6 +36,7 @@ def create_model(
     activation=torch.nn.ReLU(),
     inner_product=None,
     regularization=1e-3,
+    bias: bool = True,
 ):
     """
     Create a function encoder model.
@@ -44,20 +46,32 @@ def create_model(
         hidden_sizes: List of hidden layer sizes for the MLP
         output_size: Size of the output features
         n_basis: Number of basis functions
-        activation: Activation function to use in the MLP
+        activation: Activation function to use in the basis network
         inner_product: Custom inner product function (optional)
         regularization: Regularization parameter for least squares (default: 1e-4)
+        bias: Whether linear layers include a bias term.
 
     Returns:
         FunctionEncoder instance
     """
-    layer_sizes = [input_size] + hidden_sizes + [output_size]
+    layer_sizes = [input_size] + list(hidden_sizes) + [output_size]
+    layers = []
+    for idx, (in_features, out_features) in enumerate(
+        zip(layer_sizes[:-1], layer_sizes[1:])
+    ):
+        layers.append(
+            ParallelLinear(
+                num_tensors=n_basis,
+                in_features=in_features,
+                out_features=out_features,
+                bias=bias,
+            )
+        )
+        if idx < len(layer_sizes) - 2:
+            layers.append(copy.deepcopy(activation))
 
-    basis_functions = MultiHeadedMLP(
-        layer_sizes=layer_sizes,
-        num_heads=n_basis,
-        activation=activation,
-    )
+    basis_functions = torch.nn.Sequential(*layers)
+    basis_functions.num_heads = n_basis
 
     # Create a custom coefficients method with the desired regularization
     coefficients_method = functools.partial(

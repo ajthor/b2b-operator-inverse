@@ -14,7 +14,12 @@ dependencies = [
     "numpy",
     "torch",
     "matplotlib",
-    "scipy"
+    "scipy",
+    "function-encoder @ git+https://github.com/ajthor/function-encoder.git@v1.2.0",
+    "safetensors",
+    "datasets",
+    "torch-tb-profiler",
+    "scikit-image",
 ]
 
 [tool.setuptools.packages.find]

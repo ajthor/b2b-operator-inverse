@@ -1,5 +1,5 @@
 datasets
-git+https://github.com/ajthor/function-encoder.git
+git+https://github.com/ajthor/function-encoder.git@v1.2.0
 matplotlib
 numpy
 scipy
