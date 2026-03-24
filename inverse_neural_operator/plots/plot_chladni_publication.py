@@ -80,16 +80,16 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     ax_left.tick_params(
         labelcolor="none", top=False, bottom=False, left=False, right=False
     )
-    ax_left.set_xlabel(r"$x$", labelpad=-8)
-    ax_left.set_ylabel(r"$y$", labelpad=-8)
+    ax_left.set_xlabel(r"$x$", labelpad=2)
+    ax_left.set_ylabel(r"$y$", labelpad=-2)
     ax_left.set_title("Predicted Force Fields")
 
     ax_right = fig.add_subplot(gs[:, 4:7], frameon=False)
     ax_right.tick_params(
         labelcolor="none", top=False, bottom=False, left=False, right=False
     )
-    ax_right.set_xlabel(r"$x$", labelpad=-8)
-    ax_right.set_ylabel(r"$y$", labelpad=-8)
+    ax_right.set_xlabel(r"$x$", labelpad=2)
+    ax_right.set_ylabel(r"$y$", labelpad=-2)
     ax_right.set_title("Re-simulated Chladni Patterns")
 
     # Spacers
@@ -120,6 +120,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
     # Reshape to 2D for imshow
     grid_size = int(np.sqrt(len(u_true)))
+    tick_positions = [0, grid_size // 2, grid_size - 1]
     u_true_2d = u_true.reshape(grid_size, grid_size)
     s_true_2d = s_true.reshape(grid_size, grid_size)
 
@@ -153,8 +154,17 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
                 origin="lower",
                 aspect="equal",
             )
-            ax.set_xticks([])
-            ax.set_yticks([])
+            ax.set_xticks(tick_positions)
+            ax.set_yticks(tick_positions)
+            show_labels = i == 1 and j == 0
+            ax.tick_params(
+                bottom=True,
+                left=True,
+                top=False,
+                right=False,
+                labelbottom=show_labels,
+                labelleft=show_labels,
+            )
             ax.text(
                 0.05,
                 0.95,
@@ -199,8 +209,17 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
                 origin="lower",
                 aspect="equal",
             )
-            ax.set_xticks([])
-            ax.set_yticks([])
+            ax.set_xticks(tick_positions)
+            ax.set_yticks(tick_positions)
+            show_labels = i == 1 and j == 0
+            ax.tick_params(
+                bottom=True,
+                left=True,
+                top=False,
+                right=False,
+                labelbottom=show_labels,
+                labelleft=show_labels,
+            )
             ax.text(
                 0.05,
                 0.95,
@@ -294,6 +313,14 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
 def main():
     setup_publication_style(figsize=(6.5, 2.0))
+    mpl.rcParams.update(
+        {
+            "xtick.labelsize": 5,
+            "ytick.labelsize": 5,
+            "xtick.major.pad": 1.0,
+            "ytick.major.pad": 1.0,
+        }
+    )
 
     parser = argparse.ArgumentParser(
         description="Create publication-quality Chladni plots."

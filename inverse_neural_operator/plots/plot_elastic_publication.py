@@ -170,16 +170,16 @@ def _create_unified_figure():
     ax_left_parent.tick_params(
         labelcolor="none", top=False, bottom=False, left=False, right=False
     )
-    ax_left_parent.set_xlabel("Force Magnitude", labelpad=-8)
-    ax_left_parent.set_ylabel("Boundary Position (y)", labelpad=-8)
+    ax_left_parent.set_xlabel("Force Magnitude", labelpad=2)
+    ax_left_parent.set_ylabel("Boundary Position (y)", labelpad=2)
     ax_left_parent.set_title("Predicted Boundary Forces")
 
     ax_right_parent = fig.add_subplot(gs[:, 3:6], frameon=False)
     ax_right_parent.tick_params(
         labelcolor="none", top=False, bottom=False, left=False, right=False
     )
-    ax_right_parent.set_xlabel(r"$x$", labelpad=-8)
-    ax_right_parent.set_ylabel(r"$y$", labelpad=-8)
+    ax_right_parent.set_xlabel(r"$x$", labelpad=2)
+    ax_right_parent.set_ylabel(r"$y$", labelpad=2)
     ax_right_parent.set_title("Elastic Plate Re-simulated Displacement Fields")
 
     # Create subplot axes for left grid (force plots)
@@ -207,6 +207,7 @@ def _plot_force_curve(
     annotation=None,
     color="b",
     show_gt_overlay=True,
+    show_labels=False,
 ):
     """Plot a 1D forcing function along the boundary with optional ground truth overlay.
 
@@ -243,8 +244,17 @@ def _plot_force_curve(
     ax.set_ylim(force_y.min(), force_y.max())
     xlim = ax.get_xlim()
     ax.set_xticks(np.linspace(xlim[0], xlim[1], 4))
-    ax.set_yticks(np.linspace(force_y.min(), force_y.max(), 4))
-    ax.tick_params(labelbottom=False, labelleft=False, length=0, width=0.5)
+    ax.set_yticks([force_y.min(), force_y.max()])
+    if show_labels:
+        ax.set_yticklabels(["0", "1"])
+    ax.tick_params(
+        bottom=True,
+        left=True,
+        top=False,
+        right=False,
+        labelbottom=show_labels,
+        labelleft=show_labels,
+    )
     ax.grid(True, linestyle="-", linewidth=0.4, alpha=0.6)
     for spine in ax.spines.values():
         spine.set_visible(True)
@@ -266,7 +276,14 @@ def _plot_force_curve(
 
 
 def _plot_displacement_field(
-    ax, coords, displacement, cmap="jet", vmin=None, vmax=None, annotation=None
+    ax,
+    coords,
+    displacement,
+    cmap="jet",
+    vmin=None,
+    vmax=None,
+    annotation=None,
+    show_labels=False,
 ):
     """Plot a 2D displacement field with circular void masked."""
     # Create interpolation grid
@@ -278,10 +295,20 @@ def _plot_displacement_field(
 
     # Plot
     im = ax.contourf(Xi, Yi, Zi, levels=50, cmap=cmap, vmin=vmin, vmax=vmax)
-    ax.set_xlim(coords[:, 0].min(), coords[:, 0].max())
-    ax.set_ylim(coords[:, 1].min(), coords[:, 1].max())
-    ax.set_xticks([])
-    ax.set_yticks([])
+    xmin, xmax = coords[:, 0].min(), coords[:, 0].max()
+    ymin, ymax = coords[:, 1].min(), coords[:, 1].max()
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    ax.set_xticks(np.linspace(xmin, xmax, 3))
+    ax.set_yticks(np.linspace(ymin, ymax, 3))
+    ax.tick_params(
+        bottom=True,
+        left=True,
+        top=False,
+        right=False,
+        labelbottom=show_labels,
+        labelleft=show_labels,
+    )
 
     if annotation:
         ax.text(
@@ -583,6 +610,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     for idx, model_name in enumerate(models_to_plot[:MAX_FORCE_MODELS]):
         if model_name in processed_preds:
             u_data, s_mean = processed_preds[model_name]
+            show_labels = idx == 6
             _plot_force_curve(
                 axes_left[idx],
                 force_y,
@@ -590,6 +618,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
                 u_data,
                 annotation=publication_display_name(model_name),
                 color=get_model_color(model_name, idx),
+                show_labels=show_labels,
             )
         else:
             axes_left[idx].axis("off")
@@ -606,6 +635,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     for idx, model_name in enumerate(models_to_plot[:MAX_DISPLACEMENT_MODELS]):
         if model_name in processed_preds:
             u_data, s_mean = processed_preds[model_name]
+            show_labels = idx == 6
             im_right = _plot_displacement_field(
                 axes_right[idx],
                 y_2d,
@@ -613,6 +643,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
                 vmin=s_min,
                 vmax=s_max,
                 annotation=publication_display_name(model_name),
+                show_labels=show_labels,
             )
         else:
             axes_right[idx].axis("off")
@@ -646,6 +677,14 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
 def main():
     setup_publication_style(figsize=(6.5, 3.5))
+    plt.rcParams.update(
+        {
+            "xtick.labelsize": 5,
+            "ytick.labelsize": 5,
+            "xtick.major.pad": 1.0,
+            "ytick.major.pad": 1.0,
+        }
+    )
 
     parser = argparse.ArgumentParser(
         description="Create publication-quality Elastic Plate plots."

@@ -46,8 +46,8 @@ PROCS_PER_GPU=1
 LOCK_FILE=/tmp/gpu_lock_file_eval
 STATUS_DIR=/tmp/gpu_status_eval
 
-# DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d)
-DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d)
+# DATASETS=(burgers_1d darcy_1d elastic_plate wave_scattering fwi chladni_2d)
+DATASETS=(burgers_1d darcy_1d elastic_plate wave_scattering fwi chladni_2d)
 FORWARD_MODELS=(b2b_linear b2b_nonlinear)
 SEEDS=(1 2 3 4 5)
 

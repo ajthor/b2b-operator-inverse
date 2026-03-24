@@ -40,7 +40,7 @@ MODELS_TO_PLOT = [
     "conditional_realnvp",
 ]
 
-MODEL_CMAP = mpl.cm.get_cmap("tab10")
+MODEL_CMAP = mpl.colormaps["tab10"]
 
 
 def compute_sample_ssim_scores(
@@ -372,8 +372,16 @@ def main():
         description="Create publication-quality FWI plots."
     )
     parser.add_argument(
-        "--base_dir", type=str, default="/store/at46867/b2b_operator_inverse",
-        help="Base directory for models and results"
+        "--log_dir",
+        type=str,
+        default="/store/at46867/b2b_operator_inverse",
+        help="Base directory containing models/<dataset> checkpoints.",
+    )
+    parser.add_argument(
+        "--base_dir",
+        type=str,
+        default=None,
+        help="Deprecated alias for --log_dir (will be removed in future versions).",
     )
     parser.add_argument("--results_dir", type=str, default="results/fwi")
     parser.add_argument("--seed", type=int, default=1)
@@ -385,12 +393,30 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    base_dir = args.base_dir
-    model_dir = os.path.join(base_dir, "models", args.dataset)
-    log_dir = os.path.join(base_dir, "runs", args.dataset)
-    if not os.path.exists(model_dir):
-        print(f"ERROR: model directory not found: {model_dir}")
+    models_root = args.log_dir or "/store/at46867/b2b_operator_inverse"
+    if args.base_dir:
+        print("  Warning: --base_dir is deprecated; please switch to --log_dir.")
+        models_root = args.base_dir
+    models_root = os.path.abspath(models_root)
+    dataset_name = args.dataset
+    dataset_log_dir = os.path.join(models_root, dataset_name)
+    if not os.path.exists(dataset_log_dir):
+        alt_root = os.path.join(models_root, "models")
+        alt_log_dir = os.path.join(alt_root, dataset_name)
+        if os.path.exists(alt_log_dir):
+            models_root = alt_root
+            dataset_log_dir = alt_log_dir
+    if not os.path.exists(dataset_log_dir):
+        print(f"ERROR: model directory not found: {dataset_log_dir}")
         raise SystemExit(1)
+
+    normalized_root = os.path.normpath(models_root)
+    if os.path.basename(normalized_root) == "models":
+        models_base_dir = os.path.dirname(normalized_root)
+    else:
+        models_base_dir = models_root
+
+    results_dir = os.path.abspath(args.results_dir)
 
     # Load normalization statistics
     stats_path = os.path.join(os.path.dirname(__file__), "../data/fwi_stats.json")
@@ -400,7 +426,7 @@ def main():
         f"✓ Loaded normalization stats: velocity range [{stats['models_min']:.2f}, {stats['models_max']:.2f}]"
     )
 
-    params = find_params(model_dir, MODELS_TO_PLOT, args.seed)
+    params = find_params(dataset_log_dir, MODELS_TO_PLOT, args.seed)
     test_dataset, dataset_info = load_dataset(
         params.dataset, params, device, split="test", return_info=True
     )
@@ -408,7 +434,7 @@ def main():
 
     print("Loading models...")
     models_dict, input_enc, output_enc = load_all_models(
-        base_dir, args.dataset, MODELS_TO_PLOT, seed=args.seed, device=device
+        models_base_dir, params.dataset, MODELS_TO_PLOT, seed=args.seed, device=device
     )
 
     if not models_dict:
@@ -417,7 +443,10 @@ def main():
 
     # Load forward model for re-simulation
     forward_model = load_forward_model(
-        base_dir, args.dataset, args.seed, forward_model_name="b2b_nonlinear", device=device
+        dataset_log_dir,
+        args.seed,
+        forward_model_name="b2b_nonlinear",
+        device=device,
     )
 
     # Use the specified models (don't rank them)
@@ -459,9 +488,9 @@ def main():
         output_enc=output_enc,
         forward_model=forward_model,
         stats=stats,
-        save_dir=args.results_dir,
+        save_dir=results_dir,
     )
-    print(f"SUCCESS: Created publication figure → {args.results_dir}")
+    print(f"SUCCESS: Created publication figure → {results_dir}")
 
 
 if __name__ == "__main__":

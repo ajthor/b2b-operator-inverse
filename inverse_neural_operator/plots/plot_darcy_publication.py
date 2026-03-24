@@ -79,16 +79,16 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
     ax_left.tick_params(
         labelcolor="none", top=False, bottom=False, left=False, right=False
     )
-    ax_left.set_xlabel(r"$x$", labelpad=-8)
-    ax_left.set_ylabel(r"$f(x)$", labelpad=-8)
+    ax_left.set_xlabel(r"$x$", labelpad=2)
+    ax_left.set_ylabel(r"$f(x)$", labelpad=2)
     ax_left.set_title("Darcy Input Reconstructions")
 
     ax_right = fig.add_subplot(gs[:, 5:9], frameon=False)
     ax_right.tick_params(
         labelcolor="none", top=False, bottom=False, left=False, right=False
     )
-    ax_right.set_xlabel(r"$y$", labelpad=-8)
-    ax_right.set_ylabel(r"$s(y)$", labelpad=-8)
+    ax_right.set_xlabel(r"$y$", labelpad=2)
+    ax_right.set_ylabel(r"$h(y)$", labelpad=2)
     ax_right.set_title("Darcy Output Re-Simulations")
 
     # Spacers
@@ -139,7 +139,15 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
         ax.set_ylim(u_lim)
         ax.set_xlim(x.min(), x.max())
-        ax.tick_params(labelbottom=False, labelleft=False, length=0, width=0.5)
+        show_labels = i == 1 and j == 0
+        ax.tick_params(
+            bottom=True,
+            left=True,
+            top=False,
+            right=False,
+            labelbottom=show_labels,
+            labelleft=show_labels,
+        )
         ax.grid(True, linestyle="-", linewidth=0.4, alpha=0.6)
         ax.text(
             0.05,
@@ -176,7 +184,15 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
             # ax.plot(y, s_samples.mean(axis=0), color=color, linewidth=0.9)
             ax.set_ylim(s_lim)
             ax.set_xlim(y.min(), y.max())
-            ax.tick_params(labelbottom=False, labelleft=False, length=0, width=0.5)
+            show_labels = i == 1 and j == 0
+            ax.tick_params(
+                bottom=True,
+                left=True,
+                top=False,
+                right=False,
+                labelbottom=show_labels,
+                labelleft=show_labels,
+            )
             ax.grid(True, linestyle="-", linewidth=0.4, alpha=0.6)
             ax.text(
                 0.05,
@@ -207,6 +223,14 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
 def main():
     setup_publication_style()
+    plt.rcParams.update(
+        {
+            "xtick.labelsize": 5,
+            "ytick.labelsize": 5,
+            "xtick.major.pad": 1.0,
+            "ytick.major.pad": 1.0,
+        }
+    )
 
     parser = argparse.ArgumentParser(
         description="Create publication-quality Darcy plots."

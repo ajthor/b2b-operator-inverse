@@ -46,8 +46,8 @@ LOCK_FILE=/tmp/ifno_gpu_lock
 STATUS_DIR=/tmp/ifno_gpu_status
 
 # Datasets / seeds to iterate over
-# DATASETS=(darcy_1d burgers_1d wave_scattering chladni_2d)
-DATASETS=(darcy_1d burgers_1d)
+# DATASETS=(darcy_1d burgers_1d elastic_plate wave_scattering chladni_2d)
+DATASETS=(darcy_1d burgers_1d elastic_plate wave_scattering chladni_2d)
 SEEDS=(1 2 3 4 5)
 
 echo "Datasets: ${DATASETS[*]}"

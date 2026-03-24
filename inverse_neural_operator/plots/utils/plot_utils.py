@@ -65,6 +65,12 @@ MODEL_COLORS = {
     for idx, name in enumerate(MODEL_COLOR_ORDER)
 }
 
+MODEL_MARKER_SEQUENCE = ["o", "s", "^", "v", "D", "P", "X", "h", "*", "<", ">"]
+MODEL_MARKERS = {
+    name: MODEL_MARKER_SEQUENCE[idx % len(MODEL_MARKER_SEQUENCE)]
+    for idx, name in enumerate(MODEL_COLOR_ORDER)
+}
+
 
 def setup_publication_style(figsize=(6.5, 1.5)):
     """Configure matplotlib for publication-quality output."""
@@ -110,6 +116,15 @@ def get_model_color(model_name: str, idx=None):
 
     digest = hashlib.sha1(model_name.encode("utf-8")).digest()
     return MODEL_COLOR_SEQUENCE[digest[0] % len(MODEL_COLOR_SEQUENCE)]
+
+
+def get_model_marker(model_name: str, idx=None):
+    if model_name in MODEL_MARKERS:
+        return MODEL_MARKERS[model_name]
+    if idx is not None:
+        return MODEL_MARKER_SEQUENCE[idx % len(MODEL_MARKER_SEQUENCE)]
+    digest = hashlib.sha1(model_name.encode("utf-8")).digest()
+    return MODEL_MARKER_SEQUENCE[digest[0] % len(MODEL_MARKER_SEQUENCE)]
 
 
 def find_params(log_dir: str, model_names, seed: int = 1):

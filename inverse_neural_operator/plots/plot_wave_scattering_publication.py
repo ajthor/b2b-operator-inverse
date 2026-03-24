@@ -97,7 +97,7 @@ def _create_unified_figure():
     ax_right_parent.tick_params(
         labelcolor="none", top=False, bottom=False, left=False, right=False
     )
-    ax_right_parent.set_xlabel(r"$x$", labelpad=-8)
+    ax_right_parent.set_xlabel(r"$x$", labelpad=2)
     ax_right_parent.set_ylabel(r"$y$", labelpad=-8)
     ax_right_parent.set_title("Re-simulated Density Fields")
 
@@ -175,7 +175,9 @@ def _plot_polar_field(ax, theta, magnitude, annotation=None):
     return line
 
 
-def _plot_2d_field(ax, field_2d, cmap="viridis", vmin=None, vmax=None, annotation=None):
+def _plot_2d_field(
+    ax, field_2d, cmap="viridis", vmin=None, vmax=None, annotation=None, show_labels=False
+):
     """Plot a 2D density field.
 
     Args:
@@ -192,8 +194,17 @@ def _plot_2d_field(ax, field_2d, cmap="viridis", vmin=None, vmax=None, annotatio
     im = ax.imshow(
         field_2d, cmap=cmap, extent=extent, origin="lower", vmin=vmin, vmax=vmax
     )
-    ax.set_xticks([])
-    ax.set_yticks([])
+    ticks = [0.0, 0.5, 1.0]
+    ax.set_xticks(ticks)
+    ax.set_yticks(ticks)
+    ax.tick_params(
+        bottom=True,
+        left=True,
+        top=False,
+        right=False,
+        labelbottom=show_labels,
+        labelleft=show_labels,
+    )
     ax.set_aspect("equal")
 
     # Add annotation if provided
@@ -223,6 +234,7 @@ def _plot_2d_field_cutaway(
     vmin=None,
     vmax=None,
     annotation=None,
+    show_labels=False,
 ):
     """Plot a 2D density field with small inset showing continuous values.
 
@@ -244,8 +256,17 @@ def _plot_2d_field_cutaway(
         field_binary, cmap=cmap, extent=extent, origin="lower", vmin=vmin, vmax=vmax
     )
 
-    ax.set_xticks([])
-    ax.set_yticks([])
+    ticks = [0.0, 0.5, 1.0]
+    ax.set_xticks(ticks)
+    ax.set_yticks(ticks)
+    ax.tick_params(
+        bottom=True,
+        left=True,
+        top=False,
+        right=False,
+        labelbottom=show_labels,
+        labelleft=show_labels,
+    )
     ax.set_aspect("equal")
 
     # Add annotation if provided
@@ -557,7 +578,13 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
             # Far-field pattern (left - polar)
             ax = axes_left[idx]
-            _plot_polar_field(ax, theta, u_mag, annotation=display_name(model_name))
+            show_labels = idx == 3
+            _plot_polar_field(
+                ax,
+                theta,
+                u_mag,
+                annotation=display_name(model_name),
+            )
 
             # Density field (right - 2D)
             ax = axes_right[idx]
@@ -571,6 +598,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
                     vmin=s_min,
                     vmax=s_max,
                     annotation=display_name(model_name),
+                    show_labels=show_labels,
                 )
             else:
                 # Regular binary plot for other models
@@ -581,6 +609,7 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
                     vmin=s_min,
                     vmax=s_max,
                     annotation=display_name(model_name),
+                    show_labels=show_labels,
                 )
 
     # 6th position: ground truth
@@ -622,6 +651,14 @@ def plot_comparison(sample_idx, models_to_plot, predictions, meta, save_dir):
 
 def main():
     setup_publication_style()
+    mpl.rcParams.update(
+        {
+            "xtick.labelsize": 5,
+            "ytick.labelsize": 5,
+            "xtick.major.pad": 1.0,
+            "ytick.major.pad": 1.0,
+        }
+    )
 
     parser = argparse.ArgumentParser(
         description="Create publication-quality Wave Scattering plots."

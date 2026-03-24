@@ -34,8 +34,8 @@ mkdir -p "$LOG_BASE_DIR" "$RESULTS_BASE_DIR"
 export B2B_RESULTS_DIR BASE_DIR
 echo "Resolved base dir: $BASE_DIR"
 
-# DATASETS=(burgers_1d darcy_1d chladni_2d wave_scattering fwi)
-DATASETS=(burgers_1d)
+# DATASETS=(burgers_1d darcy_1d elastic_plate chladni_2d fwi wave_scattering)
+DATASETS=(elastic_plate)
 
 #── ARGUMENT PARSING ──────────────────────────────────────
 DATASET=""
@@ -174,6 +174,18 @@ for dataset in "${DATASETS[@]}"; do
     fwi)
       echo "  → Generating publication figure..."
       if python inverse_neural_operator/plots/plot_fwi_publication.py \
+        --log_dir "$LOG_BASE_DIR" \
+        --results_dir "$RESULTS_DIR" \
+        --seed "$SEED" \
+        $SAMPLE_ARG 2>&1 | sed 's/^/    /'; then
+        echo "  ✓ Publication figure completed"
+      else
+        echo "  ✗ Publication figure failed"
+      fi
+      ;;
+    elastic_plate)
+      echo "  → Generating publication figure..."
+      if python inverse_neural_operator/plots/plot_elastic_publication.py \
         --log_dir "$LOG_BASE_DIR" \
         --results_dir "$RESULTS_DIR" \
         --seed "$SEED" \

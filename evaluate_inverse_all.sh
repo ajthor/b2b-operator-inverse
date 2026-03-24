@@ -47,8 +47,8 @@ LOCK_FILE=/tmp/gpu_lock_file_inverse_eval
 STATUS_DIR=/tmp/gpu_status_inverse_eval
 
 # Datasets and inverse models to evaluate
-# DATASETS=(burgers_1d darcy_1d wave_scattering fwi chladni_2d)
-DATASETS=(burgers_1d darcy_1d wave_scattering chladni_2d)
+# DATASETS=(burgers_1d darcy_1d elastic_plate wave_scattering fwi chladni_2d)
+DATASETS=(burgers_1d darcy_1d elastic_plate wave_scattering fwi chladni_2d)
 MODELS=(linear linear_inverse nonlinear variational_autoencoder inn_additive cinn_additive cinn_additive_probabilistic inn_affine cinn_affine mixture_density_network conditional_realnvp)
 SEEDS=(1 2 3 4 5)
 
@@ -76,7 +76,7 @@ evaluate_inverse_dataset() {
 
   echo "  → [$count/$TOTAL_JOBS] Evaluating inverse models: $dataset → cuda:$gpu"
 
-  local log_dir="$RUNS_BASE_DIR/$dataset/inverse"
+  local log_dir="$RUNS_BASE_DIR/$dataset"
   local log_file="$log_dir/evaluate.log"
   mkdir -p "$log_dir"
   : > "$log_file"
@@ -239,8 +239,8 @@ echo "  Evaluation Complete"
 echo "═══════════════════════════════════════════════════════════════"
 echo "  Evaluated $TOTAL_JOBS dataset(s)"
 if [ -n "$B2B_RESULTS_DIR" ]; then
-  echo "  Results saved to: $B2B_RESULTS_DIR/runs/*/inverse/"
+  echo "  Results saved to: $B2B_RESULTS_DIR/runs/*/<model>/"
 else
-echo "  Results saved under: $RUNS_BASE_DIR/*/inverse/"
+echo "  Results saved under: $RUNS_BASE_DIR/*/<model>/"
 fi
 echo "═══════════════════════════════════════════════════════════════"

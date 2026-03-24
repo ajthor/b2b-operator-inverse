@@ -276,3 +276,5 @@ gridspec/
 scripts/
 
 CLAUDE.md
+
+run_all_2.sh

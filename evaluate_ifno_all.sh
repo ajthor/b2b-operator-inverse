@@ -47,8 +47,9 @@ LOCK_FILE=/tmp/gpu_lock_file_ifno_eval
 STATUS_DIR=/tmp/gpu_status_ifno_eval
 
 # Datasets to evaluate
+# DATASETS=(burgers_1d darcy_1d elastic_plate wave_scattering chladni_2d)
 DATASETS=(burgers_1d darcy_1d wave_scattering chladni_2d)
-SEEDS=(1 2 3 4 5)
+SEEDS=(1)
 
 # Batch size for evaluation DataLoader
 BATCH_SIZE=1

@@ -33,10 +33,18 @@ MODELS_TO_PLOT = [
     "linear",
     "nonlinear",
     "conditional_realnvp",
+    # "variational_autoencoder",
 ]
 
 # Temporary static samples used while SSIM-based selection is disabled.
-STATIC_SAMPLE_INDICES = [9012, 42, 2, 666, 890]
+STATIC_SAMPLE_INDICES = [
+    9012,
+    42,
+    2,
+    666,
+    # 890,
+    1234,
+]
 
 
 def denormalize_velocity(
@@ -80,7 +88,7 @@ def compute_predictions_for_sample(
     residual_max = vmax - 100.0
 
     u_true_2d = denormalize_velocity(u_true, residual_min, residual_max)
-    s_observed_2d = reshape_seismic(s_observed, output_shape)
+    s_observed_2d = np.clip(reshape_seismic(s_observed, output_shape), 0.0, 1.0)
 
     predictions_velocity = []
     predictions_seismic = []
@@ -130,7 +138,9 @@ def compute_predictions_for_sample(
                 )
                 beta_pred = forward_model.forward(alpha)
                 s_resim = output_enc(Y.unsqueeze(0), beta_pred)
-                s_resim_2d = reshape_seismic(s_resim.squeeze(0), output_shape)
+                s_resim_2d = np.clip(
+                    reshape_seismic(s_resim.squeeze(0), output_shape), 0.0, 1.0
+                )
                 predictions_seismic.append((model_name, s_resim_2d))
 
                 # Compute SSIM for seismic transforms
@@ -160,13 +170,23 @@ def compute_predictions_for_sample(
 
 def main():
     setup_publication_style()
+    mpl.rcParams.update(
+        {
+            "xtick.labelsize": 5,
+            "ytick.labelsize": 5,
+            "xtick.major.pad": 1.0,
+            "ytick.major.pad": 1.0,
+        }
+    )
 
     parser = argparse.ArgumentParser(
         description="Create multi-sample publication-quality FWI plots."
     )
     parser.add_argument(
-        "--base_dir", type=str, default="/store/at46867/b2b_operator_inverse",
-        help="Base directory for models and results"
+        "--base_dir",
+        type=str,
+        default="/store/at46867/b2b_operator_inverse",
+        help="Base directory for models and results",
     )
     parser.add_argument("--results_dir", type=str, default="results/fwi")
     parser.add_argument("--seed", type=int, default=1)
@@ -220,7 +240,10 @@ def main():
         raise SystemExit(1)
 
     forward_model = load_forward_model(
-        base_dir, args.dataset, args.seed, forward_model_name="b2b_nonlinear", device=device
+        log_dir=os.path.join(base_dir, "models", args.dataset),
+        seed=1,
+        forward_model_name="b2b_nonlinear",
+        device=device,
     )
 
     output_shape = dataset_info.get("output_spatial_dims", (400, 76))
@@ -294,7 +317,7 @@ def main():
         8,
         width_ratios=[1.2, 1.2, 1.2, 1.2, 0.8, 0.8, 0.8, 0.8],
         height_ratios=[1.0] * n_samples + [0.1],
-        hspace=0.04,
+        hspace=0.1,
         wspace=0.02,
         left=0.02,
         right=0.98,
@@ -307,18 +330,42 @@ def main():
     ax_vel_parent.tick_params(
         labelcolor="none", top=False, bottom=False, left=False, right=False
     )
-    ax_vel_parent.set_xlabel("Width (m)", labelpad=-8)
-    ax_vel_parent.set_ylabel("Depth (m)", labelpad=-8)
+    ax_vel_parent.set_xlabel("Width (m)", labelpad=0)
+    ax_vel_parent.set_ylabel("Depth (m)", labelpad=-6)
     ax_vel_parent.set_title("FWI Velocity Model Reconstructions", pad=12)
+    # ax_vel_parent.plot(
+    #     [0.76, 0.76],
+    #     [0.0, 1.0],
+    #     transform=ax_vel_parent.transAxes,
+    #     color="0.6",
+    #     linewidth=0.4,
+    #     alpha=0.8,
+    #     clip_on=False,
+    # )
 
     # Create parent axes for shared labels (seismic transforms)
     ax_seis_parent = fig.add_subplot(gs[:-1, 4:8], frameon=False)
     ax_seis_parent.tick_params(
         labelcolor="none", top=False, bottom=False, left=False, right=False
     )
-    ax_seis_parent.set_xlabel("Frequency", labelpad=-8)
-    ax_seis_parent.set_ylabel("Time", labelpad=-8)
+    ax_seis_parent.set_xlabel("Frequency (Hz)", labelpad=0)
+    ax_seis_parent.set_ylabel("Phase Velocity (m/s)", labelpad=-6)
     ax_seis_parent.set_title("FWI Seismic Transform Re-simulations", pad=12)
+    # ax_seis_parent.plot(
+    #     [0.76, 0.76],
+    #     [0.0, 1.0],
+    #     transform=ax_seis_parent.transAxes,
+    #     color="0.6",
+    #     linewidth=0.4,
+    #     alpha=0.8,
+    #     clip_on=False,
+    # )
+
+    # Tick configuration (shared across subplots)
+    vel_x_ticks = [0, 24, 48]
+    vel_y_ticks = [0, 12, 24]
+    seis_x_ticks = [0, 38, 76]
+    seis_y_ticks = [0, 200, 400]
 
     # Plot all samples
     for row_idx, (pred_vel, pred_seis, ssim_vel, ssim_seis) in enumerate(
@@ -338,9 +385,24 @@ def main():
                 vmax=vel_max,
                 origin="upper",
                 aspect="equal",
+                extent=(0, 48, 24, 0),
             )
-            ax.set_xticks([])
-            ax.set_yticks([])
+            ax.set_xticks(vel_x_ticks)
+            ax.set_yticks(vel_y_ticks)
+            show_labels = row_idx == n_samples - 1 and col_idx == 0
+            ax.tick_params(
+                bottom=True,
+                left=True,
+                top=False,
+                right=False,
+                labelbottom=show_labels,
+                labelleft=show_labels,
+            )
+            if model_name == "Ground Truth":
+                for spine in ax.spines.values():
+                    spine.set_visible(True)
+                    spine.set_linewidth(0.8)
+                    # spine.set_color("0.5")
 
             # Add model label only on first row
             if row_idx == 0:
@@ -355,39 +417,36 @@ def main():
                 )
 
             # Add SSIM annotation (skip ground truth)
-            # if model_name != "Ground Truth":
-            #     ssim_val = ssim_vel_dict.get(model_name, None)
-            #     if ssim_val is not None:
-            #         ax.text(
-            #             0.95,
-            #             0.95,
-            #             f"SSIM: {ssim_val:.3f}",
-            #             transform=ax.transAxes,
-            #             fontsize=5,
-            #             color="white",
-            #             verticalalignment="top",
-            #             horizontalalignment="right",
-            #             bbox=dict(
-            #                 boxstyle="round,pad=0.3",
-            #                 facecolor="black",
-            #                 alpha=0.7,
-            #                 edgecolor="none",
-            #             ),
-            #         )
+            # (moved to seismic panels on the right)
 
         # Plot seismic transforms
         for col_idx, (model_name, s_2d) in enumerate(pred_seis):
             ax = fig.add_subplot(gs[row_idx, col_idx + 4])
             ax.imshow(
-                s_2d,
-                cmap="turbo",
+                np.clip(s_2d, 0.0, 1.0),
+                cmap="jet",
                 aspect="auto",
                 origin="lower",
-                vmin=global_seismic_min,
-                vmax=global_seismic_max,
+                vmin=0.0,
+                vmax=1.0,
+                extent=(0, 76, 0, 400),
             )
-            ax.set_xticks([])
-            ax.set_yticks([])
+            ax.set_xticks(seis_x_ticks)
+            ax.set_yticks(seis_y_ticks)
+            show_labels = row_idx == n_samples - 1 and col_idx == 0
+            ax.tick_params(
+                bottom=True,
+                left=True,
+                top=False,
+                right=False,
+                labelbottom=show_labels,
+                labelleft=show_labels,
+            )
+            if model_name == "Ground Truth":
+                for spine in ax.spines.values():
+                    spine.set_visible(True)
+                    spine.set_linewidth(0.8)
+                    # spine.set_color("0.5")
             ax.set_aspect("auto")
 
             # Add model label only on first row
@@ -403,25 +462,25 @@ def main():
                 )
 
             # Add SSIM annotation (skip ground truth)
-            # if model_name != "Ground Truth":
-            #     ssim_val = ssim_seis_dict.get(model_name, None)
-            #     if ssim_val is not None:
-            #         ax.text(
-            #             0.95,
-            #             0.95,
-            #             f"SSIM: {ssim_val:.3f}",
-            #             transform=ax.transAxes,
-            #             fontsize=5,
-            #             color="white",
-            #             verticalalignment="top",
-            #             horizontalalignment="right",
-            #             bbox=dict(
-            #                 boxstyle="round,pad=0.3",
-            #                 facecolor="black",
-            #                 alpha=0.7,
-            #                 edgecolor="none",
-            #             ),
-            #         )
+            if model_name != "Ground Truth":
+                ssim_val = ssim_seis_dict.get(model_name, None)
+                if ssim_val is not None:
+                    ax.text(
+                        0.97,
+                        0.97,
+                        f"SSIM: {ssim_val:.3f}",
+                        transform=ax.transAxes,
+                        fontsize=4,
+                        color="white",
+                        verticalalignment="top",
+                        horizontalalignment="right",
+                        bbox=dict(
+                            boxstyle="round,pad=0.2",
+                            facecolor="black",
+                            alpha=0.6,
+                            edgecolor="none",
+                        ),
+                    )
 
     # Add horizontal colorbars at the bottom
     # Velocity colorbar
@@ -440,13 +499,13 @@ def main():
     norm_seismic = mpl.colors.Normalize(
         vmin=global_seismic_min, vmax=global_seismic_max
     )
-    scalar_mappable_seis = mpl.cm.ScalarMappable(norm=norm_seismic, cmap="turbo")
+    scalar_mappable_seis = mpl.cm.ScalarMappable(norm=norm_seismic, cmap="jet")
     scalar_mappable_seis.set_array([])
     cbar_seis = fig.colorbar(
         scalar_mappable_seis, cax=cax_seis, orientation="horizontal", use_gridspec=True
     )
     cbar_seis.set_label("Amplitude")
-    cbar_seis.ax.invert_xaxis()
+    # cbar_seis.ax.invert_xaxis()
 
     # Save outputs
     if args.results_dir:
