@@ -66,33 +66,107 @@ def _coefficients(batch, input_encoder, output_encoder):
     return alpha, beta, X, u, Y, s
 
 
-def _loss(
+def _relative_l2(prediction, target):
+    import torch
+
+    batch_size = prediction.shape[0]
+    numerator = torch.norm(
+        prediction.reshape(batch_size, -1) - target.reshape(batch_size, -1),
+        p=2,
+        dim=1,
+    )
+    denominator = torch.clamp(
+        torch.norm(target.reshape(batch_size, -1), p=2, dim=1),
+        min=1e-12,
+    )
+    return torch.mean(numerator / denominator)
+
+
+def _mean_ssim(prediction, target, spatial_dims):
+    if len(spatial_dims) != 2:
+        return None
+    try:
+        import numpy as np
+        from skimage.metrics import structural_similarity
+    except Exception:
+        return None
+
+    pred = prediction.detach().float().cpu().reshape(prediction.shape[0], *spatial_dims, -1)
+    true = target.detach().float().cpu().reshape(target.shape[0], *spatial_dims, -1)
+    values = []
+    for pred_sample, true_sample in zip(pred, true):
+        channel_values = []
+        for channel in range(pred_sample.shape[-1]):
+            pred_channel = pred_sample[..., channel].numpy()
+            true_channel = true_sample[..., channel].numpy()
+            data_range = float(np.max(true_channel) - np.min(true_channel))
+            if data_range <= 0:
+                data_range = 1.0
+            min_dim = min(pred_channel.shape)
+            if min_dim < 3:
+                continue
+            win_size = min(7, min_dim if min_dim % 2 == 1 else min_dim - 1)
+            channel_values.append(
+                structural_similarity(
+                    true_channel,
+                    pred_channel,
+                    data_range=data_range,
+                    win_size=win_size,
+                )
+            )
+        if channel_values:
+            values.append(float(np.mean(channel_values)))
+    if not values:
+        return None
+    return float(np.mean(values))
+
+
+def _batch_metrics(
     model,
     batch,
     input_encoder,
     output_encoder,
     forward_model,
+    dataset_info,
     coefficient_weight,
-    resimulation_weight,
+    prediction_weight,
 ):
     import torch
 
     alpha, beta, X, u, Y, s = _coefficients(batch, input_encoder, output_encoder)
     alpha_pred = _predict_alpha(model, beta)
-    coefficient_loss = torch.nn.functional.mse_loss(alpha_pred, alpha)
-    resimulation_loss = torch.zeros((), device=alpha.device)
-    reconstruction_loss = torch.nn.functional.mse_loss(input_encoder(X, alpha_pred), u)
-    if forward_model is not None and resimulation_weight:
+    u_pred = input_encoder(X, alpha_pred)
+
+    coefficient_mse = torch.nn.functional.mse_loss(alpha_pred, alpha)
+    input_mse = torch.nn.functional.mse_loss(u_pred, u)
+    input_relative_l2 = _relative_l2(u_pred, u)
+
+    resimulation_mse = torch.zeros((), device=alpha.device)
+    resimulation_relative_l2 = torch.zeros((), device=alpha.device)
+    if forward_model is not None:
         beta_resim = forward_model(alpha_pred)
         s_resim = output_encoder(Y, beta_resim)
-        resimulation_loss = torch.nn.functional.mse_loss(s_resim, s)
-    total = coefficient_weight * coefficient_loss + resimulation_weight * resimulation_loss
-    return (
-        total,
-        coefficient_loss.detach(),
-        reconstruction_loss.detach(),
-        resimulation_loss.detach(),
-    )
+        resimulation_mse = torch.nn.functional.mse_loss(s_resim, s)
+        resimulation_relative_l2 = _relative_l2(s_resim, s)
+    else:
+        s_resim = None
+
+    total = prediction_weight * input_mse + coefficient_weight * coefficient_mse
+    metrics = {
+        "loss": total,
+        "input_mse": input_mse.detach(),
+        "input_relative_l2": input_relative_l2.detach(),
+        "coefficient_mse": coefficient_mse.detach(),
+        "resimulation_mse": resimulation_mse.detach(),
+        "resimulation_relative_l2": resimulation_relative_l2.detach(),
+        "input_ssim": _mean_ssim(u_pred, u, dataset_info["input_spatial_dims"]),
+        "resimulation_ssim": (
+            _mean_ssim(s_resim, s, dataset_info["output_spatial_dims"])
+            if s_resim is not None
+            else None
+        ),
+    }
+    return metrics
 
 
 def _all_reduce_sum(tensor, context):
@@ -103,83 +177,67 @@ def _all_reduce_sum(tensor, context):
     return tensor
 
 
-def _evaluate(model, loader, context, input_encoder, output_encoder, forward_model, config):
+def _evaluate(
+    model,
+    loader,
+    context,
+    input_encoder,
+    output_encoder,
+    forward_model,
+    dataset_info,
+    config,
+):
     import torch
 
     model.eval()
-    total = torch.zeros((), device=context.device)
-    coefficient_total = torch.zeros((), device=context.device)
-    reconstruction_total = torch.zeros((), device=context.device)
-    resimulation_total = torch.zeros((), device=context.device)
+    totals = {
+        "loss": torch.zeros((), device=context.device),
+        "input_mse": torch.zeros((), device=context.device),
+        "input_relative_l2": torch.zeros((), device=context.device),
+        "coefficient_mse": torch.zeros((), device=context.device),
+        "resimulation_mse": torch.zeros((), device=context.device),
+        "resimulation_relative_l2": torch.zeros((), device=context.device),
+    }
+    ssim_totals = {"input_ssim": 0.0, "resimulation_ssim": 0.0}
+    ssim_counts = {"input_ssim": 0, "resimulation_ssim": 0}
     count = torch.zeros((), device=context.device)
     with torch.no_grad():
         for batch in loader:
             batch = _move_batch(batch, context.device)
-            loss, coefficient_loss, reconstruction_loss, resimulation_loss = _loss(
+            metrics = _batch_metrics(
                 model,
                 batch,
                 input_encoder,
                 output_encoder,
                 forward_model,
+                dataset_info,
                 config.coefficient_loss_weight,
-                config.resimulation_loss_weight,
+                config.prediction_loss_weight,
             )
-            total += loss.detach()
-            coefficient_total += coefficient_loss
-            reconstruction_total += reconstruction_loss
-            resimulation_total += resimulation_loss
+            for key in totals:
+                totals[key] += metrics[key].detach()
+            for key in ssim_totals:
+                if metrics[key] is not None:
+                    ssim_totals[key] += metrics[key]
+                    ssim_counts[key] += 1
             count += 1
-    _all_reduce_sum(total, context)
-    _all_reduce_sum(coefficient_total, context)
-    _all_reduce_sum(reconstruction_total, context)
-    _all_reduce_sum(resimulation_total, context)
+    for key in totals:
+        _all_reduce_sum(totals[key], context)
     _all_reduce_sum(count, context)
+    for key in ssim_totals:
+        value_tensor = torch.tensor(ssim_totals[key], device=context.device)
+        count_tensor = torch.tensor(ssim_counts[key], device=context.device)
+        _all_reduce_sum(value_tensor, context)
+        _all_reduce_sum(count_tensor, context)
+        ssim_totals[key] = float(value_tensor.item())
+        ssim_counts[key] = int(count_tensor.item())
     count = torch.clamp(count, min=1)
-    return {
-        "loss": float((total / count).item()),
-        "coefficient_loss": float((coefficient_total / count).item()),
-        "input_reconstruction_loss": float((reconstruction_total / count).item()),
-        "resimulation_loss": float((resimulation_total / count).item()),
-    }
-
-
-def _train_linear_closed_form(
-    model,
-    train_loader,
-    test_loader,
-    context,
-    input_encoder,
-    output_encoder,
-    forward_model,
-    config,
-):
-    import torch
-
-    module = _unwrap(model)
-    n = module.linear.in_features
-    m = module.linear.out_features
-    syy = torch.zeros((n, n), device=context.device)
-    syx = torch.zeros((n, m), device=context.device)
-    with torch.no_grad():
-        for batch in train_loader:
-            batch = _move_batch(batch, context.device)
-            alpha, beta, *_ = _coefficients(batch, input_encoder, output_encoder)
-            syy += torch.einsum("ij,ik->jk", beta, beta)
-            syx += torch.einsum("ij,ik->jk", beta, alpha)
-    _all_reduce_sum(syy, context)
-    _all_reduce_sum(syx, context)
-    syy += config.linear_regularization * torch.eye(n, device=context.device)
-    weights_t = torch.linalg.solve(syy, syx)
-    module.linear.weight.copy_(weights_t.T)
-    return _evaluate(
-        model,
-        test_loader,
-        context,
-        input_encoder,
-        output_encoder,
-        forward_model,
-        config,
-    )
+    payload = {key: float((value / count).item()) for key, value in totals.items()}
+    for key in ssim_totals:
+        payload[key] = (
+            ssim_totals[key] / ssim_counts[key] if ssim_counts[key] else None
+        )
+    return payload
 
 
 def main() -> None:
@@ -331,7 +389,7 @@ def main() -> None:
             hidden_sizes=inverse_config.hidden_sizes,
         ).to(context.device)
         ddp_model = model
-        if args.model != "linear_inverse" and context.is_distributed:
+        if context.is_distributed:
             ddp_model = torch.nn.parallel.DistributedDataParallel(
                 model,
                 device_ids=[context.local_rank] if context.device.type == "cuda" else None,
@@ -342,73 +400,63 @@ def main() -> None:
         checkpoint_path = run_dir / "latest_checkpoint.pt"
         start_time = time.time()
 
-        if args.model == "linear_inverse":
-            metrics = _train_linear_closed_form(
-                model,
-                train_loader,
+        optimizer = torch.optim.Adam(ddp_model.parameters(), lr=inverse_config.learning_rate)
+        best_test = None
+        metrics = {}
+        for epoch in range(inverse_config.epochs):
+            if train_sampler is not None:
+                train_sampler.set_epoch(epoch)
+            ddp_model.train()
+            total = torch.zeros((), device=context.device)
+            count = torch.zeros((), device=context.device)
+            for batch in train_loader:
+                batch = _move_batch(batch, context.device)
+                optimizer.zero_grad(set_to_none=True)
+                metrics_for_batch = _batch_metrics(
+                    ddp_model,
+                    batch,
+                    input_encoder,
+                    output_encoder,
+                    forward_model,
+                    dataset_info,
+                    inverse_config.coefficient_loss_weight,
+                    inverse_config.prediction_loss_weight,
+                )
+                loss = metrics_for_batch["loss"]
+                loss.backward()
+                optimizer.step()
+                total += loss.detach()
+                count += 1
+            _all_reduce_sum(total, context)
+            _all_reduce_sum(count, context)
+            train_loss = float((total / torch.clamp(count, min=1)).item())
+            metrics = _evaluate(
+                ddp_model,
                 test_loader,
                 context,
                 input_encoder,
                 output_encoder,
                 forward_model,
+                dataset_info,
                 inverse_config,
             )
-            if writer is not None:
-                writer.add_scalar("loss/test", metrics["loss"], 0)
-        else:
-            optimizer = torch.optim.Adam(ddp_model.parameters(), lr=inverse_config.learning_rate)
-            best_test = None
-            metrics = {}
-            for epoch in range(inverse_config.epochs):
-                if train_sampler is not None:
-                    train_sampler.set_epoch(epoch)
-                ddp_model.train()
-                total = torch.zeros((), device=context.device)
-                count = torch.zeros((), device=context.device)
-                for batch in train_loader:
-                    batch = _move_batch(batch, context.device)
-                    optimizer.zero_grad(set_to_none=True)
-                    loss, _, _, _ = _loss(
-                        ddp_model,
-                        batch,
-                        input_encoder,
-                        output_encoder,
-                        forward_model,
-                        inverse_config.coefficient_loss_weight,
-                        inverse_config.resimulation_loss_weight,
-                    )
-                    loss.backward()
-                    optimizer.step()
-                    total += loss.detach()
-                    count += 1
-                _all_reduce_sum(total, context)
-                _all_reduce_sum(count, context)
-                train_loss = float((total / torch.clamp(count, min=1)).item())
-                metrics = _evaluate(
-                    ddp_model,
-                    test_loader,
-                    context,
-                    input_encoder,
-                    output_encoder,
-                    forward_model,
-                    inverse_config,
+            best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
+            if context.is_rank_zero:
+                assert writer is not None
+                writer.add_scalar("loss/train", train_loss, epoch)
+                writer.add_scalar("loss/test", metrics["loss"], epoch)
+                writer.add_scalar("loss/test_input_mse", metrics["input_mse"], epoch)
+                writer.add_scalar("loss/test_resimulation_mse", metrics["resimulation_mse"], epoch)
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "loss": metrics["loss"],
+                    },
+                    checkpoint_path,
                 )
-                best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
-                if context.is_rank_zero:
-                    assert writer is not None
-                    writer.add_scalar("loss/train", train_loss, epoch)
-                    writer.add_scalar("loss/test", metrics["loss"], epoch)
-                    writer.add_scalar("loss/test_resimulation", metrics["resimulation_loss"], epoch)
-                    torch.save(
-                        {
-                            "epoch": epoch,
-                            "model_state_dict": model.state_dict(),
-                            "optimizer_state_dict": optimizer.state_dict(),
-                            "loss": metrics["loss"],
-                        },
-                        checkpoint_path,
-                    )
-            metrics["best_test_loss"] = best_test
+        metrics["best_test_loss"] = best_test
 
         barrier(context)
         if context.is_rank_zero:

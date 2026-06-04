@@ -100,8 +100,8 @@ class InverseModelsConfig:
     function_encoder_artifact: str = "default"
     forward_model: Optional[str] = None
     hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])
-    coefficient_loss_weight: float = 1.0
-    resimulation_loss_weight: float = 0.0
+    prediction_loss_weight: float = 1.0
+    coefficient_loss_weight: float = 0.0
     batch_size: int = 4
     epochs: int = 1
     learning_rate: float = 1e-4

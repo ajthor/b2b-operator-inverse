@@ -131,6 +131,10 @@ python -m torch.distributed.run --nproc_per_node 1 \
 Use `configs/experiments/fwi_inverse_models_ddp_smoke.yaml` for the matching
 two-GPU inverse smoke.
 
+Inverse models train on pointwise input-function prediction loss. Coefficient
+MSE and physical output-space re-simulation metrics are reported separately;
+re-simulation is evaluation-only.
+
 Plan and launch the migrated IFNO baseline smoke on a tiny Burgers slice:
 
 ```bash

@@ -38,8 +38,8 @@ inverse_models:
   function_encoder_artifact: ddp_smoke
   forward_model: b2b_nonlinear
   hidden_sizes: [16]
-  coefficient_loss_weight: 1.0
-  resimulation_loss_weight: 0.1
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
   batch_size: 2
   epochs: 1
   learning_rate: 0.0001
