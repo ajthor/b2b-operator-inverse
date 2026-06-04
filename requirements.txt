@@ -9,3 +9,4 @@ pyyaml
 safetensors
 torch-tb-profiler
 scikit-image
+neuraloperator==2.0.0

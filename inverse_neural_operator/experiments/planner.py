@@ -151,6 +151,66 @@ def _forward_model_jobs(
             )
 
 
+def _baseline_jobs(
+    config: ExperimentConfig,
+    models_dir: Optional[Path],
+    results_dir: Path,
+    config_path: str,
+    models_dir_override: Optional[str],
+    results_dir_override: Optional[str],
+) -> Iterable[PlannedJob]:
+    dataset = config.dataset.name
+    for seed in config.matrix.seeds:
+        for model_name in config.baselines.models:
+            model_dir = (
+                model_artifact_dir(
+                    models_dir,
+                    dataset,
+                    "baselines",
+                    model_name,
+                    seed,
+                )
+                if models_dir is not None
+                else None
+            )
+            run_dir = run_artifact_dir(
+                results_dir,
+                dataset,
+                "baselines",
+                model_name,
+                seed,
+            )
+            complete = bool(model_dir and (model_dir / "model.safetensors").exists())
+            launcher = config.runtime.launcher
+            if launcher == "torchrun":
+                prefix = (
+                    "python -m torch.distributed.run "
+                    f"--nproc_per_node {config.runtime.nproc_per_node}"
+                )
+            else:
+                prefix = "python3"
+            command = (
+                f"{prefix} -m inverse_neural_operator.baselines.train "
+                f"--config {config_path} --model {model_name} "
+                f"--seed {seed} --execute"
+            )
+            if models_dir_override:
+                command += f" --models-dir {models_dir_override}"
+            if results_dir_override:
+                command += f" --results-dir {results_dir_override}"
+            yield PlannedJob(
+                stage="baselines",
+                name=model_name,
+                encoder_type=None,
+                dataset=dataset,
+                seed=seed,
+                model_dir=model_dir,
+                run_dir=run_dir,
+                command=command,
+                complete=complete,
+            )
+
+
 def plan_jobs(
     config: ExperimentConfig,
     *,
@@ -177,6 +237,17 @@ def plan_jobs(
         elif stage == "forward_models":
             jobs.extend(
                 _forward_model_jobs(
+                    config,
+                    models_dir,
+                    results_dir,
+                    config_path,
+                    models_dir_override,
+                    results_dir_override,
+                )
+            )
+        elif stage == "baselines":
+            jobs.extend(
+                _baseline_jobs(
                     config,
                     models_dir,
                     results_dir,

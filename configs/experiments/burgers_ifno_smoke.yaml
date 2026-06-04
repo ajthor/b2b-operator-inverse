@@ -1,0 +1,40 @@
+experiment: burgers_ifno_smoke
+description: Tiny real-data Burgers smoke test for migrated IFNO baseline training.
+
+dataset:
+  name: burgers_1d
+  source: ajthor/burgers-fenics
+  sample_limit: 2
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+
+matrix:
+  seeds: [1]
+  stages:
+    - baselines
+
+baselines:
+  models: [ifno]
+  batch_size: 1
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1
+  ifno:
+    modes: 4
+    width: 8
+    n_layers: 1
+    beta: 2.0
+    padding: 4
+    vae_latent_dim: 4
+    intermediate_dim: 8
+    epochs_vae: 0
+    epochs_ifno: 0
+    lr_vae: 0.0001
+    lr_ifno: 0.001
+    lr_forward: 0.0001

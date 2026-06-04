@@ -63,8 +63,8 @@ pip install -e .
 ### Current Overhaul Status
 
 This branch is being migrated from bash-script orchestration to config-driven stage
-entrypoints. The function encoder stage is the first migrated stage and supports
-single-GPU and raw PyTorch DDP execution through `python -m torch.distributed.run`.
+entrypoints. Function encoder, forward model, and IFNO baseline smoke paths have
+been migrated and support execution through `python -m torch.distributed.run`.
 
 Plan function encoder jobs without launching training:
 
@@ -107,6 +107,27 @@ python -m torch.distributed.run --nproc_per_node 1 \
   --results-dir /tmp/b2b-ddp-smoke-results \
   --execute
 ```
+
+Plan and launch the migrated IFNO baseline smoke on a tiny Burgers slice:
+
+```bash
+python -m inverse_neural_operator.experiments.plan \
+  configs/experiments/burgers_ifno_smoke.yaml \
+  --models-dir /tmp/b2b-baseline-smoke-models \
+  --results-dir /tmp/b2b-baseline-smoke-results
+
+python -m torch.distributed.run --nproc_per_node 1 \
+  -m inverse_neural_operator.baselines.train \
+  --config configs/experiments/burgers_ifno_smoke.yaml \
+  --model ifno \
+  --seed 1 \
+  --models-dir /tmp/b2b-baseline-smoke-models \
+  --results-dir /tmp/b2b-baseline-smoke-results \
+  --execute
+```
+
+Use `configs/experiments/burgers_ifno_ddp_smoke.yaml` for the matching two-GPU
+IFNO baseline smoke.
 
 ### Expected Runtime
 
@@ -155,6 +176,8 @@ Run outputs use:
   function encoders
 - `python -m inverse_neural_operator.forward.train` - Train migrated forward
   coefficient-space models
+- `python -m inverse_neural_operator.baselines.train` - Train migrated baseline
+  models such as IFNO
 
 ## Reproduction Instructions
 

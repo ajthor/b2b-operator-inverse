@@ -21,6 +21,7 @@ dependencies = [
     "datasets",
     "torch-tb-profiler",
     "scikit-image",
+    "neuraloperator==2.0.0",
 ]
 
 [tool.setuptools.packages.find]

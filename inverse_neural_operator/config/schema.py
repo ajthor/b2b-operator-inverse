@@ -68,6 +68,33 @@ class ForwardModelsConfig:
 
 
 @dataclass
+class IFNOConfig:
+    modes: int = 16
+    width: int = 64
+    n_layers: int = 3
+    beta: float = 2.0
+    padding: int = 20
+    vae_latent_dim: int = 24
+    intermediate_dim: int = 64
+    epochs_vae: int = 0
+    epochs_ifno: int = 0
+    lr_vae: float = 1e-4
+    lr_ifno: float = 5e-3
+    lr_forward: float = 1e-4
+    lr_backward: Optional[float] = None
+
+
+@dataclass
+class BaselinesConfig:
+    models: List[str] = field(default_factory=lambda: ["ifno"])
+    batch_size: int = 4
+    epochs: int = 1
+    learning_rate: float = 1e-4
+    checkpoint_interval: int = 1
+    ifno: IFNOConfig = field(default_factory=IFNOConfig)
+
+
+@dataclass
 class ExperimentConfig:
     experiment: str
     description: str = ""
@@ -78,6 +105,7 @@ class ExperimentConfig:
         default_factory=FunctionEncoderConfig
     )
     forward_models: ForwardModelsConfig = field(default_factory=ForwardModelsConfig)
+    baselines: BaselinesConfig = field(default_factory=BaselinesConfig)
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -123,6 +151,16 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
         ForwardModelsConfig,
         _require_mapping(raw.get("forward_models", {}), "forward_models"),
     )
+    baselines_raw = _require_mapping(raw.get("baselines", {}), "baselines")
+    ifno = _dataclass_from_mapping(
+        IFNOConfig,
+        _require_mapping(baselines_raw.get("ifno", {}), "baselines.ifno"),
+    )
+    baselines_without_ifno = {
+        key: value for key, value in baselines_raw.items() if key != "ifno"
+    }
+    baselines = _dataclass_from_mapping(BaselinesConfig, baselines_without_ifno)
+    baselines.ifno = ifno
 
     experiment = raw.get("experiment")
     if not experiment:
@@ -136,5 +174,6 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
         matrix=matrix,
         function_encoders=function_encoders,
         forward_models=forward_models,
+        baselines=baselines,
         raw=raw,
     )
