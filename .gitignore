@@ -278,3 +278,6 @@ scripts/
 CLAUDE.md
 
 run_all_2.sh
+
+# Local planning notes for the repository overhaul.
+overhaul_notes/

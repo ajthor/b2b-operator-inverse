@@ -3,7 +3,9 @@ git+https://github.com/ajthor/function-encoder.git@v1.2.0
 matplotlib
 numpy
 scipy
-torch
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
+pyyaml
 safetensors
 torch-tb-profiler
 scikit-image

@@ -8,7 +8,7 @@
 	"runArgs": ["--gpus", "all"],
 
 	"mounts": [
-		"source=/store/${localEnv:USER},target=/store/${localEnv:USER},type=bind,consistency=cached"
+		"source=/store/${localEnv:B2B_STORE_USER:${localEnv:USER}},target=/store/${localEnv:B2B_STORE_USER:${localEnv:USER}},type=bind,consistency=cached"
 	],
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
@@ -20,7 +20,15 @@
 	// "forwardPorts": [],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "pip3 install --user -r requirements.txt",
+	"postCreateCommand": "pip3 install --user -r requirements.txt && pip3 install --user -e .",
+
+	"containerEnv": {
+		"B2B_RESULTS_DIR": "${containerWorkspaceFolder}/results"
+	},
+
+	"remoteEnv": {
+		"PATH": "/root/.local/bin:${containerEnv:PATH}"
+	},
 
 	// Configure tool-specific properties.
 	// "customizations": {},

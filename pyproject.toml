@@ -12,10 +12,11 @@ authors = [
 requires-python = ">=3.8"
 dependencies = [
     "numpy",
-    "torch",
+    "torch>=2.5,<2.6",
     "matplotlib",
     "scipy",
     "function-encoder @ git+https://github.com/ajthor/function-encoder.git@v1.2.0",
+    "pyyaml",
     "safetensors",
     "datasets",
     "torch-tb-profiler",
@@ -23,4 +24,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["inverse_neural_operator"]
+where = ["."]

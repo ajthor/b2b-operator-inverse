@@ -1,0 +1,120 @@
+"""Typed configuration helpers for overhaul experiment YAML files."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+import yaml
+
+
+@dataclass
+class DatasetConfig:
+    name: str
+    source: Optional[str] = None
+    sample_limit: Optional[int] = None
+
+
+@dataclass
+class RuntimeConfig:
+    dry_run: bool = True
+    launcher: str = "torchrun"
+    nproc_per_node: int = 1
+    device: str = "cuda"
+    num_workers: int = 0
+    pin_memory: bool = True
+
+
+@dataclass
+class MatrixConfig:
+    seeds: List[int] = field(default_factory=lambda: [1])
+    stages: List[str] = field(default_factory=list)
+
+
+@dataclass
+class BasisConfig:
+    kind: str = "mlp"
+    n_basis: int = 100
+    hidden_sizes: List[int] = field(default_factory=lambda: [512, 512, 512])
+    activation: str = "relu"
+    omega_0: float = 30.0
+
+
+@dataclass
+class FunctionEncoderConfig:
+    artifact: str = "default"
+    encoder_types: List[str] = field(default_factory=lambda: ["input", "output"])
+    basis: BasisConfig = field(default_factory=BasisConfig)
+    regularization: float = 1e-3
+    batch_size: int = 4
+    epochs: int = 1
+    learning_rate: float = 1e-4
+    checkpoint_interval: int = 1
+
+
+@dataclass
+class ExperimentConfig:
+    experiment: str
+    description: str = ""
+    dataset: DatasetConfig = field(default_factory=lambda: DatasetConfig(name="fwi"))
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    matrix: MatrixConfig = field(default_factory=MatrixConfig)
+    function_encoders: FunctionEncoderConfig = field(
+        default_factory=FunctionEncoderConfig
+    )
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+
+def _require_mapping(value: Any, label: str) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        raise TypeError(f"{label} must be a mapping.")
+    return value
+
+
+def _dataclass_from_mapping(cls, data: Dict[str, Any]):
+    field_names = set(cls.__dataclass_fields__.keys())
+    kwargs = {key: value for key, value in data.items() if key in field_names}
+    return cls(**kwargs)
+
+
+def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
+    """Load an experiment YAML file into typed config objects."""
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle) or {}
+    raw = _require_mapping(raw, str(path))
+
+    dataset = _dataclass_from_mapping(
+        DatasetConfig, _require_mapping(raw.get("dataset", {}), "dataset")
+    )
+    runtime = _dataclass_from_mapping(
+        RuntimeConfig, _require_mapping(raw.get("runtime", {}), "runtime")
+    )
+    matrix = _dataclass_from_mapping(
+        MatrixConfig, _require_mapping(raw.get("matrix", {}), "matrix")
+    )
+
+    fe_raw = _require_mapping(raw.get("function_encoders", {}), "function_encoders")
+    basis = _dataclass_from_mapping(
+        BasisConfig, _require_mapping(fe_raw.get("basis", {}), "function_encoders.basis")
+    )
+    fe_without_basis = {key: value for key, value in fe_raw.items() if key != "basis"}
+    function_encoders = _dataclass_from_mapping(
+        FunctionEncoderConfig, fe_without_basis
+    )
+    function_encoders.basis = basis
+
+    experiment = raw.get("experiment")
+    if not experiment:
+        raise ValueError(f"{path} is missing required key: experiment")
+
+    return ExperimentConfig(
+        experiment=experiment,
+        description=raw.get("description", ""),
+        dataset=dataset,
+        runtime=runtime,
+        matrix=matrix,
+        function_encoders=function_encoders,
+        raw=raw,
+    )
