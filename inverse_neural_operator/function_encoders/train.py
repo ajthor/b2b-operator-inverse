@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Actually train. Without this flag the command only prints paths.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from the latest recovery checkpoint in the run directory.",
+    )
     parser.add_argument("--models-dir", default=None)
     parser.add_argument("--results-dir", default=None)
     return parser.parse_args()
@@ -211,8 +216,25 @@ def main() -> None:
         checkpoint_path = run_dir / "latest_checkpoint.pt"
 
         best_test = None
+        start_epoch = 0
+        if args.resume:
+            if not checkpoint_path.exists():
+                raise FileNotFoundError(
+                    f"Cannot resume because checkpoint is missing: {checkpoint_path}"
+                )
+            checkpoint = torch.load(
+                checkpoint_path,
+                map_location=context.device,
+                weights_only=False,
+            )
+            target_model = model.module if hasattr(model, "module") else model
+            target_model.load_state_dict(checkpoint["model_state_dict"])
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            start_epoch = int(checkpoint["epoch"]) + 1
+            best_test = checkpoint.get("best_test_loss")
+
         start_time = time.time()
-        for epoch in range(fe_config.epochs):
+        for epoch in range(start_epoch, fe_config.epochs):
             if train_sampler is not None:
                 train_sampler.set_epoch(epoch)
             model.train()
@@ -261,6 +283,7 @@ def main() -> None:
                         ),
                         "optimizer_state_dict": optimizer.state_dict(),
                         "loss": mean_test.item(),
+                        "best_test_loss": best_test,
                     },
                     checkpoint_path,
                 )
@@ -284,6 +307,8 @@ def main() -> None:
             metrics_payload[args.encoder_type] = {
                 "best_test_loss": best_test,
                 "epochs": fe_config.epochs,
+                "start_epoch": start_epoch,
+                "resumed": args.resume,
                 "elapsed_seconds": time.time() - start_time,
             }
             write_json(

@@ -135,6 +135,11 @@ Inverse models train on pointwise input-function prediction loss. Coefficient
 MSE and physical output-space re-simulation metrics are reported separately;
 re-simulation is evaluation-only.
 
+Before starting larger runs, validate the full artifact chain with
+`configs/experiments/fwi_end_to_end_smoke.yaml`. Function encoder recovery can be
+checked with `fwi_function_encoder_resume_start.yaml`, followed by
+`fwi_function_encoder_resume_finish.yaml` using `--resume`.
+
 Plan and launch the migrated IFNO baseline smoke on a tiny Burgers slice:
 
 ```bash

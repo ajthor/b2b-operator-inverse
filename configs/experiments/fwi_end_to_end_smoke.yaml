@@ -1,0 +1,59 @@
+experiment: fwi_end_to_end_smoke
+description: Tiny real-data FWI smoke covering function encoders, forward model, and inverse models.
+
+dataset:
+  name: fwi
+  source: ajthor/fwi
+  sample_limit: 2
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+
+matrix:
+  seeds: [1]
+  stages:
+    - function_encoders
+    - forward_models
+    - inverse_models
+
+function_encoders:
+  artifact: e2e_smoke
+  encoder_types: [input, output]
+  basis:
+    kind: siren
+    n_basis: 2
+    hidden_sizes: [8]
+    omega_0: 30.0
+  regularization: 0.001
+  batch_size: 1
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1
+
+forward_models:
+  models: [b2b_nonlinear]
+  function_encoder_artifact: e2e_smoke
+  hidden_sizes: [8]
+  coefficient_loss_weight: 1.0
+  reconstruction_loss_weight: 1.0
+  batch_size: 1
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1
+
+inverse_models:
+  models: [nonlinear, linear_inverse]
+  function_encoder_artifact: e2e_smoke
+  forward_model: b2b_nonlinear
+  hidden_sizes: [8]
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
+  batch_size: 1
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1

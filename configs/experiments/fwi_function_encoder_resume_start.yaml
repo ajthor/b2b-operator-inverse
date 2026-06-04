@@ -1,0 +1,34 @@
+experiment: fwi_function_encoder_resume_start
+description: First step of a tiny FWI function encoder checkpoint resume smoke.
+
+dataset:
+  name: fwi
+  source: ajthor/fwi
+  sample_limit: 2
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+
+matrix:
+  seeds: [1]
+  stages:
+    - function_encoders
+
+function_encoders:
+  artifact: resume_smoke
+  encoder_types: [input]
+  basis:
+    kind: siren
+    n_basis: 2
+    hidden_sizes: [8]
+    omega_0: 30.0
+  regularization: 0.001
+  batch_size: 1
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1
