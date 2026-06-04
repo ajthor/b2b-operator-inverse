@@ -60,43 +60,33 @@ pip install -e .
 
 ## Demo
 
-### Data Preparation
+### Current Overhaul Status
 
-Sample datasets can be downloaded from Hugging Face:
-- https://huggingface.co/ajthor/b2b-inverse-operator/tree/main
+This branch is being migrated from bash-script orchestration to config-driven stage
+entrypoints. The function encoder stage is the first migrated stage and supports
+single-GPU and raw PyTorch DDP execution through `python -m torch.distributed.run`.
 
-Download the appropriate dataset(s) and place them in your configured data directory.
+Plan function encoder jobs without launching training:
 
-### Running the Demo
+```bash
+python -m inverse_neural_operator.experiments.plan \
+  configs/experiments/fwi_function_encoders.yaml
+```
 
-The demo workflow consists of three stages:
+Run the validated two-GPU smoke test inside the dev container:
 
-1. **Training**: Train models using the `run_*.sh` scripts
-   ```bash
-   bash run_all.sh          # Train all models
-   bash run_ifno_all.sh     # Train IFNO models
-   ```
+```bash
+python -m torch.distributed.run --nproc_per_node 2 \
+  -m inverse_neural_operator.function_encoders.train \
+  --config configs/experiments/fwi_function_encoders_ddp_smoke.yaml \
+  --encoder-type input \
+  --seed 1 \
+  --models-dir /tmp/b2b-ddp-smoke-models \
+  --results-dir /tmp/b2b-ddp-smoke-results \
+  --execute
+```
 
-2. **Evaluation**: Generate evaluation metrics and reports
-   ```bash
-   bash evaluate_b2b_all.sh      # Evaluate B2B models
-   bash evaluate_ifno_all.sh     # Evaluate IFNO models
-   bash evaluate_inverse_all.sh  # Evaluate inverse models
-   ```
-
-3. **Plotting**: Generate publication-quality plots
-   ```bash
-   bash plot_all.sh                 # Generate all plots
-   bash plot_all_publication.sh     # Generate publication plots
-   ```
-
-**Configuration**: Modify the environment variables and script parameters at the start of each bash script to select specific models and datasets to run.
-
-### Expected Output
-
-- Training scripts will save model checkpoints and training logs to the results directory
-- Evaluation scripts will generate performance metrics, tables, and numerical results
-- Plotting scripts will create visualization plots saved as image files
+Run the matching output encoder by changing `--encoder-type output`.
 
 ### Expected Runtime
 
@@ -106,56 +96,58 @@ The demo workflow consists of three stages:
 
 ## Instructions for Use
 
-### Results Directory Configuration
+### Output Directory Configuration
 
-Training, evaluation, and plotting scripts write artifacts under a single base directory that follows this precedence:
+The overhaul separates uploadable model artifacts from lightweight run outputs:
 
-1. The `--base_dir` command-line option (when provided)
-2. The `B2B_RESULTS_DIR` environment variable
-3. The fallback `./results` directory relative to the repository root
+- `B2B_MODELS_DIR` is required for commands that write model weights. This should
+  point at store-backed storage intended for Hugging Face upload.
+- `B2B_RESULTS_DIR` is optional and defaults to `./results` for TensorBoard logs,
+  latest recovery checkpoints, metrics, and plots.
 
-For multi-user systems, it is common to export `B2B_RESULTS_DIR=/store/<user>/b2b_operator_inverse` (or similar) and run the provided scripts without additional arguments. When experimenting locally, simply omit the environment variable and the project will write to `./results`.
+Function encoder model artifacts use:
+
+```text
+<B2B_MODELS_DIR>/models/<dataset>/function_encoders/<artifact>/seed_<seed>/
+```
+
+Run outputs use:
+
+```text
+<B2B_RESULTS_DIR>/<dataset>/function_encoders/<artifact>/seed_<seed>/<encoder_type>/
+```
 
 ### Running on Your Own Data
 
 1. Prepare your dataset in the appropriate format (see dataset documentation)
-2. Update the dataset paths in the training scripts
-3. Modify hyperparameters in the script headers as needed
-4. Run the training pipeline:
-   ```bash
-   bash run_*.sh
-   ```
-5. Evaluate and visualize results:
-   ```bash
-   bash evaluate_*.sh
-   bash plot_*.sh
-   ```
+2. Add or update a YAML config under `configs/experiments/`
+3. Use `python -m inverse_neural_operator.experiments.plan <config>` to inspect
+   planned jobs and artifact paths before launching
+4. Launch the relevant stage entrypoint with `--execute`
 
-### Available Training Scripts
+### Available Stage Entrypoints
 
-- `train_model.py` - Train main inverse operator model
-- `train_forward_model.py` - Train forward operator model
-- `train_function_encoder.py` - Train function encoder component
-- `train_ifno_standalone.py` - Train IFNO standalone model
-
-### Available Evaluation Scripts
-
-- `evaluate_models.py` - Evaluate all models
-- `evaluate_b2b.py` - Evaluate B2B models specifically
-- `evaluate_ifno.py` - Evaluate IFNO models specifically
+- `python -m inverse_neural_operator.experiments.plan` - Plan jobs and inspect
+  artifact paths without launching training
+- `python -m inverse_neural_operator.experiments.status` - Check which planned
+  artifacts are missing or complete
+- `python -m inverse_neural_operator.function_encoders.train` - Train migrated
+  function encoders
 
 ## Reproduction Instructions
 
-To reproduce the quantitative results presented in the manuscript:
+This overhaul branch is not currently a manuscript reproduction branch. The old
+bash orchestration, training scripts, evaluation scripts, and plotting modules
+were removed from this worktree so the new config-driven pipeline can become the
+source of truth. The `main` worktree remains the reference for old behavior while
+stages are ported.
 
-1. Download all datasets from the Hugging Face repository (link above)
-2. Run the complete training pipeline using the `run_*.sh` scripts
-3. Generate evaluation metrics using the `evaluate_*.sh` scripts:
-   - Tables and numerical data in the manuscript are generated by the `evaluate_*` scripts
-   - Results will be saved in the configured results directory
-4. Generate figures using the `plot_all_publication.sh` script
+To reproduce results on this branch after migration:
 
-The detailed functionality and pseudocode descriptions can be found in multiple sections of the manuscript (main text, methods section, and supplementary materials).
+1. Download or stream the configured datasets
+2. Train each migrated stage from YAML experiment configs
+3. Generate evaluation metrics with the new evaluation stage once ported
+4. Generate figures with the new plotting/reporting path once ported
 
 ## License
 
