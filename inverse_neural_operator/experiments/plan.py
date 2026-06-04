@@ -46,7 +46,10 @@ def main() -> None:
     for index, job in enumerate(jobs, start=1):
         status = "complete" if job.complete else "missing"
         model_dir = str(job.model_dir) if job.model_dir else "<B2B_MODELS_DIR unset>"
-        print(f"[{index}] {job.stage}/{job.name}/{job.encoder_type} seed={job.seed}")
+        label = f"{job.stage}/{job.name}"
+        if job.encoder_type:
+            label = f"{label}/{job.encoder_type}"
+        print(f"[{index}] {label} seed={job.seed}")
         print(f"    status:    {status}")
         print(f"    model_dir: {model_dir}")
         print(f"    run_dir:   {job.run_dir}")

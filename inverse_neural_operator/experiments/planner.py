@@ -33,6 +33,8 @@ def _function_encoder_jobs(
     models_dir: Optional[Path],
     results_dir: Path,
     config_path: str,
+    models_dir_override: Optional[str],
+    results_dir_override: Optional[str],
 ) -> Iterable[PlannedJob]:
     fe = config.function_encoders
     dataset = config.dataset.name
@@ -71,10 +73,75 @@ def _function_encoder_jobs(
                 f"--config {config_path} --encoder-type {encoder_type} "
                 f"--seed {seed} --execute"
             )
+            if models_dir_override:
+                command += f" --models-dir {models_dir_override}"
+            if results_dir_override:
+                command += f" --results-dir {results_dir_override}"
             yield PlannedJob(
                 stage="function_encoders",
                 name=fe.artifact,
                 encoder_type=encoder_type,
+                dataset=dataset,
+                seed=seed,
+                model_dir=model_dir,
+                run_dir=run_dir,
+                command=command,
+                complete=complete,
+            )
+
+
+def _forward_model_jobs(
+    config: ExperimentConfig,
+    models_dir: Optional[Path],
+    results_dir: Path,
+    config_path: str,
+    models_dir_override: Optional[str],
+    results_dir_override: Optional[str],
+) -> Iterable[PlannedJob]:
+    forward_config = config.forward_models
+    dataset = config.dataset.name
+    for seed in config.matrix.seeds:
+        for model_name in forward_config.models:
+            model_dir = (
+                model_artifact_dir(
+                    models_dir,
+                    dataset,
+                    "forward_models",
+                    model_name,
+                    seed,
+                )
+                if models_dir is not None
+                else None
+            )
+            run_dir = run_artifact_dir(
+                results_dir,
+                dataset,
+                "forward_models",
+                model_name,
+                seed,
+            )
+            complete = bool(model_dir and (model_dir / "model.safetensors").exists())
+            launcher = config.runtime.launcher
+            if launcher == "torchrun":
+                prefix = (
+                    "python -m torch.distributed.run "
+                    f"--nproc_per_node {config.runtime.nproc_per_node}"
+                )
+            else:
+                prefix = "python3"
+            command = (
+                f"{prefix} -m inverse_neural_operator.forward.train "
+                f"--config {config_path} --model {model_name} "
+                f"--seed {seed} --execute"
+            )
+            if models_dir_override:
+                command += f" --models-dir {models_dir_override}"
+            if results_dir_override:
+                command += f" --results-dir {results_dir_override}"
+            yield PlannedJob(
+                stage="forward_models",
+                name=model_name,
+                encoder_type=None,
                 dataset=dataset,
                 seed=seed,
                 model_dir=model_dir,
@@ -98,7 +165,25 @@ def plan_jobs(
     for stage in config.matrix.stages:
         if stage == "function_encoders":
             jobs.extend(
-                _function_encoder_jobs(config, models_dir, results_dir, config_path)
+                _function_encoder_jobs(
+                    config,
+                    models_dir,
+                    results_dir,
+                    config_path,
+                    models_dir_override,
+                    results_dir_override,
+                )
+            )
+        elif stage == "forward_models":
+            jobs.extend(
+                _forward_model_jobs(
+                    config,
+                    models_dir,
+                    results_dir,
+                    config_path,
+                    models_dir_override,
+                    results_dir_override,
+                )
             )
         else:
             raise ValueError(f"Unsupported stage in planner: {stage}")

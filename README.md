@@ -86,7 +86,27 @@ python -m torch.distributed.run --nproc_per_node 2 \
   --execute
 ```
 
-Run the matching output encoder by changing `--encoder-type output`.
+Run the matching output encoder by changing `--encoder-type output`. Once both
+encoder artifacts exist, plan the migrated forward model stage:
+
+```bash
+python -m inverse_neural_operator.experiments.plan \
+  configs/experiments/fwi_forward_models_smoke.yaml \
+  --models-dir /tmp/b2b-ddp-smoke-models
+```
+
+Launch the forward smoke run:
+
+```bash
+python -m torch.distributed.run --nproc_per_node 1 \
+  -m inverse_neural_operator.forward.train \
+  --config configs/experiments/fwi_forward_models_smoke.yaml \
+  --model b2b_nonlinear \
+  --seed 1 \
+  --models-dir /tmp/b2b-ddp-smoke-models \
+  --results-dir /tmp/b2b-ddp-smoke-results \
+  --execute
+```
 
 ### Expected Runtime
 
@@ -133,6 +153,8 @@ Run outputs use:
   artifacts are missing or complete
 - `python -m inverse_neural_operator.function_encoders.train` - Train migrated
   function encoders
+- `python -m inverse_neural_operator.forward.train` - Train migrated forward
+  coefficient-space models
 
 ## Reproduction Instructions
 

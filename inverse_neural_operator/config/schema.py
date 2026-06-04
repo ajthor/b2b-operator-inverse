@@ -54,6 +54,20 @@ class FunctionEncoderConfig:
 
 
 @dataclass
+class ForwardModelsConfig:
+    models: List[str] = field(default_factory=lambda: ["b2b_nonlinear"])
+    function_encoder_artifact: str = "default"
+    hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])
+    coefficient_loss_weight: float = 1.0
+    reconstruction_loss_weight: float = 1.0
+    batch_size: int = 4
+    epochs: int = 1
+    learning_rate: float = 1e-4
+    checkpoint_interval: int = 1
+    linear_regularization: float = 1e-6
+
+
+@dataclass
 class ExperimentConfig:
     experiment: str
     description: str = ""
@@ -63,6 +77,7 @@ class ExperimentConfig:
     function_encoders: FunctionEncoderConfig = field(
         default_factory=FunctionEncoderConfig
     )
+    forward_models: ForwardModelsConfig = field(default_factory=ForwardModelsConfig)
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -104,6 +119,10 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
         FunctionEncoderConfig, fe_without_basis
     )
     function_encoders.basis = basis
+    forward_models = _dataclass_from_mapping(
+        ForwardModelsConfig,
+        _require_mapping(raw.get("forward_models", {}), "forward_models"),
+    )
 
     experiment = raw.get("experiment")
     if not experiment:
@@ -116,5 +135,6 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
         runtime=runtime,
         matrix=matrix,
         function_encoders=function_encoders,
+        forward_models=forward_models,
         raw=raw,
     )

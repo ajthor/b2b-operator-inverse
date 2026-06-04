@@ -1,0 +1,46 @@
+experiment: fwi_pipeline_smoke
+description: Tiny real-data FWI smoke plan covering function encoders then forward model.
+
+dataset:
+  name: fwi
+  source: ajthor/fwi
+  sample_limit: 2
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+
+matrix:
+  seeds: [1]
+  stages:
+    - function_encoders
+    - forward_models
+
+function_encoders:
+  artifact: pipeline_smoke
+  encoder_types: [input, output]
+  basis:
+    kind: siren
+    n_basis: 2
+    hidden_sizes: [8]
+    omega_0: 30.0
+  regularization: 0.001
+  batch_size: 1
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1
+
+forward_models:
+  models: [b2b_nonlinear]
+  function_encoder_artifact: pipeline_smoke
+  hidden_sizes: [8]
+  coefficient_loss_weight: 1.0
+  reconstruction_loss_weight: 1.0
+  batch_size: 1
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1
