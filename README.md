@@ -140,6 +140,21 @@ Before starting larger runs, validate the full artifact chain with
 checked with `fwi_function_encoder_resume_start.yaml`, followed by
 `fwi_function_encoder_resume_finish.yaml` using `--resume`.
 
+After training inverse smoke artifacts, recompute evaluation metrics from disk:
+
+```bash
+python -m inverse_neural_operator.evaluation.inverse \
+  --config configs/experiments/fwi_end_to_end_smoke.yaml \
+  --model nonlinear \
+  --seed 1 \
+  --models-dir /tmp/b2b-e2e-smoke-v1-models \
+  --results-dir /tmp/b2b-e2e-smoke-v1-results \
+  --execute
+```
+
+For four or more DDP ranks in the current devcontainer, set
+`NCCL_SHM_DISABLE=1` if NCCL reports `/dev/shm` shared-memory allocation errors.
+
 Plan and launch the migrated IFNO baseline smoke on a tiny Burgers slice:
 
 ```bash
@@ -210,6 +225,8 @@ Run outputs use:
   coefficient-space models
 - `python -m inverse_neural_operator.inverse.train` - Train migrated inverse
   coefficient-space models
+- `python -m inverse_neural_operator.evaluation.inverse` - Recompute migrated
+  inverse functional and re-simulation metrics from saved artifacts
 - `python -m inverse_neural_operator.baselines.train` - Train migrated baseline
   models such as IFNO
 
