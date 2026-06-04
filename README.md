@@ -63,8 +63,9 @@ pip install -e .
 ### Current Overhaul Status
 
 This branch is being migrated from bash-script orchestration to config-driven stage
-entrypoints. Function encoder, forward model, and IFNO baseline smoke paths have
-been migrated and support execution through `python -m torch.distributed.run`.
+entrypoints. Function encoder, forward model, inverse model, and IFNO baseline
+smoke paths have been migrated and support execution through
+`python -m torch.distributed.run`.
 
 Plan function encoder jobs without launching training:
 
@@ -107,6 +108,28 @@ python -m torch.distributed.run --nproc_per_node 1 \
   --results-dir /tmp/b2b-ddp-smoke-results \
   --execute
 ```
+
+Once the forward model artifact exists, plan and launch the migrated inverse
+model smoke:
+
+```bash
+python -m inverse_neural_operator.experiments.plan \
+  configs/experiments/fwi_inverse_models_smoke.yaml \
+  --models-dir /tmp/b2b-ddp-smoke-models \
+  --results-dir /tmp/b2b-ddp-smoke-results
+
+python -m torch.distributed.run --nproc_per_node 1 \
+  -m inverse_neural_operator.inverse.train \
+  --config configs/experiments/fwi_inverse_models_smoke.yaml \
+  --model nonlinear \
+  --seed 1 \
+  --models-dir /tmp/b2b-ddp-smoke-models \
+  --results-dir /tmp/b2b-ddp-smoke-results \
+  --execute
+```
+
+Use `configs/experiments/fwi_inverse_models_ddp_smoke.yaml` for the matching
+two-GPU inverse smoke.
 
 Plan and launch the migrated IFNO baseline smoke on a tiny Burgers slice:
 
@@ -175,6 +198,8 @@ Run outputs use:
 - `python -m inverse_neural_operator.function_encoders.train` - Train migrated
   function encoders
 - `python -m inverse_neural_operator.forward.train` - Train migrated forward
+  coefficient-space models
+- `python -m inverse_neural_operator.inverse.train` - Train migrated inverse
   coefficient-space models
 - `python -m inverse_neural_operator.baselines.train` - Train migrated baseline
   models such as IFNO

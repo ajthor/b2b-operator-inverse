@@ -95,6 +95,21 @@ class BaselinesConfig:
 
 
 @dataclass
+class InverseModelsConfig:
+    models: List[str] = field(default_factory=lambda: ["nonlinear"])
+    function_encoder_artifact: str = "default"
+    forward_model: Optional[str] = None
+    hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])
+    coefficient_loss_weight: float = 1.0
+    resimulation_loss_weight: float = 0.0
+    batch_size: int = 4
+    epochs: int = 1
+    learning_rate: float = 1e-4
+    checkpoint_interval: int = 1
+    linear_regularization: float = 1e-6
+
+
+@dataclass
 class ExperimentConfig:
     experiment: str
     description: str = ""
@@ -106,6 +121,7 @@ class ExperimentConfig:
     )
     forward_models: ForwardModelsConfig = field(default_factory=ForwardModelsConfig)
     baselines: BaselinesConfig = field(default_factory=BaselinesConfig)
+    inverse_models: InverseModelsConfig = field(default_factory=InverseModelsConfig)
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -161,6 +177,10 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
     }
     baselines = _dataclass_from_mapping(BaselinesConfig, baselines_without_ifno)
     baselines.ifno = ifno
+    inverse_models = _dataclass_from_mapping(
+        InverseModelsConfig,
+        _require_mapping(raw.get("inverse_models", {}), "inverse_models"),
+    )
 
     experiment = raw.get("experiment")
     if not experiment:
@@ -175,5 +195,6 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
         function_encoders=function_encoders,
         forward_models=forward_models,
         baselines=baselines,
+        inverse_models=inverse_models,
         raw=raw,
     )

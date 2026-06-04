@@ -1,0 +1,46 @@
+experiment: fwi_inverse_models_ddp_smoke
+description: Small real-data FWI smoke test for two-GPU inverse model DDP.
+
+dataset:
+  name: fwi
+  source: ajthor/fwi
+  sample_limit: 8
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 2
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+
+matrix:
+  seeds: [1]
+  stages:
+    - inverse_models
+
+function_encoders:
+  artifact: ddp_smoke
+  encoder_types: [input, output]
+  basis:
+    kind: siren
+    n_basis: 4
+    hidden_sizes: [16]
+    omega_0: 30.0
+  regularization: 0.001
+
+forward_models:
+  models: [b2b_nonlinear]
+  hidden_sizes: [16]
+
+inverse_models:
+  models: [nonlinear]
+  function_encoder_artifact: ddp_smoke
+  forward_model: b2b_nonlinear
+  hidden_sizes: [16]
+  coefficient_loss_weight: 1.0
+  resimulation_loss_weight: 0.1
+  batch_size: 2
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1
