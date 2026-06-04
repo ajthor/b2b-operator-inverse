@@ -1,0 +1,34 @@
+experiment: fwi_function_encoders_ramp_1gpu
+description: Modest real-data FWI input-encoder ramp for one GPU timing.
+
+dataset:
+  name: fwi
+  source: ajthor/fwi
+  sample_limit: 32
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+
+matrix:
+  seeds: [1]
+  stages:
+    - function_encoders
+
+function_encoders:
+  artifact: ramp_1gpu
+  encoder_types: [input, output]
+  basis:
+    kind: siren
+    n_basis: 16
+    hidden_sizes: [64]
+    omega_0: 30.0
+  regularization: 0.001
+  batch_size: 2
+  epochs: 2
+  learning_rate: 0.0001
+  checkpoint_interval: 1

@@ -233,8 +233,12 @@ def main() -> None:
             start_epoch = int(checkpoint["epoch"]) + 1
             best_test = checkpoint.get("best_test_loss")
 
+        if context.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(context.device)
+        epoch_seconds = []
         start_time = time.time()
         for epoch in range(start_epoch, fe_config.epochs):
+            epoch_start = time.time()
             if train_sampler is not None:
                 train_sampler.set_epoch(epoch)
             model.train()
@@ -268,6 +272,7 @@ def main() -> None:
                 if best_test is None
                 else min(best_test, float(mean_test.item()))
             )
+            epoch_seconds.append(time.time() - epoch_start)
 
             if context.is_rank_zero:
                 assert writer is not None
@@ -310,6 +315,24 @@ def main() -> None:
                 "start_epoch": start_epoch,
                 "resumed": args.resume,
                 "elapsed_seconds": time.time() - start_time,
+                "epoch_seconds": epoch_seconds,
+                "world_size": context.world_size,
+                "batch_size_per_rank": fe_config.batch_size,
+                "train_samples": len(train_dataset),
+                "test_samples": len(test_dataset),
+                "n_basis": fe_config.basis.n_basis,
+                "basis_kind": fe_config.basis.kind,
+                "rank0_device": str(context.device),
+                "rank0_device_name": (
+                    torch.cuda.get_device_name(context.device)
+                    if context.device.type == "cuda"
+                    else "cpu"
+                ),
+                "rank0_peak_cuda_memory_bytes": (
+                    torch.cuda.max_memory_allocated(context.device)
+                    if context.device.type == "cuda"
+                    else None
+                ),
             }
             write_json(
                 metrics_path,
