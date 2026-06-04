@@ -3,11 +3,36 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
-
-from safetensors.torch import load_file
+from typing import List, Optional
 
 from inverse_neural_operator.forward.build import create_forward_model
+
+
+def forward_model_files() -> dict[str, str]:
+    return {
+        "model": "model.safetensors",
+        "config": "config.yaml",
+        "manifest": "manifest.json",
+        "metrics": "metrics.json",
+    }
+
+
+def missing_forward_model_files(artifact_dir: Path) -> List[str]:
+    return [
+        filename
+        for filename in forward_model_files().values()
+        if not (artifact_dir / filename).exists()
+    ]
+
+
+def require_forward_model_artifact(artifact_dir: Path) -> None:
+    missing = missing_forward_model_files(artifact_dir)
+    if missing:
+        missing_list = ", ".join(missing)
+        raise FileNotFoundError(
+            f"Forward model artifact is incomplete at {artifact_dir}: "
+            f"missing {missing_list}"
+        )
 
 
 def load_forward_model(
@@ -19,9 +44,10 @@ def load_forward_model(
     hidden_sizes: Optional[list[int]],
     device,
 ):
+    from safetensors.torch import load_file
+
+    require_forward_model_artifact(artifact_dir)
     weights_path = artifact_dir / "model.safetensors"
-    if not weights_path.exists():
-        raise FileNotFoundError(f"Missing forward model weights: {weights_path}")
     model = create_forward_model(
         model_name,
         input_size=input_size,
@@ -33,4 +59,3 @@ def load_forward_model(
     for parameter in model.parameters():
         parameter.requires_grad_(False)
     return model
-

@@ -207,6 +207,15 @@ def main() -> None:
             f"Model {args.model!r} is not listed in forward_models.models: "
             f"{forward_config.models}"
         )
+    assert encoder_dir is not None
+    from inverse_neural_operator.function_encoders.artifacts import (
+        require_function_encoder_artifact,
+    )
+
+    try:
+        require_function_encoder_artifact(encoder_dir)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
 
     import torch
     from safetensors.torch import save_file
@@ -229,7 +238,6 @@ def main() -> None:
         test_dataset = _load_dataset(config, "test")
         dataset_info = train_dataset.get_info()
 
-        assert encoder_dir is not None
         input_encoder = load_function_encoder(
             encoder_dir,
             encoder_type="input",

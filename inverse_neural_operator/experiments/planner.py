@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from inverse_neural_operator.config.schema import ExperimentConfig
+from inverse_neural_operator.forward.artifacts import missing_forward_model_files
+from inverse_neural_operator.function_encoders.artifacts import (
+    missing_function_encoder_files,
+)
+from inverse_neural_operator.inverse.artifacts import missing_inverse_model_files
 from inverse_neural_operator.runtime.paths import (
     model_artifact_dir,
     models_root,
@@ -26,6 +31,99 @@ class PlannedJob:
     run_dir: Path
     command: str
     complete: bool
+    dependencies: List[str]
+    missing_dependencies: List[str]
+
+    @property
+    def blocked(self) -> bool:
+        return bool(self.missing_dependencies)
+
+
+def _torchrun_prefix(config: ExperimentConfig) -> str:
+    if config.runtime.launcher == "torchrun":
+        return (
+            "python -m torch.distributed.run "
+            f"--nproc_per_node {config.runtime.nproc_per_node}"
+        )
+    return "python3"
+
+
+def _with_root_args(
+    command: str,
+    models_dir_override: Optional[str],
+    results_dir_override: Optional[str],
+) -> str:
+    if models_dir_override:
+        command += f" --models-dir {models_dir_override}"
+    if results_dir_override:
+        command += f" --results-dir {results_dir_override}"
+    return command
+
+
+def _dependency_label(path: Path, missing: List[str]) -> str:
+    return f"{path} missing {', '.join(missing)}"
+
+
+def _function_encoder_dependency(
+    config: ExperimentConfig,
+    models_dir: Optional[Path],
+    seed: int,
+) -> tuple[List[str], List[str]]:
+    if models_dir is None:
+        return [], ["B2B_MODELS_DIR unset; cannot check function encoder artifact"]
+    path = model_artifact_dir(
+        models_dir,
+        config.dataset.name,
+        "function_encoders",
+        config.forward_models.function_encoder_artifact,
+        seed,
+    )
+    missing = missing_function_encoder_files(path)
+    dependencies = [str(path)]
+    missing_dependencies = [_dependency_label(path, missing)] if missing else []
+    return dependencies, missing_dependencies
+
+
+def _inverse_function_encoder_dependency(
+    config: ExperimentConfig,
+    models_dir: Optional[Path],
+    seed: int,
+) -> tuple[List[str], List[str]]:
+    if models_dir is None:
+        return [], ["B2B_MODELS_DIR unset; cannot check function encoder artifact"]
+    path = model_artifact_dir(
+        models_dir,
+        config.dataset.name,
+        "function_encoders",
+        config.inverse_models.function_encoder_artifact,
+        seed,
+    )
+    missing = missing_function_encoder_files(path)
+    dependencies = [str(path)]
+    missing_dependencies = [_dependency_label(path, missing)] if missing else []
+    return dependencies, missing_dependencies
+
+
+def _forward_dependency(
+    config: ExperimentConfig,
+    models_dir: Optional[Path],
+    seed: int,
+) -> tuple[List[str], List[str]]:
+    if not config.inverse_models.forward_model:
+        return [], []
+    if models_dir is None:
+        return [], ["B2B_MODELS_DIR unset; cannot check forward model artifact"]
+    path = model_artifact_dir(
+        models_dir,
+        config.dataset.name,
+        "forward_models",
+        config.inverse_models.forward_model,
+        seed,
+    )
+    missing = missing_forward_model_files(path)
+    dependencies = [str(path)]
+    missing_dependencies = [_dependency_label(path, missing)] if missing else []
+    return dependencies, missing_dependencies
 
 
 def _function_encoder_jobs(
@@ -60,23 +158,13 @@ def _function_encoder_jobs(
             ) / encoder_type
             expected_name = f"{encoder_type}_encoder.safetensors"
             complete = bool(model_dir and (model_dir / expected_name).exists())
-            launcher = config.runtime.launcher
-            if launcher == "torchrun":
-                prefix = (
-                    "python -m torch.distributed.run "
-                    f"--nproc_per_node {config.runtime.nproc_per_node}"
-                )
-            else:
-                prefix = "python3"
+            prefix = _torchrun_prefix(config)
             command = (
                 f"{prefix} -m inverse_neural_operator.function_encoders.train "
                 f"--config {config_path} --encoder-type {encoder_type} "
                 f"--seed {seed} --execute"
             )
-            if models_dir_override:
-                command += f" --models-dir {models_dir_override}"
-            if results_dir_override:
-                command += f" --results-dir {results_dir_override}"
+            command = _with_root_args(command, models_dir_override, results_dir_override)
             yield PlannedJob(
                 stage="function_encoders",
                 name=fe.artifact,
@@ -87,6 +175,8 @@ def _function_encoder_jobs(
                 run_dir=run_dir,
                 command=command,
                 complete=complete,
+                dependencies=[],
+                missing_dependencies=[],
             )
 
 
@@ -120,24 +210,19 @@ def _forward_model_jobs(
                 model_name,
                 seed,
             )
-            complete = bool(model_dir and (model_dir / "model.safetensors").exists())
-            launcher = config.runtime.launcher
-            if launcher == "torchrun":
-                prefix = (
-                    "python -m torch.distributed.run "
-                    f"--nproc_per_node {config.runtime.nproc_per_node}"
-                )
-            else:
-                prefix = "python3"
+            complete = bool(model_dir and not missing_forward_model_files(model_dir))
+            dependencies, missing_dependencies = _function_encoder_dependency(
+                config,
+                models_dir,
+                seed,
+            )
+            prefix = _torchrun_prefix(config)
             command = (
                 f"{prefix} -m inverse_neural_operator.forward.train "
                 f"--config {config_path} --model {model_name} "
                 f"--seed {seed} --execute"
             )
-            if models_dir_override:
-                command += f" --models-dir {models_dir_override}"
-            if results_dir_override:
-                command += f" --results-dir {results_dir_override}"
+            command = _with_root_args(command, models_dir_override, results_dir_override)
             yield PlannedJob(
                 stage="forward_models",
                 name=model_name,
@@ -148,6 +233,8 @@ def _forward_model_jobs(
                 run_dir=run_dir,
                 command=command,
                 complete=complete,
+                dependencies=dependencies,
+                missing_dependencies=missing_dependencies,
             )
 
 
@@ -181,23 +268,13 @@ def _baseline_jobs(
                 seed,
             )
             complete = bool(model_dir and (model_dir / "model.safetensors").exists())
-            launcher = config.runtime.launcher
-            if launcher == "torchrun":
-                prefix = (
-                    "python -m torch.distributed.run "
-                    f"--nproc_per_node {config.runtime.nproc_per_node}"
-                )
-            else:
-                prefix = "python3"
+            prefix = _torchrun_prefix(config)
             command = (
                 f"{prefix} -m inverse_neural_operator.baselines.train "
                 f"--config {config_path} --model {model_name} "
                 f"--seed {seed} --execute"
             )
-            if models_dir_override:
-                command += f" --models-dir {models_dir_override}"
-            if results_dir_override:
-                command += f" --results-dir {results_dir_override}"
+            command = _with_root_args(command, models_dir_override, results_dir_override)
             yield PlannedJob(
                 stage="baselines",
                 name=model_name,
@@ -208,6 +285,8 @@ def _baseline_jobs(
                 run_dir=run_dir,
                 command=command,
                 complete=complete,
+                dependencies=[],
+                missing_dependencies=[],
             )
 
 
@@ -240,24 +319,24 @@ def _inverse_model_jobs(
                 model_name,
                 seed,
             )
-            complete = bool(model_dir and (model_dir / "model.safetensors").exists())
-            launcher = config.runtime.launcher
-            if launcher == "torchrun":
-                prefix = (
-                    "python -m torch.distributed.run "
-                    f"--nproc_per_node {config.runtime.nproc_per_node}"
-                )
-            else:
-                prefix = "python3"
+            complete = bool(model_dir and not missing_inverse_model_files(model_dir))
+            fe_dependencies, fe_missing = _inverse_function_encoder_dependency(
+                config,
+                models_dir,
+                seed,
+            )
+            forward_dependencies, forward_missing = _forward_dependency(
+                config,
+                models_dir,
+                seed,
+            )
+            prefix = _torchrun_prefix(config)
             command = (
                 f"{prefix} -m inverse_neural_operator.inverse.train "
                 f"--config {config_path} --model {model_name} "
                 f"--seed {seed} --execute"
             )
-            if models_dir_override:
-                command += f" --models-dir {models_dir_override}"
-            if results_dir_override:
-                command += f" --results-dir {results_dir_override}"
+            command = _with_root_args(command, models_dir_override, results_dir_override)
             yield PlannedJob(
                 stage="inverse_models",
                 name=model_name,
@@ -268,6 +347,89 @@ def _inverse_model_jobs(
                 run_dir=run_dir,
                 command=command,
                 complete=complete,
+                dependencies=fe_dependencies + forward_dependencies,
+                missing_dependencies=fe_missing + forward_missing,
+            )
+
+
+def _evaluation_jobs(
+    config: ExperimentConfig,
+    models_dir: Optional[Path],
+    results_dir: Path,
+    config_path: str,
+    models_dir_override: Optional[str],
+    results_dir_override: Optional[str],
+) -> Iterable[PlannedJob]:
+    dataset = config.dataset.name
+    for seed in config.matrix.seeds:
+        for model_name in config.inverse_models.models:
+            model_dir = (
+                model_artifact_dir(
+                    models_dir,
+                    dataset,
+                    "inverse_models",
+                    model_name,
+                    seed,
+                )
+                if models_dir is not None
+                else None
+            )
+            run_dir = (
+                run_artifact_dir(
+                    results_dir,
+                    dataset,
+                    "evaluation",
+                    "inverse_models",
+                    seed,
+                )
+                / model_name
+                / "test"
+            )
+            complete = (run_dir / "metrics.json").exists()
+            dependencies: List[str] = []
+            missing_dependencies: List[str] = []
+            fe_dependencies, fe_missing = _inverse_function_encoder_dependency(
+                config,
+                models_dir,
+                seed,
+            )
+            forward_dependencies, forward_missing = _forward_dependency(
+                config,
+                models_dir,
+                seed,
+            )
+            dependencies.extend(fe_dependencies)
+            dependencies.extend(forward_dependencies)
+            missing_dependencies.extend(fe_missing)
+            missing_dependencies.extend(forward_missing)
+            if model_dir is None:
+                missing_dependencies.append(
+                    "B2B_MODELS_DIR unset; cannot check inverse model artifact"
+                )
+            else:
+                dependencies.append(str(model_dir))
+                missing = missing_inverse_model_files(model_dir)
+                if missing:
+                    missing_dependencies.append(_dependency_label(model_dir, missing))
+            prefix = _torchrun_prefix(config)
+            command = (
+                f"{prefix} -m inverse_neural_operator.evaluation.inverse "
+                f"--config {config_path} --model {model_name} "
+                f"--seed {seed} --split test --execute"
+            )
+            command = _with_root_args(command, models_dir_override, results_dir_override)
+            yield PlannedJob(
+                stage="evaluation",
+                name=model_name,
+                encoder_type=None,
+                dataset=dataset,
+                seed=seed,
+                model_dir=model_dir,
+                run_dir=run_dir,
+                command=command,
+                complete=complete,
+                dependencies=dependencies,
+                missing_dependencies=missing_dependencies,
             )
 
 
@@ -319,6 +481,17 @@ def plan_jobs(
         elif stage == "inverse_models":
             jobs.extend(
                 _inverse_model_jobs(
+                    config,
+                    models_dir,
+                    results_dir,
+                    config_path,
+                    models_dir_override,
+                    results_dir_override,
+                )
+            )
+        elif stage == "evaluation":
+            jobs.extend(
+                _evaluation_jobs(
                     config,
                     models_dir,
                     results_dir,

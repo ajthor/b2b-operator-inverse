@@ -106,6 +106,21 @@ def main() -> None:
         print(f"forward_dir: {forward_dir or '<none>'}")
         print(f"eval_dir:    {eval_dir}")
         return
+    assert inverse_dir is not None
+    assert encoder_dir is not None
+    from inverse_neural_operator.forward.artifacts import require_forward_model_artifact
+    from inverse_neural_operator.function_encoders.artifacts import (
+        require_function_encoder_artifact,
+    )
+    from inverse_neural_operator.inverse.artifacts import require_inverse_model_artifact
+
+    try:
+        require_inverse_model_artifact(inverse_dir)
+        require_function_encoder_artifact(encoder_dir)
+        if forward_dir is not None:
+            require_forward_model_artifact(forward_dir)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
 
     import torch
     from safetensors.torch import load_file
@@ -125,10 +140,7 @@ def main() -> None:
         dataset_info = dataset.get_info()
         n_basis = config.function_encoders.basis.n_basis
 
-        assert inverse_dir is not None
         weights_path = inverse_dir / "model.safetensors"
-        if not weights_path.exists():
-            raise FileNotFoundError(f"Missing inverse model weights: {weights_path}")
         model = create_inverse_model(
             args.model,
             input_size=n_basis,
@@ -138,7 +150,6 @@ def main() -> None:
         model.load_state_dict(load_file(str(weights_path), device=str(context.device)))
         model.eval()
 
-        assert encoder_dir is not None
         input_encoder = load_function_encoder(
             encoder_dir,
             encoder_type="input",
@@ -206,4 +217,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

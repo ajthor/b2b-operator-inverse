@@ -44,7 +44,12 @@ def main() -> None:
     print(f"Jobs:       {len(jobs)}")
     print("")
     for index, job in enumerate(jobs, start=1):
-        status = "complete" if job.complete else "missing"
+        if job.complete:
+            status = "complete"
+        elif job.blocked:
+            status = "blocked"
+        else:
+            status = "ready"
         model_dir = str(job.model_dir) if job.model_dir else "<B2B_MODELS_DIR unset>"
         label = f"{job.stage}/{job.name}"
         if job.encoder_type:
@@ -53,6 +58,10 @@ def main() -> None:
         print(f"    status:    {status}")
         print(f"    model_dir: {model_dir}")
         print(f"    run_dir:   {job.run_dir}")
+        for dependency in job.dependencies:
+            print(f"    needs:     {dependency}")
+        for dependency in job.missing_dependencies:
+            print(f"    blocked:   {dependency}")
         print(f"    command:   {job.command}")
 
 

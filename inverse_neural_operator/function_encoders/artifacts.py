@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, Iterable, List
 
 import yaml
-
-from inverse_neural_operator.function_encoders.build import create_function_encoder
 
 
 def _encoder_sizes(encoder_type: str, dataset_info: Dict[str, Any]) -> tuple[int, int]:
@@ -17,6 +15,46 @@ def _encoder_sizes(encoder_type: str, dataset_info: Dict[str, Any]) -> tuple[int
     if encoder_type == "output":
         return dataset_info["Y_size"], dataset_info["s_size"]
     raise ValueError(f"Unknown function encoder type: {encoder_type}")
+
+
+def function_encoder_files(encoder_types: Iterable[str]) -> Dict[str, str]:
+    files = {
+        "config": "config.yaml",
+        "manifest": "manifest.json",
+        "metrics": "metrics.json",
+    }
+    for encoder_type in encoder_types:
+        files[encoder_type] = f"{encoder_type}_encoder.safetensors"
+    return files
+
+
+def missing_function_encoder_files(
+    artifact_dir: Path,
+    *,
+    encoder_types: Iterable[str] = ("input", "output"),
+) -> List[str]:
+    return [
+        filename
+        for filename in function_encoder_files(encoder_types).values()
+        if not (artifact_dir / filename).exists()
+    ]
+
+
+def require_function_encoder_artifact(
+    artifact_dir: Path,
+    *,
+    encoder_types: Iterable[str] = ("input", "output"),
+) -> None:
+    missing = missing_function_encoder_files(
+        artifact_dir,
+        encoder_types=encoder_types,
+    )
+    if missing:
+        missing_list = ", ".join(missing)
+        raise FileNotFoundError(
+            f"Function encoder artifact is incomplete at {artifact_dir}: "
+            f"missing {missing_list}"
+        )
 
 
 def load_function_encoder(
@@ -29,6 +67,7 @@ def load_function_encoder(
     """Rebuild and load one saved function encoder."""
     import torch
     from safetensors.torch import load_file
+    from inverse_neural_operator.function_encoders.build import create_function_encoder
 
     config_path = artifact_dir / "config.yaml"
     weights_path = artifact_dir / f"{encoder_type}_encoder.safetensors"

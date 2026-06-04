@@ -1,5 +1,5 @@
 experiment: fwi_pipeline_smoke
-description: Tiny real-data FWI smoke plan covering function encoders then forward model.
+description: Tiny real-data FWI smoke plan covering reusable function encoders, forward model, inverse model, and evaluation.
 
 dataset:
   name: fwi
@@ -19,6 +19,8 @@ matrix:
   stages:
     - function_encoders
     - forward_models
+    - inverse_models
+    - evaluation
 
 function_encoders:
   artifact: pipeline_smoke
@@ -40,6 +42,18 @@ forward_models:
   hidden_sizes: [8]
   coefficient_loss_weight: 1.0
   reconstruction_loss_weight: 1.0
+  batch_size: 1
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1
+
+inverse_models:
+  models: [nonlinear]
+  function_encoder_artifact: pipeline_smoke
+  forward_model: b2b_nonlinear
+  hidden_sizes: [8]
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
   batch_size: 1
   epochs: 1
   learning_rate: 0.0001
