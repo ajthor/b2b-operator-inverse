@@ -11,7 +11,7 @@ runtime:
   launcher: torchrun
   nproc_per_node: 6
   device: cuda
-  num_workers: 4
+  num_workers: 0
   pin_memory: true
   env:
     NCCL_SHM_DISABLE: "1"
