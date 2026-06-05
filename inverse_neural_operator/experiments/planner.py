@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
 from typing import Iterable, List, Optional
 
 from inverse_neural_operator.config.schema import ExperimentConfig
@@ -40,12 +41,19 @@ class PlannedJob:
 
 
 def _torchrun_prefix(config: ExperimentConfig) -> str:
+    env_prefix = ""
+    if config.runtime.env:
+        assignments = " ".join(
+            f"{key}={shlex.quote(value)}"
+            for key, value in sorted(config.runtime.env.items())
+        )
+        env_prefix = f"env {assignments} "
     if config.runtime.launcher == "torchrun":
-        return (
+        return env_prefix + (
             "python -m torch.distributed.run "
             f"--nproc_per_node {config.runtime.nproc_per_node}"
         )
-    return "python3"
+    return env_prefix + "python3"
 
 
 def _with_root_args(

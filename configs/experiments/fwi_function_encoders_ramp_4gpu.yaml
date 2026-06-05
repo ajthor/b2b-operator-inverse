@@ -13,6 +13,8 @@ runtime:
   device: cuda
   num_workers: 0
   pin_memory: true
+  env:
+    NCCL_SHM_DISABLE: "1"
 
 matrix:
   seeds: [1]

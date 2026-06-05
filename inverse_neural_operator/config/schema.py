@@ -24,6 +24,7 @@ class RuntimeConfig:
     device: str = "cuda"
     num_workers: int = 0
     pin_memory: bool = True
+    env: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -137,6 +138,13 @@ def _dataclass_from_mapping(cls, data: Dict[str, Any]):
     return cls(**kwargs)
 
 
+def _normalize_env(value: Any) -> Dict[str, str]:
+    if value is None:
+        return {}
+    raw_env = _require_mapping(value, "runtime.env")
+    return {str(key): str(item) for key, item in raw_env.items()}
+
+
 def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
     """Load an experiment YAML file into typed config objects."""
     path = Path(path)
@@ -150,6 +158,7 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
     runtime = _dataclass_from_mapping(
         RuntimeConfig, _require_mapping(raw.get("runtime", {}), "runtime")
     )
+    runtime.env = _normalize_env(runtime.env)
     matrix = _dataclass_from_mapping(
         MatrixConfig, _require_mapping(raw.get("matrix", {}), "matrix")
     )

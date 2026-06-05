@@ -1,17 +1,17 @@
-experiment: fwi_function_encoders_4gpu_smoke
-description: Small real-data FWI smoke test for four-GPU function encoder DDP launch.
+experiment: fwi_function_encoders_4gpu_full
+description: Full FWI function encoder training plan using four GPU DDP.
 
 dataset:
   name: fwi
   source: ajthor/fwi
-  sample_limit: 8
+  sample_limit: null
 
 runtime:
   dry_run: true
   launcher: torchrun
   nproc_per_node: 4
   device: cuda
-  num_workers: 0
+  num_workers: 4
   pin_memory: true
   env:
     NCCL_SHM_DISABLE: "1"
@@ -22,15 +22,15 @@ matrix:
     - function_encoders
 
 function_encoders:
-  artifact: ddp4_smoke
+  artifact: siren_nbasis100_4gpu
   encoder_types: [input, output]
   basis:
     kind: siren
-    n_basis: 4
-    hidden_sizes: [16]
+    n_basis: 100
+    hidden_sizes: [512, 512, 512]
     omega_0: 30.0
   regularization: 0.001
-  batch_size: 1
+  batch_size: 4
   epochs: 1
   learning_rate: 0.0001
   checkpoint_interval: 1
