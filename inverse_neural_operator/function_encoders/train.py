@@ -45,12 +45,16 @@ def _move_batch(batch, device):
     return tuple(tensor.to(device, non_blocking=True) for tensor in batch)
 
 
-def _loss(model, batch):
+def _loss(model, batch, *, coefficient_grad: bool):
     import torch
 
     example_xs, example_ys, xs, ys = batch
     encoder = model.module if hasattr(model, "module") else model
-    coefficients, gram = encoder.compute_coefficients(example_xs, example_ys)
+    if coefficient_grad:
+        coefficients, gram = encoder.compute_coefficients(example_xs, example_ys)
+    else:
+        with torch.no_grad():
+            coefficients, gram = encoder.compute_coefficients(example_xs, example_ys)
     pred = model(xs, coefficients)
     pred_loss = torch.nn.functional.mse_loss(pred, ys)
     try:
@@ -240,7 +244,11 @@ def main() -> None:
             for batch in train_loader:
                 batch = _move_batch(batch, context.device)
                 optimizer.zero_grad(set_to_none=True)
-                loss, pred_loss, norm_loss = _loss(model, batch)
+                loss, pred_loss, norm_loss = _loss(
+                    model,
+                    batch,
+                    coefficient_grad=fe_config.coefficient_grad,
+                )
                 loss.backward()
                 optimizer.step()
                 train_total += loss.detach()
@@ -255,7 +263,11 @@ def main() -> None:
             with torch.no_grad():
                 for batch in test_loader:
                     batch = _move_batch(batch, context.device)
-                    loss, _, _ = _loss(model, batch)
+                    loss, _, _ = _loss(
+                        model,
+                        batch,
+                        coefficient_grad=fe_config.coefficient_grad,
+                    )
                     test_total += loss.detach()
                     test_count += 1
             mean_test = test_total / max(test_count, 1)
@@ -315,6 +327,8 @@ def main() -> None:
                 "test_samples": len(test_dataset),
                 "n_basis": fe_config.basis.n_basis,
                 "basis_kind": fe_config.basis.kind,
+                "basis_chunk_size": fe_config.basis_chunk_size,
+                "coefficient_grad": fe_config.coefficient_grad,
                 "rank0_device": str(context.device),
                 "rank0_device_name": (
                     torch.cuda.get_device_name(context.device)

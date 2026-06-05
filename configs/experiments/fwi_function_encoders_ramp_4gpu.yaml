@@ -25,6 +25,7 @@ function_encoders:
   artifact: ramp_4gpu
   encoder_types: [input, output]
   basis_chunk_size: 4
+  coefficient_grad: false
   basis:
     kind: siren
     n_basis: 16
