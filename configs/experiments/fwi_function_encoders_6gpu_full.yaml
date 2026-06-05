@@ -1,0 +1,36 @@
+experiment: fwi_function_encoders_6gpu_full
+description: Full FWI function encoder training plan using six GPU DDP.
+
+dataset:
+  name: fwi
+  source: ajthor/fwi
+  sample_limit: null
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 6
+  device: cuda
+  num_workers: 4
+  pin_memory: true
+  env:
+    NCCL_SHM_DISABLE: "1"
+
+matrix:
+  seeds: [1]
+  stages:
+    - function_encoders
+
+function_encoders:
+  artifact: siren_nbasis100_6gpu
+  encoder_types: [input, output]
+  basis:
+    kind: siren
+    n_basis: 100
+    hidden_sizes: [512, 512, 512]
+    omega_0: 30.0
+  regularization: 0.001
+  batch_size: 4
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1

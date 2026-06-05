@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import time
 import shlex
 import subprocess
-import sys
 from typing import Iterable, List, Optional
 
 from inverse_neural_operator.config.schema import load_experiment_config
 from inverse_neural_operator.experiments.planner import PlannedJob, plan_jobs
+from inverse_neural_operator.runtime.paths import results_root, write_json
 
 
 STAGES = [
@@ -89,11 +90,41 @@ def _plan(args: argparse.Namespace) -> List[PlannedJob]:
     return _filter_jobs(jobs, args.stage)
 
 
-def _run_command(job: PlannedJob) -> int:
+def _run_command(job: PlannedJob) -> tuple[int, float]:
     print("", flush=True)
     print(f"Running {_label(job)}", flush=True)
     print(job.command, flush=True)
-    return subprocess.run(shlex.split(job.command), check=False).returncode
+    start_time = time.time()
+    returncode = subprocess.run(shlex.split(job.command), check=False).returncode
+    elapsed_seconds = time.time() - start_time
+    print(
+        f"Finished {_label(job)} in {elapsed_seconds:.2f}s "
+        f"with exit code {returncode}",
+        flush=True,
+    )
+    return returncode, elapsed_seconds
+
+
+def _write_runner_summary(
+    args: argparse.Namespace,
+    experiment: str,
+    records: List[dict],
+    skipped: int,
+) -> None:
+    root = results_root(args.results_dir)
+    path = root / "_runner" / f"{experiment}_last_run.json"
+    write_json(
+        path,
+        {
+            "experiment": experiment,
+            "config": args.config,
+            "stages": args.stage or [],
+            "ran": len(records),
+            "skipped_complete": skipped,
+            "jobs": records,
+        },
+    )
+    print(f"Runner summary: {path}", flush=True)
 
 
 def main() -> None:
@@ -115,6 +146,7 @@ def main() -> None:
 
     ran = 0
     skipped = len([job for job in initial_jobs if job.complete])
+    records: List[dict] = []
     while True:
         jobs = _plan(args)
         ready = [job for job in jobs if not job.complete and not job.blocked]
@@ -131,13 +163,26 @@ def main() -> None:
                 f"Done. Ran {ran} job(s); skipped {skipped} complete job(s).",
                 flush=True,
             )
+            _write_runner_summary(args, config.experiment, records, skipped)
             return
 
         job = ready[0]
-        returncode = _run_command(job)
+        returncode, elapsed_seconds = _run_command(job)
+        records.append(
+            {
+                "stage": job.stage,
+                "name": job.name,
+                "encoder_type": job.encoder_type,
+                "seed": job.seed,
+                "command": job.command,
+                "returncode": returncode,
+                "elapsed_seconds": elapsed_seconds,
+            }
+        )
         if returncode != 0:
             print("", flush=True)
             print(f"Job failed with exit code {returncode}: {_label(job)}", flush=True)
+            _write_runner_summary(args, config.experiment, records, skipped)
             raise SystemExit(returncode)
         ran += 1
 

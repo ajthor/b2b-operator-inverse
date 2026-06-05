@@ -1,0 +1,62 @@
+experiment: burgers_pipeline_6gpu_profile
+description: Fast Burgers six-GPU full-pipeline profile before expensive FWI runs.
+
+dataset:
+  name: burgers_1d
+  source: ajthor/burgers-fenics
+  sample_limit: 48
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 6
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  env:
+    NCCL_SHM_DISABLE: "1"
+
+matrix:
+  seeds: [1]
+  stages:
+    - function_encoders
+    - forward_models
+    - inverse_models
+    - evaluation
+
+function_encoders:
+  artifact: profile_6gpu
+  encoder_types: [input, output]
+  basis:
+    kind: siren
+    n_basis: 8
+    hidden_sizes: [32]
+    omega_0: 30.0
+  regularization: 0.001
+  batch_size: 2
+  epochs: 2
+  learning_rate: 0.0001
+  checkpoint_interval: 1
+
+forward_models:
+  models: [b2b_nonlinear]
+  function_encoder_artifact: profile_6gpu
+  hidden_sizes: [32]
+  coefficient_loss_weight: 1.0
+  reconstruction_loss_weight: 1.0
+  batch_size: 2
+  epochs: 2
+  learning_rate: 0.0001
+  checkpoint_interval: 1
+
+inverse_models:
+  models: [nonlinear]
+  function_encoder_artifact: profile_6gpu
+  forward_model: b2b_nonlinear
+  hidden_sizes: [32]
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
+  batch_size: 2
+  epochs: 2
+  learning_rate: 0.0001
+  checkpoint_interval: 1
