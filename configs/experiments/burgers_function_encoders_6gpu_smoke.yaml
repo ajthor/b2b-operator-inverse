@@ -1,0 +1,36 @@
+experiment: burgers_function_encoders_6gpu_smoke
+description: Fast Burgers function encoder smoke for six-GPU DDP launch validation.
+
+dataset:
+  name: burgers_1d
+  source: ajthor/burgers-fenics
+  sample_limit: 12
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 6
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  env:
+    NCCL_SHM_DISABLE: "1"
+
+matrix:
+  seeds: [1]
+  stages:
+    - function_encoders
+
+function_encoders:
+  artifact: ddp6_smoke
+  encoder_types: [input, output]
+  basis:
+    kind: siren
+    n_basis: 4
+    hidden_sizes: [16]
+    omega_0: 30.0
+  regularization: 0.001
+  batch_size: 1
+  epochs: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 1

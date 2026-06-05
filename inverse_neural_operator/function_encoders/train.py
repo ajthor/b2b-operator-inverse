@@ -63,17 +63,9 @@ def _loss(model, batch):
 
 
 def _load_dataset(config, split: str):
-    from inverse_neural_operator.data.fwi_hf import load_fwi_dataset
+    from inverse_neural_operator.data.overhaul import load_overhaul_dataset
 
-    if config.dataset.name != "fwi":
-        raise ValueError(
-            "The new DDP function encoder path currently supports dataset=fwi only."
-        )
-    return load_fwi_dataset(
-        split=split,
-        source=config.dataset.source or "ajthor/fwi",
-        sample_limit=config.dataset.sample_limit,
-    )
+    return load_overhaul_dataset(config, split)
 
 
 def main() -> None:
