@@ -51,6 +51,7 @@ class FunctionEncoderConfig:
     basis_chunk_size: Optional[int] = None
     coefficient_grad: bool = True
     regularization: float = 1e-3
+    orthonormality_loss_weight: float = 0.0
     batch_size: int = 4
     gradient_accumulation_steps: int = 1
     sample_with_replacement: bool = False

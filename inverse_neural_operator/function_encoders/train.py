@@ -52,7 +52,13 @@ def _move_batch(batch, device):
     return tuple(tensor.to(device, non_blocking=True) for tensor in batch)
 
 
-def _loss(model, batch, *, coefficient_grad: bool):
+def _loss(
+    model,
+    batch,
+    *,
+    coefficient_grad: bool,
+    orthonormality_loss_weight: float,
+):
     import torch
 
     example_xs, example_ys, xs, ys = batch
@@ -64,13 +70,17 @@ def _loss(model, batch, *, coefficient_grad: bool):
             coefficients, gram = encoder.compute_coefficients(example_xs, example_ys)
     pred = model(xs, coefficients)
     pred_loss = torch.nn.functional.mse_loss(pred, ys)
-    try:
-        from function_encoder.losses import basis_orthonormality_loss
+    if orthonormality_loss_weight > 0:
+        try:
+            from function_encoder.losses import basis_orthonormality_loss
 
-        norm_loss = basis_orthonormality_loss(gram, device=ys.device)
-    except Exception:
+            norm_loss = basis_orthonormality_loss(gram, device=ys.device)
+        except Exception:
+            norm_loss = torch.zeros((), device=ys.device)
+    else:
         norm_loss = torch.zeros((), device=ys.device)
-    return pred_loss + norm_loss, pred_loss.detach(), norm_loss.detach()
+    loss = pred_loss + orthonormality_loss_weight * norm_loss
+    return loss, pred_loss.detach(), norm_loss.detach()
 
 
 def _load_dataset(config, split: str):
@@ -342,6 +352,9 @@ def main() -> None:
                         model,
                         batch,
                         coefficient_grad=fe_config.coefficient_grad,
+                        orthonormality_loss_weight=(
+                            fe_config.orthonormality_loss_weight
+                        ),
                     )
                     test_total += loss.detach()
                     test_count += 1
@@ -383,6 +396,9 @@ def main() -> None:
                             model,
                             batch,
                             coefficient_grad=fe_config.coefficient_grad,
+                            orthonormality_loss_weight=(
+                                fe_config.orthonormality_loss_weight
+                            ),
                         )
                         (loss / accumulation_steps).backward()
                     step_loss_total += loss.detach()
@@ -474,6 +490,9 @@ def main() -> None:
                         model,
                         batch,
                         coefficient_grad=fe_config.coefficient_grad,
+                        orthonormality_loss_weight=(
+                            fe_config.orthonormality_loss_weight
+                        ),
                     )
                     loss.backward()
                     optimizer.step()
@@ -552,6 +571,7 @@ def main() -> None:
                 "basis_kind": fe_config.basis.kind,
                 "basis_chunk_size": fe_config.basis_chunk_size,
                 "coefficient_grad": fe_config.coefficient_grad,
+                "orthonormality_loss_weight": fe_config.orthonormality_loss_weight,
                 "rank0_device": str(context.device),
                 "rank0_device_name": (
                     torch.cuda.get_device_name(context.device)
