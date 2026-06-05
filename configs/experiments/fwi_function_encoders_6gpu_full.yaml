@@ -24,6 +24,7 @@ matrix:
 function_encoders:
   artifact: siren_nbasis100_6gpu
   encoder_types: [input, output]
+  basis_chunk_size: 4
   basis:
     kind: siren
     n_basis: 100

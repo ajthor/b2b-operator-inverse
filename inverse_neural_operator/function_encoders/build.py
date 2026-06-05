@@ -90,6 +90,64 @@ def memory_efficient_inner_product(f: torch.Tensor, g: torch.Tensor) -> torch.Te
     return torch.matmul(f_flat.transpose(1, 2), g_flat) / m
 
 
+class ChunkedFunctionEncoder(torch.nn.Module):
+    """Function encoder that avoids materializing every basis output at once."""
+
+    def __init__(
+        self,
+        basis_functions: torch.nn.Module,
+        *,
+        regularization: float,
+        basis_chunk_size: int,
+        residual_function: Optional[torch.nn.Module] = None,
+        inner_product: Callable = memory_efficient_inner_product,
+    ):
+        super().__init__()
+        self.basis_functions = basis_functions
+        self.residual_function = residual_function
+        self.regularization = regularization
+        self.basis_chunk_size = basis_chunk_size
+        self.inner_product = inner_product
+
+    def _basis_chunks(self, x: torch.Tensor):
+        basis_networks = self.basis_functions.basis_functions
+        for start in range(0, len(basis_networks), self.basis_chunk_size):
+            chunk = basis_networks[start : start + self.basis_chunk_size]
+            yield start, torch.stack([basis(x) for basis in chunk], dim=-1)
+
+    def compute_coefficients(self, x: torch.Tensor, y: torch.Tensor):
+        f = y
+        if self.residual_function is not None:
+            f = f - self.residual_function(x).detach()
+
+        f_chunks = []
+        g_rows = []
+        for _, g_left in self._basis_chunks(x):
+            f_chunks.append(self.inner_product(g_left, f.unsqueeze(-1)).squeeze(-1))
+            row_chunks = []
+            for _, g_right in self._basis_chunks(x):
+                row_chunks.append(self.inner_product(g_left, g_right))
+            g_rows.append(torch.cat(row_chunks, dim=-1))
+        F = torch.cat(f_chunks, dim=-1)
+        G = torch.cat(g_rows, dim=-2)
+        eye = torch.eye(G.size(-1), device=G.device, dtype=G.dtype)
+        coefficients = torch.linalg.solve(G + self.regularization * eye, F)
+        return coefficients, G
+
+    def forward(self, x: torch.Tensor, coefficients: torch.Tensor) -> torch.Tensor:
+        y = None
+        for start, g in self._basis_chunks(x):
+            stop = start + g.shape[-1]
+            chunk_coefficients = coefficients[:, start:stop]
+            chunk_y = torch.einsum("bmdk,bk->bmd", g, chunk_coefficients)
+            y = chunk_y if y is None else y + chunk_y
+        if y is None:
+            raise ValueError("Function encoder has no basis functions.")
+        if self.residual_function is not None:
+            y = y + self.residual_function(x).detach()
+        return y
+
+
 def create_function_encoder(
     *,
     input_size: int,
@@ -101,6 +159,7 @@ def create_function_encoder(
     omega_0: float = 30.0,
     regularization: float = 1e-3,
     inner_product: Optional[Callable] = None,
+    basis_chunk_size: Optional[int] = None,
 ):
     """Create a FunctionEncoder from standard torch Sequential basis networks."""
     from function_encoder.coefficients import least_squares
@@ -119,11 +178,18 @@ def create_function_encoder(
         else:
             raise ValueError(f"Unsupported function encoder basis kind: {basis_kind}")
 
-    coefficients_method = functools.partial(
-        least_squares, regularization=regularization
-    )
+    basis_functions = BasisFunctions(*basis_networks)
+    if basis_chunk_size is not None:
+        return ChunkedFunctionEncoder(
+            basis_functions,
+            regularization=regularization,
+            basis_chunk_size=basis_chunk_size,
+            inner_product=inner_product or memory_efficient_inner_product,
+        )
+
+    coefficients_method = functools.partial(least_squares, regularization=regularization)
     kwargs = {"coefficients_method": coefficients_method}
     if inner_product is not None:
         kwargs["inner_product"] = inner_product
 
-    return FunctionEncoder(BasisFunctions(*basis_networks), **kwargs)
+    return FunctionEncoder(basis_functions, **kwargs)

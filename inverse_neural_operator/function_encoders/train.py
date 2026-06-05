@@ -191,6 +191,7 @@ def main() -> None:
             activation=fe_config.basis.activation,
             omega_0=fe_config.basis.omega_0,
             regularization=fe_config.regularization,
+            basis_chunk_size=fe_config.basis_chunk_size,
             inner_product=(
                 memory_efficient_inner_product
                 if config.dataset.name == "fwi"

@@ -90,6 +90,7 @@ def load_function_encoder(
     )
     fe_config = SimpleNamespace(
         basis=basis,
+        basis_chunk_size=fe_raw.get("basis_chunk_size"),
         regularization=fe_raw.get("regularization", 1e-3),
     )
 
@@ -103,6 +104,7 @@ def load_function_encoder(
         activation=getattr(fe_config.basis, "activation", "relu"),
         omega_0=getattr(fe_config.basis, "omega_0", 30.0),
         regularization=fe_config.regularization,
+        basis_chunk_size=fe_config.basis_chunk_size,
     ).to(device)
     model.load_state_dict(load_file(str(weights_path), device=str(device)))
     model.eval()

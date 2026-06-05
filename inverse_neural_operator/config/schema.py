@@ -47,6 +47,7 @@ class FunctionEncoderConfig:
     artifact: str = "default"
     encoder_types: List[str] = field(default_factory=lambda: ["input", "output"])
     basis: BasisConfig = field(default_factory=BasisConfig)
+    basis_chunk_size: Optional[int] = None
     regularization: float = 1e-3
     batch_size: int = 4
     epochs: int = 1

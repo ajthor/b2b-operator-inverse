@@ -22,6 +22,7 @@ matrix:
 function_encoders:
   artifact: ramp_2gpu
   encoder_types: [input, output]
+  basis_chunk_size: 4
   basis:
     kind: siren
     n_basis: 16

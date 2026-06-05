@@ -24,6 +24,7 @@ matrix:
 function_encoders:
   artifact: ddp4_smoke
   encoder_types: [input, output]
+  basis_chunk_size: 2
   basis:
     kind: siren
     n_basis: 4
