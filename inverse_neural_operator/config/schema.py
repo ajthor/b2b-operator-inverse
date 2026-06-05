@@ -52,6 +52,10 @@ class FunctionEncoderConfig:
     regularization: float = 1e-3
     batch_size: int = 4
     epochs: int = 1
+    max_steps: Optional[int] = None
+    eval_interval: int = 250
+    eval_batches: Optional[int] = None
+    log_interval: int = 10
     learning_rate: float = 1e-4
     checkpoint_interval: int = 1
 

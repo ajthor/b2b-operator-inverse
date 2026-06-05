@@ -214,6 +214,7 @@ def main() -> None:
 
         best_test = None
         start_epoch = 0
+        start_step = 0
         if args.resume:
             if not checkpoint_path.exists():
                 raise FileNotFoundError(
@@ -227,41 +228,47 @@ def main() -> None:
             target_model = model.module if hasattr(model, "module") else model
             target_model.load_state_dict(checkpoint["model_state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            start_epoch = int(checkpoint["epoch"]) + 1
+            start_epoch = int(checkpoint.get("epoch", -1)) + 1
+            start_step = int(checkpoint.get("step", -1)) + 1
             best_test = checkpoint.get("best_test_loss")
 
         if context.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(context.device)
         epoch_seconds = []
+        completed_steps = start_step
+        step_seconds = []
         start_time = time.time()
-        for epoch in range(start_epoch, fe_config.epochs):
-            epoch_start = time.time()
-            if train_sampler is not None:
-                train_sampler.set_epoch(epoch)
-            model.train()
-            train_total = torch.zeros((), device=context.device)
-            train_count = 0
-            for batch in train_loader:
-                batch = _move_batch(batch, context.device)
-                optimizer.zero_grad(set_to_none=True)
-                loss, pred_loss, norm_loss = _loss(
-                    model,
-                    batch,
-                    coefficient_grad=fe_config.coefficient_grad,
-                )
-                loss.backward()
-                optimizer.step()
-                train_total += loss.detach()
-                train_count += 1
 
-            mean_train = train_total / max(train_count, 1)
-            mean_train = reduce_mean(mean_train, context)
+        def save_checkpoint(epoch, step, loss_value):
+            if not context.is_rank_zero:
+                return
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "step": step,
+                    "model_state_dict": (
+                        model.module.state_dict()
+                        if hasattr(model, "module")
+                        else model.state_dict()
+                    ),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "loss": loss_value,
+                    "best_test_loss": best_test,
+                },
+                checkpoint_path,
+            )
 
+        def evaluate(step_or_epoch):
             model.eval()
             test_total = torch.zeros((), device=context.device)
             test_count = 0
             with torch.no_grad():
-                for batch in test_loader:
+                for batch_index, batch in enumerate(test_loader):
+                    if (
+                        fe_config.eval_batches is not None
+                        and batch_index >= fe_config.eval_batches
+                    ):
+                        break
                     batch = _move_batch(batch, context.device)
                     loss, _, _ = _loss(
                         model,
@@ -272,31 +279,125 @@ def main() -> None:
                     test_count += 1
             mean_test = test_total / max(test_count, 1)
             mean_test = reduce_mean(mean_test, context)
-            best_test = (
-                float(mean_test.item())
-                if best_test is None
-                else min(best_test, float(mean_test.item()))
-            )
-            epoch_seconds.append(time.time() - epoch_start)
+            return mean_test, test_count
 
-            if context.is_rank_zero:
-                assert writer is not None
-                writer.add_scalar(f"loss_train/{args.encoder_type}", mean_train.item(), epoch)
-                writer.add_scalar(f"loss_test/{args.encoder_type}", mean_test.item(), epoch)
-                torch.save(
-                    {
-                        "epoch": epoch,
-                        "model_state_dict": (
-                            model.module.state_dict()
-                            if hasattr(model, "module")
-                            else model.state_dict()
-                        ),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "loss": mean_test.item(),
-                        "best_test_loss": best_test,
-                    },
-                    checkpoint_path,
+        if fe_config.max_steps is not None:
+            data_epoch = 0
+            if train_sampler is not None:
+                train_sampler.set_epoch(data_epoch)
+            train_iter = iter(train_loader)
+            for step in range(start_step, fe_config.max_steps):
+                step_start = time.time()
+                try:
+                    batch = next(train_iter)
+                except StopIteration:
+                    data_epoch += 1
+                    if train_sampler is not None:
+                        train_sampler.set_epoch(data_epoch)
+                    train_iter = iter(train_loader)
+                    batch = next(train_iter)
+
+                model.train()
+                batch = _move_batch(batch, context.device)
+                optimizer.zero_grad(set_to_none=True)
+                loss, pred_loss, norm_loss = _loss(
+                    model,
+                    batch,
+                    coefficient_grad=fe_config.coefficient_grad,
                 )
+                loss.backward()
+                optimizer.step()
+                completed_steps = step + 1
+                step_seconds.append(time.time() - step_start)
+
+                if (
+                    context.is_rank_zero
+                    and fe_config.log_interval > 0
+                    and (completed_steps == 1 or completed_steps % fe_config.log_interval == 0)
+                ):
+                    assert writer is not None
+                    writer.add_scalar(
+                        f"loss_train/{args.encoder_type}",
+                        loss.detach().item(),
+                        completed_steps,
+                    )
+
+                should_evaluate = (
+                    fe_config.eval_interval > 0
+                    and (
+                        completed_steps % fe_config.eval_interval == 0
+                        or completed_steps == fe_config.max_steps
+                    )
+                )
+                should_checkpoint = (
+                    fe_config.checkpoint_interval > 0
+                    and completed_steps % fe_config.checkpoint_interval == 0
+                )
+                if should_evaluate:
+                    mean_test, test_count = evaluate(completed_steps)
+                    best_test = (
+                        float(mean_test.item())
+                        if best_test is None
+                        else min(best_test, float(mean_test.item()))
+                    )
+                    if context.is_rank_zero:
+                        assert writer is not None
+                        writer.add_scalar(
+                            f"loss_test/{args.encoder_type}",
+                            mean_test.item(),
+                            completed_steps,
+                        )
+                        writer.add_scalar(
+                            f"eval_batches/{args.encoder_type}",
+                            test_count,
+                            completed_steps,
+                        )
+                    save_checkpoint(data_epoch, completed_steps, mean_test.item())
+                elif should_checkpoint:
+                    save_checkpoint(data_epoch, completed_steps, loss.detach().item())
+        else:
+            for epoch in range(start_epoch, fe_config.epochs):
+                epoch_start = time.time()
+                if train_sampler is not None:
+                    train_sampler.set_epoch(epoch)
+                model.train()
+                train_total = torch.zeros((), device=context.device)
+                train_count = 0
+                for batch in train_loader:
+                    batch = _move_batch(batch, context.device)
+                    optimizer.zero_grad(set_to_none=True)
+                    loss, pred_loss, norm_loss = _loss(
+                        model,
+                        batch,
+                        coefficient_grad=fe_config.coefficient_grad,
+                    )
+                    loss.backward()
+                    optimizer.step()
+                    train_total += loss.detach()
+                    train_count += 1
+                    completed_steps += 1
+
+                mean_train = train_total / max(train_count, 1)
+                mean_train = reduce_mean(mean_train, context)
+
+                mean_test, test_count = evaluate(epoch)
+                best_test = (
+                    float(mean_test.item())
+                    if best_test is None
+                    else min(best_test, float(mean_test.item()))
+                )
+                epoch_seconds.append(time.time() - epoch_start)
+
+                if context.is_rank_zero:
+                    assert writer is not None
+                    writer.add_scalar(
+                        f"loss_train/{args.encoder_type}",
+                        mean_train.item(),
+                        epoch,
+                    )
+                    writer.add_scalar(f"loss_test/{args.encoder_type}", mean_test.item(), epoch)
+                    writer.add_scalar(f"eval_batches/{args.encoder_type}", test_count, epoch)
+                save_checkpoint(epoch, completed_steps, mean_test.item())
 
         barrier(context)
         if context.is_rank_zero:
@@ -316,11 +417,23 @@ def main() -> None:
                 metrics_payload = {}
             metrics_payload[args.encoder_type] = {
                 "best_test_loss": best_test,
+                "training_mode": "steps" if fe_config.max_steps is not None else "epochs",
                 "epochs": fe_config.epochs,
+                "max_steps": fe_config.max_steps,
+                "completed_steps": completed_steps,
                 "start_epoch": start_epoch,
+                "start_step": start_step,
                 "resumed": args.resume,
                 "elapsed_seconds": time.time() - start_time,
                 "epoch_seconds": epoch_seconds,
+                "average_step_seconds": (
+                    sum(step_seconds) / len(step_seconds)
+                    if step_seconds
+                    else None
+                ),
+                "eval_interval": fe_config.eval_interval,
+                "eval_batches": fe_config.eval_batches,
+                "log_interval": fe_config.log_interval,
                 "world_size": context.world_size,
                 "batch_size_per_rank": fe_config.batch_size,
                 "train_samples": len(train_dataset),

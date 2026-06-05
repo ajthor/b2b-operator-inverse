@@ -1,15 +1,15 @@
-experiment: fwi_function_encoders_6gpu_full
-description: Full FWI function encoder training plan using six GPU DDP.
+experiment: fwi_function_encoders_steps_smoke
+description: Tiny FWI smoke test for step-budget function encoder training.
 
 dataset:
   name: fwi
   source: ajthor/fwi
-  sample_limit: null
+  sample_limit: 8
 
 runtime:
   dry_run: true
   launcher: torchrun
-  nproc_per_node: 6
+  nproc_per_node: 4
   device: cuda
   num_workers: 0
   pin_memory: true
@@ -22,21 +22,21 @@ matrix:
     - function_encoders
 
 function_encoders:
-  artifact: siren_nbasis100_6gpu
+  artifact: steps_smoke
   encoder_types: [input, output]
-  basis_chunk_size: 4
+  basis_chunk_size: 2
   coefficient_grad: false
   basis:
     kind: siren
-    n_basis: 100
-    hidden_sizes: [512, 512, 512]
+    n_basis: 4
+    hidden_sizes: [16]
     omega_0: 30.0
   regularization: 0.001
   batch_size: 1
   epochs: 1
-  max_steps: 5000
-  eval_interval: 250
-  eval_batches: 20
-  log_interval: 10
+  max_steps: 4
+  eval_interval: 2
+  eval_batches: 2
+  log_interval: 1
   learning_rate: 0.0001
-  checkpoint_interval: 250
+  checkpoint_interval: 2
