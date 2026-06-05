@@ -60,11 +60,14 @@ def _with_root_args(
     command: str,
     models_dir_override: Optional[str],
     results_dir_override: Optional[str],
+    tensorboard_dir: Optional[str] = None,
 ) -> str:
     if models_dir_override:
         command += f" --models-dir {models_dir_override}"
     if results_dir_override:
         command += f" --results-dir {results_dir_override}"
+    if tensorboard_dir:
+        command += f" --tensorboard-dir {shlex.quote(tensorboard_dir)}"
     return command
 
 
@@ -172,7 +175,12 @@ def _function_encoder_jobs(
                 f"--config {config_path} --encoder-type {encoder_type} "
                 f"--seed {seed} --execute"
             )
-            command = _with_root_args(command, models_dir_override, results_dir_override)
+            command = _with_root_args(
+                command,
+                models_dir_override,
+                results_dir_override,
+                config.runtime.tensorboard_dir,
+            )
             yield PlannedJob(
                 stage="function_encoders",
                 name=fe.artifact,

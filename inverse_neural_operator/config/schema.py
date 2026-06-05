@@ -25,6 +25,7 @@ class RuntimeConfig:
     num_workers: int = 0
     pin_memory: bool = True
     env: Dict[str, str] = field(default_factory=dict)
+    tensorboard_dir: Optional[str] = None
 
 
 @dataclass

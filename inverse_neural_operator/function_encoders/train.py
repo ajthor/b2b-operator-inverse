@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from pathlib import Path
 
 
 from inverse_neural_operator.config.schema import load_experiment_config
@@ -38,6 +39,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models-dir", default=None)
     parser.add_argument("--results-dir", default=None)
+    parser.add_argument(
+        "--tensorboard-dir",
+        default=None,
+        help="Optional root for TensorBoard logs. Checkpoints still use --results-dir.",
+    )
     return parser.parse_args()
 
 
@@ -103,11 +109,25 @@ def main() -> None:
         )
         / args.encoder_type
     )
+    tensorboard_root = args.tensorboard_dir or config.runtime.tensorboard_dir
+    tensorboard_dir = (
+        run_artifact_dir(
+            Path(tensorboard_root).expanduser().resolve(),
+            config.dataset.name,
+            "function_encoders",
+            fe_config.artifact,
+            args.seed,
+        )
+        / args.encoder_type
+        if tensorboard_root
+        else run_dir
+    )
 
     if not args.execute:
         print("Dry run: function encoder training will not execute.")
         print(f"model_dir: {model_dir or '<B2B_MODELS_DIR unset>'}")
         print(f"run_dir:   {run_dir}")
+        print(f"tensorboard_dir: {tensorboard_dir}")
         return
 
     import torch
@@ -208,8 +228,9 @@ def main() -> None:
             )
 
         optimizer = torch.optim.Adam(model.parameters(), lr=fe_config.learning_rate)
-        writer = SummaryWriter(log_dir=str(run_dir)) if context.is_rank_zero else None
+        writer = SummaryWriter(log_dir=str(tensorboard_dir)) if context.is_rank_zero else None
         run_dir.mkdir(parents=True, exist_ok=True)
+        tensorboard_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_path = run_dir / "latest_checkpoint.pt"
 
         best_test = None
@@ -434,6 +455,7 @@ def main() -> None:
                 "eval_interval": fe_config.eval_interval,
                 "eval_batches": fe_config.eval_batches,
                 "log_interval": fe_config.log_interval,
+                "tensorboard_dir": str(tensorboard_dir),
                 "world_size": context.world_size,
                 "batch_size_per_rank": fe_config.batch_size,
                 "train_samples": len(train_dataset),
