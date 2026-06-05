@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import time
 from pathlib import Path
@@ -76,6 +77,33 @@ def _load_dataset(config, split: str):
     from inverse_neural_operator.data.overhaul import load_overhaul_dataset
 
     return load_overhaul_dataset(config, split)
+
+
+class RandomFunctionSampler:
+    """Uniform random function sampler for step-budget training."""
+
+    def __init__(self, dataset_size: int, num_samples: int, seed: int):
+        self.dataset_size = dataset_size
+        self.num_samples = num_samples
+        self.seed = seed
+
+    def __iter__(self):
+        import torch
+
+        generator = torch.Generator()
+        generator.manual_seed(self.seed)
+        for _ in range(self.num_samples):
+            yield int(
+                torch.randint(
+                    low=0,
+                    high=self.dataset_size,
+                    size=(1,),
+                    generator=generator,
+                ).item()
+            )
+
+    def __len__(self):
+        return self.num_samples
 
 
 def main() -> None:
@@ -176,11 +204,24 @@ def main() -> None:
             output_size = dataset_info["s_size"]
             weights_name = "output_encoder.safetensors"
 
-        train_sampler = (
-            DistributedSampler(train_dataset, shuffle=True)
-            if context.is_distributed
-            else None
-        )
+        accumulation_steps = max(1, fe_config.gradient_accumulation_steps)
+        if fe_config.max_steps is not None and fe_config.sample_with_replacement:
+            train_sample_count = (
+                fe_config.max_steps
+                * accumulation_steps
+                * fe_config.batch_size
+            )
+            train_sampler = RandomFunctionSampler(
+                len(train_dataset),
+                num_samples=train_sample_count,
+                seed=args.seed + context.rank * 1_000_003,
+            )
+        else:
+            train_sampler = (
+                DistributedSampler(train_dataset, shuffle=True)
+                if context.is_distributed
+                else None
+            )
         test_sampler = (
             DistributedSampler(test_dataset, shuffle=False)
             if context.is_distributed
@@ -190,7 +231,13 @@ def main() -> None:
         train_loader = DataLoader(
             train_dataset,
             batch_size=fe_config.batch_size,
-            shuffle=train_sampler is None,
+            shuffle=(
+                train_sampler is None
+                and not (
+                    fe_config.max_steps is not None
+                    and fe_config.sample_with_replacement
+                )
+            ),
             sampler=train_sampler,
             num_workers=config.runtime.num_workers,
             pin_memory=config.runtime.pin_memory and context.device.type == "cuda",
@@ -304,32 +351,58 @@ def main() -> None:
 
         if fe_config.max_steps is not None:
             data_epoch = 0
-            if train_sampler is not None:
+            if isinstance(train_sampler, DistributedSampler):
                 train_sampler.set_epoch(data_epoch)
             train_iter = iter(train_loader)
             for step in range(start_step, fe_config.max_steps):
                 step_start = time.time()
-                try:
-                    batch = next(train_iter)
-                except StopIteration:
-                    data_epoch += 1
-                    if train_sampler is not None:
-                        train_sampler.set_epoch(data_epoch)
-                    train_iter = iter(train_loader)
-                    batch = next(train_iter)
-
                 model.train()
-                batch = _move_batch(batch, context.device)
                 optimizer.zero_grad(set_to_none=True)
-                loss, pred_loss, norm_loss = _loss(
-                    model,
-                    batch,
-                    coefficient_grad=fe_config.coefficient_grad,
-                )
-                loss.backward()
+                step_loss_total = torch.zeros((), device=context.device)
+                step_pred_total = torch.zeros((), device=context.device)
+                step_norm_total = torch.zeros((), device=context.device)
+                for micro_step in range(accumulation_steps):
+                    try:
+                        batch = next(train_iter)
+                    except StopIteration:
+                        data_epoch += 1
+                        if isinstance(train_sampler, DistributedSampler):
+                            train_sampler.set_epoch(data_epoch)
+                        train_iter = iter(train_loader)
+                        batch = next(train_iter)
+
+                    batch = _move_batch(batch, context.device)
+                    should_sync = micro_step == accumulation_steps - 1
+                    sync_context = (
+                        nullcontext()
+                        if should_sync or not hasattr(model, "no_sync")
+                        else model.no_sync()
+                    )
+                    with sync_context:
+                        loss, pred_loss, norm_loss = _loss(
+                            model,
+                            batch,
+                            coefficient_grad=fe_config.coefficient_grad,
+                        )
+                        (loss / accumulation_steps).backward()
+                    step_loss_total += loss.detach()
+                    step_pred_total += pred_loss.detach()
+                    step_norm_total += norm_loss.detach()
                 optimizer.step()
                 completed_steps = step + 1
                 step_seconds.append(time.time() - step_start)
+                mean_step_loss = reduce_mean(
+                    step_loss_total / accumulation_steps,
+                    context,
+                )
+                mean_step_pred = reduce_mean(
+                    step_pred_total / accumulation_steps,
+                    context,
+                )
+                mean_step_norm = reduce_mean(
+                    step_norm_total / accumulation_steps,
+                    context,
+                )
 
                 if (
                     context.is_rank_zero
@@ -339,7 +412,17 @@ def main() -> None:
                     assert writer is not None
                     writer.add_scalar(
                         f"loss_train/{args.encoder_type}",
-                        loss.detach().item(),
+                        mean_step_loss.item(),
+                        completed_steps,
+                    )
+                    writer.add_scalar(
+                        f"loss_train_pred/{args.encoder_type}",
+                        mean_step_pred.item(),
+                        completed_steps,
+                    )
+                    writer.add_scalar(
+                        f"loss_train_norm/{args.encoder_type}",
+                        mean_step_norm.item(),
                         completed_steps,
                     )
 
@@ -375,7 +458,7 @@ def main() -> None:
                         )
                     save_checkpoint(data_epoch, completed_steps, mean_test.item())
                 elif should_checkpoint:
-                    save_checkpoint(data_epoch, completed_steps, loss.detach().item())
+                    save_checkpoint(data_epoch, completed_steps, mean_step_loss.item())
         else:
             for epoch in range(start_epoch, fe_config.epochs):
                 epoch_start = time.time()
@@ -458,6 +541,11 @@ def main() -> None:
                 "tensorboard_dir": str(tensorboard_dir),
                 "world_size": context.world_size,
                 "batch_size_per_rank": fe_config.batch_size,
+                "gradient_accumulation_steps": accumulation_steps,
+                "effective_functions_per_step": (
+                    fe_config.batch_size * accumulation_steps * context.world_size
+                ),
+                "sample_with_replacement": fe_config.sample_with_replacement,
                 "train_samples": len(train_dataset),
                 "test_samples": len(test_dataset),
                 "n_basis": fe_config.basis.n_basis,

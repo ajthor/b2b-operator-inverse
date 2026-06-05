@@ -52,6 +52,8 @@ class FunctionEncoderConfig:
     coefficient_grad: bool = True
     regularization: float = 1e-3
     batch_size: int = 4
+    gradient_accumulation_steps: int = 1
+    sample_with_replacement: bool = False
     epochs: int = 1
     max_steps: Optional[int] = None
     eval_interval: int = 250

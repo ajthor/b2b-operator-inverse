@@ -34,6 +34,8 @@ function_encoders:
     omega_0: 30.0
   regularization: 0.001
   batch_size: 1
+  gradient_accumulation_steps: 9
+  sample_with_replacement: true
   epochs: 1
   max_steps: 5000
   eval_interval: 100
