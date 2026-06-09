@@ -22,6 +22,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--split", default="test", choices=["train", "test"])
     parser.add_argument(
+        "--eval-batches",
+        type=int,
+        default=None,
+        help="Optional batch limit. Defaults to full split evaluation.",
+    )
+    parser.add_argument(
         "--execute",
         action="store_true",
         help="Actually evaluate. Without this flag the command only prints paths.",
@@ -183,6 +189,7 @@ def main() -> None:
             persistent_workers=config.runtime.num_workers > 0,
         )
 
+        inverse_config.eval_batches = args.eval_batches
         metrics = _evaluate(
             model,
             loader,

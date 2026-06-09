@@ -341,11 +341,6 @@ def _inverse_model_jobs(
                 models_dir,
                 seed,
             )
-            forward_dependencies, forward_missing = _forward_dependency(
-                config,
-                models_dir,
-                seed,
-            )
             prefix = _torchrun_prefix(config)
             command = (
                 f"{prefix} -m inverse_neural_operator.inverse.train "
@@ -363,8 +358,8 @@ def _inverse_model_jobs(
                 run_dir=run_dir,
                 command=command,
                 complete=complete,
-                dependencies=fe_dependencies + forward_dependencies,
-                missing_dependencies=fe_missing + forward_missing,
+                dependencies=fe_dependencies,
+                missing_dependencies=fe_missing,
             )
 
 

@@ -9,6 +9,7 @@ from inverse_neural_operator.config.schema import load_experiment_config
 from inverse_neural_operator.runtime.paths import (
     model_artifact_dir,
     models_root,
+    refuse_existing_artifact,
     results_root,
     run_artifact_dir,
     write_json,
@@ -29,6 +30,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models-dir", default=None)
     parser.add_argument("--results-dir", default=None)
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow overwriting an existing final inverse-model artifact.",
+    )
     return parser.parse_args()
 
 
@@ -61,58 +67,15 @@ def _coefficients(batch, input_encoder, output_encoder):
 
 
 def _relative_l2(prediction, target):
-    import torch
+    from inverse_neural_operator.evaluation.metrics import relative_l2
 
-    batch_size = prediction.shape[0]
-    numerator = torch.norm(
-        prediction.reshape(batch_size, -1) - target.reshape(batch_size, -1),
-        p=2,
-        dim=1,
-    )
-    denominator = torch.clamp(
-        torch.norm(target.reshape(batch_size, -1), p=2, dim=1),
-        min=1e-12,
-    )
-    return torch.mean(numerator / denominator)
+    return relative_l2(prediction, target)
 
 
 def _mean_ssim(prediction, target, spatial_dims):
-    if len(spatial_dims) != 2:
-        return None
-    try:
-        import numpy as np
-        from skimage.metrics import structural_similarity
-    except Exception:
-        return None
+    from inverse_neural_operator.evaluation.metrics import mean_ssim
 
-    pred = prediction.detach().float().cpu().reshape(prediction.shape[0], *spatial_dims, -1)
-    true = target.detach().float().cpu().reshape(target.shape[0], *spatial_dims, -1)
-    values = []
-    for pred_sample, true_sample in zip(pred, true):
-        channel_values = []
-        for channel in range(pred_sample.shape[-1]):
-            pred_channel = pred_sample[..., channel].numpy()
-            true_channel = true_sample[..., channel].numpy()
-            data_range = float(np.max(true_channel) - np.min(true_channel))
-            if data_range <= 0:
-                data_range = 1.0
-            min_dim = min(pred_channel.shape)
-            if min_dim < 3:
-                continue
-            win_size = min(7, min_dim if min_dim % 2 == 1 else min_dim - 1)
-            channel_values.append(
-                structural_similarity(
-                    true_channel,
-                    pred_channel,
-                    data_range=data_range,
-                    win_size=win_size,
-                )
-            )
-        if channel_values:
-            values.append(float(np.mean(channel_values)))
-    if not values:
-        return None
-    return float(np.mean(values))
+    return mean_ssim(prediction, target, spatial_dims)
 
 
 def _batch_metrics(
@@ -196,7 +159,9 @@ def _evaluate(
     ssim_counts = {"input_ssim": 0, "resimulation_ssim": 0}
     count = torch.zeros((), device=context.device)
     with torch.no_grad():
-        for batch in loader:
+        for batch_index, batch in enumerate(loader):
+            if config.eval_batches is not None and batch_index >= config.eval_batches:
+                break
             batch = _move_batch(batch, context.device)
             metrics = _batch_metrics(
                 model,
@@ -231,6 +196,7 @@ def _evaluate(
         payload[key] = (
             ssim_totals[key] / ssim_counts[key] if ssim_counts[key] else None
         )
+    payload["eval_batches"] = int(count.item())
     return payload
 
 
@@ -298,16 +264,15 @@ def main() -> None:
             f"Model {args.model!r} is not listed in inverse_models.models: "
             f"{inverse_config.models}"
         )
+    assert model_dir is not None
+    refuse_existing_artifact(model_dir / "model.safetensors", overwrite=args.overwrite)
     assert encoder_dir is not None
-    from inverse_neural_operator.forward.artifacts import require_forward_model_artifact
     from inverse_neural_operator.function_encoders.artifacts import (
         require_function_encoder_artifact,
     )
 
     try:
         require_function_encoder_artifact(encoder_dir)
-        if forward_dir is not None:
-            require_forward_model_artifact(forward_dir)
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -348,7 +313,7 @@ def main() -> None:
         n_basis = experiment_config.function_encoders.basis.n_basis
 
         forward_model = None
-        if forward_dir is not None:
+        if forward_dir is not None and (forward_dir / "model.safetensors").exists():
             forward_model = load_forward_model(
                 forward_dir,
                 model_name=inverse_config.forward_model,
@@ -449,9 +414,9 @@ def main() -> None:
             if context.is_rank_zero:
                 assert writer is not None
                 writer.add_scalar("loss/train", train_loss, epoch)
-                writer.add_scalar("loss/test", metrics["loss"], epoch)
-                writer.add_scalar("loss/test_input_mse", metrics["input_mse"], epoch)
-                writer.add_scalar("loss/test_resimulation_mse", metrics["resimulation_mse"], epoch)
+                for key, value in metrics.items():
+                    if isinstance(value, (int, float)) and value is not None:
+                        writer.add_scalar(f"loss/test_{key}", value, epoch)
                 torch.save(
                     {
                         "epoch": epoch,
@@ -475,6 +440,7 @@ def main() -> None:
                     "elapsed_seconds": time.time() - start_time,
                     "function_encoder_artifact": inverse_config.function_encoder_artifact,
                     "forward_model": inverse_config.forward_model,
+                    "forward_model_loaded": forward_model is not None,
                 }
             )
             write_json(model_dir / "metrics.json", metrics)
@@ -488,6 +454,7 @@ def main() -> None:
                 extra={
                     "function_encoder_artifact": inverse_config.function_encoder_artifact,
                     "forward_model": inverse_config.forward_model,
+                    "forward_model_loaded": forward_model is not None,
                 },
             )
             if writer is not None:

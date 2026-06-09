@@ -73,6 +73,7 @@ class ForwardModelsConfig:
     reconstruction_loss_weight: float = 1.0
     batch_size: int = 4
     epochs: int = 1
+    eval_batches: Optional[int] = None
     learning_rate: float = 1e-4
     checkpoint_interval: int = 1
     linear_regularization: float = 1e-6
@@ -115,6 +116,7 @@ class InverseModelsConfig:
     coefficient_loss_weight: float = 0.0
     batch_size: int = 4
     epochs: int = 1
+    eval_batches: Optional[int] = None
     learning_rate: float = 1e-4
     checkpoint_interval: int = 1
     linear_regularization: float = 1e-6

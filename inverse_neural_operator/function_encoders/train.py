@@ -13,6 +13,7 @@ from inverse_neural_operator.config.schema import load_experiment_config
 from inverse_neural_operator.runtime.paths import (
     model_artifact_dir,
     models_root,
+    refuse_existing_artifact,
     results_root,
     run_artifact_dir,
     write_json,
@@ -40,6 +41,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models-dir", default=None)
     parser.add_argument("--results-dir", default=None)
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow overwriting an existing final encoder artifact.",
+    )
     parser.add_argument(
         "--tensorboard-dir",
         default=None,
@@ -213,6 +219,11 @@ def main() -> None:
             input_size = dataset_info["Y_size"]
             output_size = dataset_info["s_size"]
             weights_name = "output_encoder.safetensors"
+
+        assert model_dir is not None
+        if context.is_rank_zero:
+            refuse_existing_artifact(model_dir / weights_name, overwrite=args.overwrite)
+        barrier(context)
 
         accumulation_steps = max(1, fe_config.gradient_accumulation_steps)
         if fe_config.max_steps is not None and fe_config.sample_with_replacement:

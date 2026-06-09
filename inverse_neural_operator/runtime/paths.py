@@ -104,3 +104,13 @@ def write_manifest(
     if extra:
         payload.update(extra)
     write_json(artifact_dir / "manifest.json", payload)
+
+
+def refuse_existing_artifact(path: Path, *, overwrite: bool) -> None:
+    """Protect final uploadable artifacts from accidental overwrite."""
+    if path.exists() and not overwrite:
+        raise FileExistsError(
+            f"Refusing to overwrite existing final artifact: {path}. "
+            "Pass --overwrite only for an intentional rerun. Recovery checkpoints "
+            "live under the results directory and are separate from final artifacts."
+        )

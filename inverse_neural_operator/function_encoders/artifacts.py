@@ -67,7 +67,10 @@ def load_function_encoder(
     """Rebuild and load one saved function encoder."""
     import torch
     from safetensors.torch import load_file
-    from inverse_neural_operator.function_encoders.build import create_function_encoder
+    from inverse_neural_operator.function_encoders.build import (
+        create_function_encoder,
+        memory_efficient_inner_product,
+    )
 
     config_path = artifact_dir / "config.yaml"
     weights_path = artifact_dir / f"{encoder_type}_encoder.safetensors"
@@ -105,6 +108,11 @@ def load_function_encoder(
         omega_0=getattr(fe_config.basis, "omega_0", 30.0),
         regularization=fe_config.regularization,
         basis_chunk_size=fe_config.basis_chunk_size,
+        inner_product=(
+            memory_efficient_inner_product
+            if raw_config.get("dataset", {}).get("name") == "fwi"
+            else None
+        ),
     ).to(device)
     model.load_state_dict(load_file(str(weights_path), device=str(device)))
     model.eval()

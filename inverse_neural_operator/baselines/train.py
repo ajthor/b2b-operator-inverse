@@ -9,6 +9,7 @@ from inverse_neural_operator.config.schema import load_experiment_config
 from inverse_neural_operator.runtime.paths import (
     model_artifact_dir,
     models_root,
+    refuse_existing_artifact,
     results_root,
     run_artifact_dir,
     write_json,
@@ -29,6 +30,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models-dir", default=None)
     parser.add_argument("--results-dir", default=None)
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow overwriting an existing final baseline artifact.",
+    )
     return parser.parse_args()
 
 
@@ -187,6 +193,8 @@ def main() -> None:
             f"Model {args.model!r} is not listed in baselines.models: "
             f"{baseline_config.models}"
         )
+    assert model_dir is not None
+    refuse_existing_artifact(model_dir / "model.safetensors", overwrite=args.overwrite)
 
     import torch
     from safetensors.torch import save_file

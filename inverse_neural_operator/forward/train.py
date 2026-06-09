@@ -9,6 +9,7 @@ from inverse_neural_operator.config.schema import load_experiment_config
 from inverse_neural_operator.runtime.paths import (
     model_artifact_dir,
     models_root,
+    refuse_existing_artifact,
     results_root,
     run_artifact_dir,
     write_json,
@@ -29,6 +30,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models-dir", default=None)
     parser.add_argument("--results-dir", default=None)
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow overwriting an existing final forward-model artifact.",
+    )
     return parser.parse_args()
 
 
@@ -78,39 +84,96 @@ def _all_reduce_sum(tensor, context):
     return tensor
 
 
-def _evaluate(model, loader, context, input_encoder, output_encoder, forward_config):
+def _batch_metrics(
+    model,
+    batch,
+    input_encoder,
+    output_encoder,
+    dataset_info,
+    forward_config,
+):
+    import torch
+    from inverse_neural_operator.evaluation.metrics import mean_ssim, relative_l2
+
+    alpha, beta, Y, s = _coefficients(batch, input_encoder, output_encoder)
+    beta_pred = model(alpha)
+    s_pred = output_encoder(Y, beta_pred)
+    coefficient_loss = torch.nn.functional.mse_loss(beta_pred, beta)
+    reconstruction_mse = torch.nn.functional.mse_loss(s_pred, s)
+    total = (
+        forward_config.coefficient_loss_weight * coefficient_loss
+        + forward_config.reconstruction_loss_weight * reconstruction_mse
+    )
+    return {
+        "loss": total,
+        "coefficient_mse": coefficient_loss.detach(),
+        "output_mse": reconstruction_mse.detach(),
+        "output_relative_l2": relative_l2(s_pred, s).detach(),
+        "output_ssim": mean_ssim(s_pred, s, dataset_info["output_spatial_dims"]),
+    }
+
+
+def _evaluate(
+    model,
+    loader,
+    context,
+    input_encoder,
+    output_encoder,
+    dataset_info,
+    forward_config,
+):
     import torch
 
     model.eval()
-    total = torch.zeros((), device=context.device)
-    coefficient_total = torch.zeros((), device=context.device)
-    reconstruction_total = torch.zeros((), device=context.device)
+    totals = {
+        "loss": torch.zeros((), device=context.device),
+        "coefficient_mse": torch.zeros((), device=context.device),
+        "output_mse": torch.zeros((), device=context.device),
+        "output_relative_l2": torch.zeros((), device=context.device),
+    }
+    ssim_total = 0.0
+    ssim_count = 0
     count = torch.zeros((), device=context.device)
     with torch.no_grad():
-        for batch in loader:
+        for batch_index, batch in enumerate(loader):
+            if (
+                forward_config.eval_batches is not None
+                and batch_index >= forward_config.eval_batches
+            ):
+                break
             batch = _move_batch(batch, context.device)
-            loss, coefficient_loss, reconstruction_loss = _loss(
+            metrics = _batch_metrics(
                 model,
                 batch,
                 input_encoder,
                 output_encoder,
-                forward_config.coefficient_loss_weight,
-                forward_config.reconstruction_loss_weight,
+                dataset_info,
+                forward_config,
             )
-            total += loss.detach()
-            coefficient_total += coefficient_loss
-            reconstruction_total += reconstruction_loss
+            for key in totals:
+                totals[key] += metrics[key].detach()
+            if metrics["output_ssim"] is not None:
+                ssim_total += metrics["output_ssim"]
+                ssim_count += 1
             count += 1
-    _all_reduce_sum(total, context)
-    _all_reduce_sum(coefficient_total, context)
-    _all_reduce_sum(reconstruction_total, context)
+    for key in totals:
+        _all_reduce_sum(totals[key], context)
     _all_reduce_sum(count, context)
+    ssim_total_tensor = torch.tensor(ssim_total, device=context.device)
+    ssim_count_tensor = torch.tensor(ssim_count, device=context.device)
+    _all_reduce_sum(ssim_total_tensor, context)
+    _all_reduce_sum(ssim_count_tensor, context)
     count = torch.clamp(count, min=1)
-    return {
-        "loss": float((total / count).item()),
-        "coefficient_loss": float((coefficient_total / count).item()),
-        "reconstruction_loss": float((reconstruction_total / count).item()),
-    }
+    payload = {key: float((value / count).item()) for key, value in totals.items()}
+    payload["coefficient_loss"] = payload["coefficient_mse"]
+    payload["reconstruction_loss"] = payload["output_mse"]
+    payload["output_ssim"] = (
+        float((ssim_total_tensor / ssim_count_tensor).item())
+        if int(ssim_count_tensor.item())
+        else None
+    )
+    payload["eval_batches"] = int(count.item())
+    return payload
 
 
 def _train_linear_closed_form(
@@ -120,6 +183,7 @@ def _train_linear_closed_form(
     context,
     input_encoder,
     output_encoder,
+    dataset_info,
     forward_config,
 ):
     import torch
@@ -145,6 +209,7 @@ def _train_linear_closed_form(
         context,
         input_encoder,
         output_encoder,
+        dataset_info,
         forward_config,
     )
 
@@ -201,6 +266,8 @@ def main() -> None:
             f"Model {args.model!r} is not listed in forward_models.models: "
             f"{forward_config.models}"
         )
+    assert model_dir is not None
+    refuse_existing_artifact(model_dir / "model.safetensors", overwrite=args.overwrite)
     assert encoder_dir is not None
     from inverse_neural_operator.function_encoders.artifacts import (
         require_function_encoder_artifact,
@@ -299,10 +366,13 @@ def main() -> None:
                 context,
                 input_encoder,
                 output_encoder,
+                dataset_info,
                 forward_config,
             )
             if writer is not None:
-                writer.add_scalar("loss/test", metrics["loss"], 0)
+                for key, value in metrics.items():
+                    if isinstance(value, (int, float)) and value is not None:
+                        writer.add_scalar(f"loss/test_{key}", value, 0)
         else:
             optimizer = torch.optim.Adam(ddp_model.parameters(), lr=forward_config.learning_rate)
             best_test = None
@@ -337,13 +407,16 @@ def main() -> None:
                     context,
                     input_encoder,
                     output_encoder,
+                    dataset_info,
                     forward_config,
                 )
                 best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
                 if context.is_rank_zero:
                     assert writer is not None
                     writer.add_scalar("loss/train", train_loss, epoch)
-                    writer.add_scalar("loss/test", metrics["loss"], epoch)
+                    for key, value in metrics.items():
+                        if isinstance(value, (int, float)) and value is not None:
+                            writer.add_scalar(f"loss/test_{key}", value, epoch)
                     torch.save(
                         {
                             "epoch": epoch,
