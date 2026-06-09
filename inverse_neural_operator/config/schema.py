@@ -112,6 +112,9 @@ class InverseModelsConfig:
     function_encoder_artifact: str = "default"
     forward_model: Optional[str] = None
     hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])
+    latent_size: int = 128
+    n_coupling_layers: int = 6
+    n_components: int = 5
     prediction_loss_weight: float = 1.0
     coefficient_loss_weight: float = 0.0
     batch_size: int = 4

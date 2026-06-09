@@ -1,0 +1,68 @@
+experiment: fwi_inverse_architecture_matrix
+description: FWI inverse architecture sweep using the completed six-GPU SIREN function encoders.
+
+dataset:
+  name: fwi
+  source: ajthor/fwi
+  sample_limit: null
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 3
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  tensorboard_dir: ./results
+  env:
+    CUDA_VISIBLE_DEVICES: "3,4,5"
+    MASTER_PORT: "29511"
+    NCCL_SHM_DISABLE: "1"
+
+matrix:
+  seeds: [1]
+  stages:
+    - inverse_models
+
+function_encoders:
+  artifact: siren_nbasis100_6gpu
+  basis_chunk_size: 4
+  coefficient_grad: false
+  basis:
+    kind: siren
+    n_basis: 100
+    hidden_sizes: [512, 512, 512]
+    omega_0: 30.0
+  regularization: 0.001
+
+forward_models:
+  models: [b2b_nonlinear]
+  function_encoder_artifact: siren_nbasis100_6gpu
+  hidden_sizes: [128, 128]
+
+inverse_models:
+  models:
+    - nonlinear
+    - linear_inverse
+    - conditional_realnvp
+    - vae
+    - mixture_density
+    - cinn_additive
+    - cinn_affine
+    - cinn_additive_probabilistic
+    - cinn_affine_probabilistic
+    - inn_additive
+    - inn_affine
+  function_encoder_artifact: siren_nbasis100_6gpu
+  forward_model: b2b_nonlinear
+  hidden_sizes: [128, 128]
+  latent_size: 128
+  n_coupling_layers: 6
+  n_components: 5
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
+  batch_size: 1
+  epochs: 1
+  eval_batches: 2
+  learning_rate: 0.0001
+  checkpoint_interval: 1

@@ -17,12 +17,13 @@ from inverse_neural_operator.runtime.paths import (
     write_manifest,
     write_yaml,
 )
+from inverse_neural_operator.inverse.build import SUPPORTED_INVERSE_MODELS
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train an inverse coefficient model.")
     parser.add_argument("--config", required=True, help="Experiment YAML.")
-    parser.add_argument("--model", required=True, choices=["linear_inverse", "nonlinear"])
+    parser.add_argument("--model", required=True, choices=SUPPORTED_INVERSE_MODELS)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument(
         "--execute",
@@ -58,7 +59,7 @@ def _unwrap(model):
     return model.module if hasattr(model, "module") else model
 
 
-def _predict_alpha(model, beta):
+def _predict_alpha(model, beta, model_name: str):
     return model(beta)
 
 
@@ -93,11 +94,12 @@ def _batch_metrics(
     dataset_info,
     coefficient_weight,
     prediction_weight,
+    model_name,
 ):
     import torch
 
     alpha, beta, X, u, Y, s = _coefficients(batch, input_encoder, output_encoder)
-    alpha_pred = _predict_alpha(model, beta)
+    alpha_pred = _predict_alpha(model, beta, model_name)
     u_pred = input_encoder(X, alpha_pred)
 
     coefficient_mse = torch.nn.functional.mse_loss(alpha_pred, alpha)
@@ -149,6 +151,7 @@ def _evaluate(
     forward_model,
     dataset_info,
     config,
+    model_name,
 ):
     import torch
 
@@ -178,6 +181,7 @@ def _evaluate(
                 dataset_info,
                 config.coefficient_loss_weight,
                 config.prediction_loss_weight,
+                model_name,
             )
             for key in totals:
                 totals[key] += metrics[key].detach()
@@ -376,6 +380,9 @@ def main() -> None:
             input_size=n_basis,
             output_size=n_basis,
             hidden_sizes=inverse_config.hidden_sizes,
+            latent_size=inverse_config.latent_size,
+            n_coupling_layers=inverse_config.n_coupling_layers,
+            n_components=inverse_config.n_components,
         ).to(context.device)
         ddp_model = model
         if context.is_distributed:
@@ -411,6 +418,7 @@ def main() -> None:
                     dataset_info,
                     inverse_config.coefficient_loss_weight,
                     inverse_config.prediction_loss_weight,
+                    args.model,
                 )
                 loss = metrics_for_batch["loss"]
                 loss.backward()
@@ -429,6 +437,7 @@ def main() -> None:
                 forward_model,
                 dataset_info,
                 inverse_config,
+                args.model,
             )
             best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
             if context.is_rank_zero:
@@ -462,6 +471,9 @@ def main() -> None:
                     "forward_model": inverse_config.forward_model,
                     "forward_model_loaded": forward_model is not None,
                     "tensorboard_dir": str(tensorboard_dir),
+                    "latent_size": inverse_config.latent_size,
+                    "n_coupling_layers": inverse_config.n_coupling_layers,
+                    "n_components": inverse_config.n_components,
                 }
             )
             write_json(model_dir / "metrics.json", metrics)
@@ -476,6 +488,9 @@ def main() -> None:
                     "function_encoder_artifact": inverse_config.function_encoder_artifact,
                     "forward_model": inverse_config.forward_model,
                     "forward_model_loaded": forward_model is not None,
+                    "latent_size": inverse_config.latent_size,
+                    "n_coupling_layers": inverse_config.n_coupling_layers,
+                    "n_components": inverse_config.n_components,
                 },
             )
             if writer is not None:

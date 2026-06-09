@@ -13,12 +13,13 @@ from inverse_neural_operator.runtime.paths import (
     run_artifact_dir,
     write_json,
 )
+from inverse_neural_operator.inverse.build import SUPPORTED_INVERSE_MODELS
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate an inverse model artifact.")
     parser.add_argument("--config", required=True, help="Experiment YAML.")
-    parser.add_argument("--model", required=True, choices=["linear_inverse", "nonlinear"])
+    parser.add_argument("--model", required=True, choices=SUPPORTED_INVERSE_MODELS)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--split", default="test", choices=["train", "test"])
     parser.add_argument(
@@ -146,6 +147,9 @@ def main() -> None:
             input_size=n_basis,
             output_size=n_basis,
             hidden_sizes=inverse_config.hidden_sizes,
+            latent_size=inverse_config.latent_size,
+            n_coupling_layers=inverse_config.n_coupling_layers,
+            n_components=inverse_config.n_components,
         ).to(context.device)
         model.load_state_dict(load_file(str(weights_path), device=str(context.device)))
         model.eval()
@@ -199,6 +203,7 @@ def main() -> None:
             forward_model,
             dataset_info,
             inverse_config,
+            args.model,
         )
         metrics.update(
             {
