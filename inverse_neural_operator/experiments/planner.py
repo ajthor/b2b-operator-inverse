@@ -49,9 +49,13 @@ def _torchrun_prefix(config: ExperimentConfig) -> str:
         )
         env_prefix = f"env {assignments} "
     if config.runtime.launcher == "torchrun":
+        master_port = ""
+        if config.runtime.env.get("MASTER_PORT"):
+            master_port = f" --master_port {config.runtime.env['MASTER_PORT']}"
         return env_prefix + (
             "python -m torch.distributed.run "
             f"--nproc_per_node {config.runtime.nproc_per_node}"
+            f"{master_port}"
         )
     return env_prefix + "python3"
 
