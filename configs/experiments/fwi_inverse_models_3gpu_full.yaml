@@ -16,6 +16,7 @@ runtime:
   tensorboard_dir: ./results
   env:
     CUDA_VISIBLE_DEVICES: "3,4,5"
+    MASTER_PORT: "29511"
     NCCL_SHM_DISABLE: "1"
 
 matrix:
