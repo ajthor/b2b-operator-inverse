@@ -20,6 +20,7 @@ from inverse_neural_operator.runtime.paths import (
     write_manifest,
     write_yaml,
 )
+from inverse_neural_operator.runtime.sampling import RandomFunctionSampler
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,33 +94,6 @@ def _load_dataset(config, split: str):
     from inverse_neural_operator.data.overhaul import load_overhaul_dataset
 
     return load_overhaul_dataset(config, split)
-
-
-class RandomFunctionSampler:
-    """Uniform random function sampler for step-budget training."""
-
-    def __init__(self, dataset_size: int, num_samples: int, seed: int):
-        self.dataset_size = dataset_size
-        self.num_samples = num_samples
-        self.seed = seed
-
-    def __iter__(self):
-        import torch
-
-        generator = torch.Generator()
-        generator.manual_seed(self.seed)
-        for _ in range(self.num_samples):
-            yield int(
-                torch.randint(
-                    low=0,
-                    high=self.dataset_size,
-                    size=(1,),
-                    generator=generator,
-                ).item()
-            )
-
-    def __len__(self):
-        return self.num_samples
 
 
 def main() -> None:

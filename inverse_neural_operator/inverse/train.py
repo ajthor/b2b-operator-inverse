@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import time
 from pathlib import Path
 
@@ -311,8 +312,10 @@ def main() -> None:
     from inverse_neural_operator.runtime.distributed import (
         barrier,
         cleanup_distributed,
+        reduce_mean,
         setup_distributed,
     )
+    from inverse_neural_operator.runtime.sampling import RandomFunctionSampler
 
     context = setup_distributed(experiment_config.runtime.device)
     try:
@@ -346,11 +349,24 @@ def main() -> None:
                 device=context.device,
             )
 
-        train_sampler = (
-            DistributedSampler(train_dataset, shuffle=True)
-            if context.is_distributed
-            else None
-        )
+        accumulation_steps = max(1, inverse_config.gradient_accumulation_steps)
+        if inverse_config.max_steps is not None and inverse_config.sample_with_replacement:
+            train_sample_count = (
+                inverse_config.max_steps
+                * accumulation_steps
+                * inverse_config.batch_size
+            )
+            train_sampler = RandomFunctionSampler(
+                len(train_dataset),
+                num_samples=train_sample_count,
+                seed=args.seed + context.rank * 1_000_003,
+            )
+        else:
+            train_sampler = (
+                DistributedSampler(train_dataset, shuffle=True)
+                if context.is_distributed
+                else None
+            )
         test_sampler = (
             DistributedSampler(test_dataset, shuffle=False)
             if context.is_distributed
@@ -359,7 +375,13 @@ def main() -> None:
         train_loader = DataLoader(
             train_dataset,
             batch_size=inverse_config.batch_size,
-            shuffle=train_sampler is None,
+            shuffle=(
+                train_sampler is None
+                and not (
+                    inverse_config.max_steps is not None
+                    and inverse_config.sample_with_replacement
+                )
+            ),
             sampler=train_sampler,
             num_workers=experiment_config.runtime.num_workers,
             pin_memory=experiment_config.runtime.pin_memory and context.device.type == "cuda",
@@ -400,61 +422,193 @@ def main() -> None:
         optimizer = torch.optim.Adam(ddp_model.parameters(), lr=inverse_config.learning_rate)
         best_test = None
         metrics = {}
-        for epoch in range(inverse_config.epochs):
-            if train_sampler is not None:
-                train_sampler.set_epoch(epoch)
-            ddp_model.train()
-            total = torch.zeros((), device=context.device)
-            count = torch.zeros((), device=context.device)
-            for batch in train_loader:
-                batch = _move_batch(batch, context.device)
+        completed_steps = 0
+
+        def save_checkpoint(epoch, step, loss_value):
+            if not context.is_rank_zero:
+                return
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "step": step,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "loss": loss_value,
+                    "best_test_loss": best_test,
+                },
+                checkpoint_path,
+            )
+
+        if inverse_config.max_steps is not None:
+            data_epoch = 0
+            if isinstance(train_sampler, DistributedSampler):
+                train_sampler.set_epoch(data_epoch)
+            train_iter = iter(train_loader)
+            for step in range(inverse_config.max_steps):
+                ddp_model.train()
                 optimizer.zero_grad(set_to_none=True)
-                metrics_for_batch = _batch_metrics(
+                step_loss_total = torch.zeros((), device=context.device)
+                step_input_total = torch.zeros((), device=context.device)
+                step_coefficient_total = torch.zeros((), device=context.device)
+                for micro_step in range(accumulation_steps):
+                    try:
+                        batch = next(train_iter)
+                    except StopIteration:
+                        data_epoch += 1
+                        if isinstance(train_sampler, DistributedSampler):
+                            train_sampler.set_epoch(data_epoch)
+                        train_iter = iter(train_loader)
+                        batch = next(train_iter)
+                    batch = _move_batch(batch, context.device)
+                    should_sync = micro_step == accumulation_steps - 1
+                    sync_context = (
+                        nullcontext()
+                        if should_sync or not hasattr(ddp_model, "no_sync")
+                        else ddp_model.no_sync()
+                    )
+                    with sync_context:
+                        metrics_for_batch = _batch_metrics(
+                            ddp_model,
+                            batch,
+                            input_encoder,
+                            output_encoder,
+                            None,
+                            dataset_info,
+                            inverse_config.coefficient_loss_weight,
+                            inverse_config.prediction_loss_weight,
+                            args.model,
+                        )
+                        loss = metrics_for_batch["loss"]
+                        (loss / accumulation_steps).backward()
+                    step_loss_total += loss.detach()
+                    step_input_total += metrics_for_batch["input_mse"].detach()
+                    step_coefficient_total += metrics_for_batch["coefficient_mse"].detach()
+                optimizer.step()
+                completed_steps = step + 1
+                mean_step_loss = reduce_mean(
+                    step_loss_total / accumulation_steps,
+                    context,
+                )
+                mean_step_input = reduce_mean(
+                    step_input_total / accumulation_steps,
+                    context,
+                )
+                mean_step_coefficient = reduce_mean(
+                    step_coefficient_total / accumulation_steps,
+                    context,
+                )
+                if (
+                    context.is_rank_zero
+                    and inverse_config.log_interval > 0
+                    and (
+                        completed_steps == 1
+                        or completed_steps % inverse_config.log_interval == 0
+                    )
+                ):
+                    assert writer is not None
+                    writer.add_scalar("loss_train/total", mean_step_loss.item(), completed_steps)
+                    writer.add_scalar(
+                        "loss_train/input_mse",
+                        mean_step_input.item(),
+                        completed_steps,
+                    )
+                    writer.add_scalar(
+                        "loss_train/coefficient_mse",
+                        mean_step_coefficient.item(),
+                        completed_steps,
+                    )
+                    writer.flush()
+                should_evaluate = (
+                    inverse_config.eval_interval > 0
+                    and (
+                        completed_steps % inverse_config.eval_interval == 0
+                        or completed_steps == inverse_config.max_steps
+                    )
+                )
+                should_checkpoint = (
+                    inverse_config.checkpoint_interval > 0
+                    and completed_steps % inverse_config.checkpoint_interval == 0
+                )
+                if should_evaluate:
+                    metrics = _evaluate(
+                        ddp_model,
+                        test_loader,
+                        context,
+                        input_encoder,
+                        output_encoder,
+                        forward_model,
+                        dataset_info,
+                        inverse_config,
+                        args.model,
+                    )
+                    best_test = (
+                        metrics["loss"]
+                        if best_test is None
+                        else min(best_test, metrics["loss"])
+                    )
+                    if context.is_rank_zero:
+                        assert writer is not None
+                        for key, value in metrics.items():
+                            if isinstance(value, (int, float)) and value is not None:
+                                writer.add_scalar(f"loss_test/{key}", value, completed_steps)
+                        writer.flush()
+                    save_checkpoint(data_epoch, completed_steps, metrics["loss"])
+                elif should_checkpoint:
+                    save_checkpoint(data_epoch, completed_steps, mean_step_loss.item())
+        else:
+            for epoch in range(inverse_config.epochs):
+                if train_sampler is not None:
+                    train_sampler.set_epoch(epoch)
+                ddp_model.train()
+                total = torch.zeros((), device=context.device)
+                count = torch.zeros((), device=context.device)
+                for batch in train_loader:
+                    batch = _move_batch(batch, context.device)
+                    optimizer.zero_grad(set_to_none=True)
+                    metrics_for_batch = _batch_metrics(
+                        ddp_model,
+                        batch,
+                        input_encoder,
+                        output_encoder,
+                        None,
+                        dataset_info,
+                        inverse_config.coefficient_loss_weight,
+                        inverse_config.prediction_loss_weight,
+                        args.model,
+                    )
+                    loss = metrics_for_batch["loss"]
+                    loss.backward()
+                    optimizer.step()
+                    total += loss.detach()
+                    count += 1
+                    completed_steps += 1
+                _all_reduce_sum(total, context)
+                _all_reduce_sum(count, context)
+                train_loss = float((total / torch.clamp(count, min=1)).item())
+                metrics = _evaluate(
                     ddp_model,
-                    batch,
+                    test_loader,
+                    context,
                     input_encoder,
                     output_encoder,
-                    None,
+                    forward_model,
                     dataset_info,
-                    inverse_config.coefficient_loss_weight,
-                    inverse_config.prediction_loss_weight,
+                    inverse_config,
                     args.model,
                 )
-                loss = metrics_for_batch["loss"]
-                loss.backward()
-                optimizer.step()
-                total += loss.detach()
-                count += 1
-            _all_reduce_sum(total, context)
-            _all_reduce_sum(count, context)
-            train_loss = float((total / torch.clamp(count, min=1)).item())
-            metrics = _evaluate(
-                ddp_model,
-                test_loader,
-                context,
-                input_encoder,
-                output_encoder,
-                forward_model,
-                dataset_info,
-                inverse_config,
-                args.model,
-            )
-            best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
-            if context.is_rank_zero:
-                assert writer is not None
-                writer.add_scalar("loss/train", train_loss, epoch)
-                for key, value in metrics.items():
-                    if isinstance(value, (int, float)) and value is not None:
-                        writer.add_scalar(f"loss/test_{key}", value, epoch)
-                torch.save(
-                    {
-                        "epoch": epoch,
-                        "model_state_dict": model.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "loss": metrics["loss"],
-                    },
-                    checkpoint_path,
+                best_test = (
+                    metrics["loss"]
+                    if best_test is None
+                    else min(best_test, metrics["loss"])
                 )
+                if context.is_rank_zero:
+                    assert writer is not None
+                    writer.add_scalar("loss_train/total", train_loss, epoch)
+                    for key, value in metrics.items():
+                        if isinstance(value, (int, float)) and value is not None:
+                            writer.add_scalar(f"loss_test/{key}", value, epoch)
+                    writer.flush()
+                save_checkpoint(epoch, completed_steps, metrics["loss"])
         metrics["best_test_loss"] = best_test
 
         barrier(context)
@@ -466,6 +620,16 @@ def main() -> None:
             metrics.update(
                 {
                     "epochs": inverse_config.epochs,
+                    "training_mode": (
+                        "steps" if inverse_config.max_steps is not None else "epochs"
+                    ),
+                    "max_steps": inverse_config.max_steps,
+                    "completed_steps": completed_steps,
+                    "gradient_accumulation_steps": accumulation_steps,
+                    "sample_with_replacement": inverse_config.sample_with_replacement,
+                    "eval_interval": inverse_config.eval_interval,
+                    "eval_batches": inverse_config.eval_batches,
+                    "log_interval": inverse_config.log_interval,
                     "elapsed_seconds": time.time() - start_time,
                     "function_encoder_artifact": inverse_config.function_encoder_artifact,
                     "forward_model": inverse_config.forward_model,
@@ -488,6 +652,11 @@ def main() -> None:
                     "function_encoder_artifact": inverse_config.function_encoder_artifact,
                     "forward_model": inverse_config.forward_model,
                     "forward_model_loaded": forward_model is not None,
+                    "training_mode": (
+                        "steps" if inverse_config.max_steps is not None else "epochs"
+                    ),
+                    "max_steps": inverse_config.max_steps,
+                    "completed_steps": completed_steps,
                     "latent_size": inverse_config.latent_size,
                     "n_coupling_layers": inverse_config.n_coupling_layers,
                     "n_components": inverse_config.n_components,

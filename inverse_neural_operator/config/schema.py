@@ -72,8 +72,13 @@ class ForwardModelsConfig:
     coefficient_loss_weight: float = 1.0
     reconstruction_loss_weight: float = 1.0
     batch_size: int = 4
+    gradient_accumulation_steps: int = 1
+    sample_with_replacement: bool = False
     epochs: int = 1
+    max_steps: Optional[int] = None
+    eval_interval: int = 250
     eval_batches: Optional[int] = None
+    log_interval: int = 10
     learning_rate: float = 1e-4
     checkpoint_interval: int = 1
     linear_regularization: float = 1e-6
@@ -118,8 +123,13 @@ class InverseModelsConfig:
     prediction_loss_weight: float = 1.0
     coefficient_loss_weight: float = 0.0
     batch_size: int = 4
+    gradient_accumulation_steps: int = 1
+    sample_with_replacement: bool = False
     epochs: int = 1
+    max_steps: Optional[int] = None
+    eval_interval: int = 250
     eval_batches: Optional[int] = None
+    log_interval: int = 10
     learning_rate: float = 1e-4
     checkpoint_interval: int = 1
     linear_regularization: float = 1e-6
