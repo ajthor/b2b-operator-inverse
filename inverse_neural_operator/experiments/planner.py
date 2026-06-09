@@ -238,7 +238,12 @@ def _forward_model_jobs(
                 f"--config {config_path} --model {model_name} "
                 f"--seed {seed} --execute"
             )
-            command = _with_root_args(command, models_dir_override, results_dir_override)
+            command = _with_root_args(
+                command,
+                models_dir_override,
+                results_dir_override,
+                config.runtime.tensorboard_dir,
+            )
             yield PlannedJob(
                 stage="forward_models",
                 name=model_name,
@@ -290,7 +295,12 @@ def _baseline_jobs(
                 f"--config {config_path} --model {model_name} "
                 f"--seed {seed} --execute"
             )
-            command = _with_root_args(command, models_dir_override, results_dir_override)
+            command = _with_root_args(
+                command,
+                models_dir_override,
+                results_dir_override,
+                config.runtime.tensorboard_dir,
+            )
             yield PlannedJob(
                 stage="baselines",
                 name=model_name,
@@ -347,7 +357,12 @@ def _inverse_model_jobs(
                 f"--config {config_path} --model {model_name} "
                 f"--seed {seed} --execute"
             )
-            command = _with_root_args(command, models_dir_override, results_dir_override)
+            command = _with_root_args(
+                command,
+                models_dir_override,
+                results_dir_override,
+                config.runtime.tensorboard_dir,
+            )
             yield PlannedJob(
                 stage="inverse_models",
                 name=model_name,

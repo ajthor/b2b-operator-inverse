@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 
 from inverse_neural_operator.config.schema import load_experiment_config
 from inverse_neural_operator.runtime.paths import (
@@ -30,6 +31,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models-dir", default=None)
     parser.add_argument("--results-dir", default=None)
+    parser.add_argument(
+        "--tensorboard-dir",
+        default=None,
+        help="Optional root for TensorBoard logs. Checkpoints still use --results-dir.",
+    )
     parser.add_argument(
         "--overwrite",
         action="store_true",
@@ -228,6 +234,18 @@ def main() -> None:
         args.model,
         args.seed,
     )
+    tensorboard_root = args.tensorboard_dir or experiment_config.runtime.tensorboard_dir
+    tensorboard_dir = (
+        run_artifact_dir(
+            Path(tensorboard_root).expanduser().resolve(),
+            experiment_config.dataset.name,
+            "inverse_models",
+            args.model,
+            args.seed,
+        )
+        if tensorboard_root
+        else run_dir
+    )
     encoder_dir = (
         model_artifact_dir(
             model_root,
@@ -257,6 +275,7 @@ def main() -> None:
         print(f"encoder_dir: {encoder_dir or '<B2B_MODELS_DIR unset>'}")
         print(f"forward_dir: {forward_dir or '<none>'}")
         print(f"run_dir:     {run_dir}")
+        print(f"tensorboard_dir: {tensorboard_dir}")
         return
 
     if args.model not in inverse_config.models:
@@ -365,8 +384,9 @@ def main() -> None:
                 device_ids=[context.local_rank] if context.device.type == "cuda" else None,
             )
 
-        writer = SummaryWriter(log_dir=str(run_dir)) if context.is_rank_zero else None
+        writer = SummaryWriter(log_dir=str(tensorboard_dir)) if context.is_rank_zero else None
         run_dir.mkdir(parents=True, exist_ok=True)
+        tensorboard_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_path = run_dir / "latest_checkpoint.pt"
         start_time = time.time()
 
@@ -441,6 +461,7 @@ def main() -> None:
                     "function_encoder_artifact": inverse_config.function_encoder_artifact,
                     "forward_model": inverse_config.forward_model,
                     "forward_model_loaded": forward_model is not None,
+                    "tensorboard_dir": str(tensorboard_dir),
                 }
             )
             write_json(model_dir / "metrics.json", metrics)
