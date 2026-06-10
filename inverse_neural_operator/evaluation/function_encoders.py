@@ -60,13 +60,24 @@ def _plot_reconstruction(path: Path, true_values, pred_values, spatial_dims, tit
         true_plot = true_flat.reshape(*spatial_dims)
         pred_plot = pred_flat.reshape(*spatial_dims)
         error_plot = error_flat.reshape(*spatial_dims)
+        value_min = min(float(true_plot.min()), float(pred_plot.min()))
+        value_max = max(float(true_plot.max()), float(pred_plot.max()))
         fig, axes = plt.subplots(1, 3, figsize=(12, 3.8), constrained_layout=True)
         for axis, image, label in zip(
             axes,
             [true_plot, pred_plot, error_plot],
             ["target", "reconstruction", "absolute error"],
         ):
-            im = axis.imshow(image, aspect="auto", origin="lower")
+            if label == "absolute error":
+                im = axis.imshow(image, aspect="auto", origin="lower")
+            else:
+                im = axis.imshow(
+                    image,
+                    aspect="auto",
+                    origin="lower",
+                    vmin=value_min,
+                    vmax=value_max,
+                )
             axis.set_title(label)
             axis.set_xticks([])
             axis.set_yticks([])
