@@ -79,7 +79,18 @@ def _loss(
             coefficients, gram = encoder.compute_coefficients(example_xs, example_ys)
     pred = model(xs, coefficients)
     pred_loss = torch.nn.functional.mse_loss(pred, ys)
-    ssim_loss = _ssim_loss(pred, ys, spatial_dims)
+    if ssim_loss_weight > 0:
+        ssim_xs = torch.cat([example_xs, xs], dim=1)
+        ssim_ys = torch.cat([example_ys, ys], dim=1)
+        ssim_pred = model(ssim_xs, coefficients)
+        ssim_loss = _ssim_loss(
+            ssim_pred,
+            ssim_ys,
+            spatial_dims,
+            coordinates=ssim_xs,
+        )
+    else:
+        ssim_loss = torch.zeros((), device=ys.device)
     if orthonormality_loss_weight > 0:
         try:
             from function_encoder.losses import basis_orthonormality_loss
@@ -97,7 +108,7 @@ def _loss(
     return loss, pred_loss.detach(), norm_loss.detach(), ssim_loss.detach()
 
 
-def _ssim_loss(prediction, target, spatial_dims):
+def _ssim_loss(prediction, target, spatial_dims, coordinates=None):
     import torch
     import torch.nn.functional as F
 
@@ -106,8 +117,23 @@ def _ssim_loss(prediction, target, spatial_dims):
     height, width = int(spatial_dims[0]), int(spatial_dims[1])
     if height < 3 or width < 3:
         return torch.zeros((), device=prediction.device)
+    if prediction.shape[1] != height * width:
+        return torch.zeros((), device=prediction.device)
 
-    pred = prediction.reshape(prediction.shape[0], height, width, -1).permute(0, 3, 1, 2)
+    if coordinates is not None and coordinates.shape[-1] >= 2:
+        coord = coordinates.detach().float()
+        coord_min = coord.amin(dim=1, keepdim=True)
+        coord_range = torch.clamp(coord.amax(dim=1, keepdim=True) - coord_min, min=1e-12)
+        coord = (coord - coord_min) / coord_range
+        sort_key = coord[..., 0] * 1_000_000.0 + coord[..., 1]
+        sort_index = torch.argsort(sort_key, dim=1)
+        gather_index = sort_index.unsqueeze(-1).expand(-1, -1, prediction.shape[-1])
+        prediction = torch.gather(prediction, dim=1, index=gather_index)
+        target = torch.gather(target, dim=1, index=gather_index)
+
+    pred = prediction.reshape(prediction.shape[0], height, width, -1).permute(
+        0, 3, 1, 2
+    )
     true = target.reshape(target.shape[0], height, width, -1).permute(0, 3, 1, 2)
     channels = pred.shape[1]
     window_size = min(7, height, width)
