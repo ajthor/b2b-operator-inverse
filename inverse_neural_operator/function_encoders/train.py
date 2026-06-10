@@ -65,6 +65,8 @@ def _loss(
     *,
     coefficient_grad: bool,
     orthonormality_loss_weight: float,
+    ssim_loss_weight: float,
+    spatial_dims,
 ):
     import torch
 
@@ -77,6 +79,7 @@ def _loss(
             coefficients, gram = encoder.compute_coefficients(example_xs, example_ys)
     pred = model(xs, coefficients)
     pred_loss = torch.nn.functional.mse_loss(pred, ys)
+    ssim_loss = _ssim_loss(pred, ys, spatial_dims)
     if orthonormality_loss_weight > 0:
         try:
             from function_encoder.losses import basis_orthonormality_loss
@@ -86,8 +89,57 @@ def _loss(
             norm_loss = torch.zeros((), device=ys.device)
     else:
         norm_loss = torch.zeros((), device=ys.device)
-    loss = pred_loss + orthonormality_loss_weight * norm_loss
-    return loss, pred_loss.detach(), norm_loss.detach()
+    loss = (
+        pred_loss
+        + orthonormality_loss_weight * norm_loss
+        + ssim_loss_weight * ssim_loss
+    )
+    return loss, pred_loss.detach(), norm_loss.detach(), ssim_loss.detach()
+
+
+def _ssim_loss(prediction, target, spatial_dims):
+    import torch
+    import torch.nn.functional as F
+
+    if spatial_dims is None or len(spatial_dims) != 2:
+        return torch.zeros((), device=prediction.device)
+    height, width = int(spatial_dims[0]), int(spatial_dims[1])
+    if height < 3 or width < 3:
+        return torch.zeros((), device=prediction.device)
+
+    pred = prediction.reshape(prediction.shape[0], height, width, -1).permute(0, 3, 1, 2)
+    true = target.reshape(target.shape[0], height, width, -1).permute(0, 3, 1, 2)
+    channels = pred.shape[1]
+    window_size = min(7, height, width)
+    if window_size % 2 == 0:
+        window_size -= 1
+    padding = window_size // 2
+    window = torch.ones(
+        (channels, 1, window_size, window_size),
+        device=prediction.device,
+        dtype=prediction.dtype,
+    )
+    window = window / float(window_size * window_size)
+
+    mu_pred = F.conv2d(pred, window, padding=padding, groups=channels)
+    mu_true = F.conv2d(true, window, padding=padding, groups=channels)
+    mu_pred_sq = mu_pred.pow(2)
+    mu_true_sq = mu_true.pow(2)
+    mu_pred_true = mu_pred * mu_true
+
+    sigma_pred_sq = F.conv2d(pred * pred, window, padding=padding, groups=channels) - mu_pred_sq
+    sigma_true_sq = F.conv2d(true * true, window, padding=padding, groups=channels) - mu_true_sq
+    sigma_pred_true = F.conv2d(pred * true, window, padding=padding, groups=channels) - mu_pred_true
+
+    data_range = torch.clamp(true.amax() - true.amin(), min=1e-6)
+    c1 = (0.01 * data_range).pow(2)
+    c2 = (0.03 * data_range).pow(2)
+    numerator = (2 * mu_pred_true + c1) * (2 * sigma_pred_true + c2)
+    denominator = (mu_pred_sq + mu_true_sq + c1) * (
+        sigma_pred_sq + sigma_true_sq + c2
+    )
+    ssim = numerator / torch.clamp(denominator, min=1e-12)
+    return 1.0 - torch.clamp(ssim.mean(), min=-1.0, max=1.0)
 
 
 def _load_dataset(config, split: str):
@@ -186,12 +238,14 @@ def main() -> None:
             test_dataset = InputFunctionEncoderDataset(test_base, device="cpu")
             input_size = dataset_info["X_size"]
             output_size = dataset_info["u_size"]
+            loss_spatial_dims = dataset_info.get("input_spatial_dims")
             weights_name = "input_encoder.safetensors"
         else:
             train_dataset = OutputFunctionEncoderDataset(train_base, device="cpu")
             test_dataset = OutputFunctionEncoderDataset(test_base, device="cpu")
             input_size = dataset_info["Y_size"]
             output_size = dataset_info["s_size"]
+            loss_spatial_dims = dataset_info.get("output_spatial_dims")
             weights_name = "output_encoder.safetensors"
 
         assert model_dir is not None
@@ -333,13 +387,15 @@ def main() -> None:
                     ):
                         break
                     batch = _move_batch(batch, context.device)
-                    loss, _, _ = _loss(
+                    loss, _, _, _ = _loss(
                         model,
                         batch,
                         coefficient_grad=fe_config.coefficient_grad,
                         orthonormality_loss_weight=(
                             fe_config.orthonormality_loss_weight
                         ),
+                        ssim_loss_weight=fe_config.ssim_loss_weight,
+                        spatial_dims=loss_spatial_dims,
                     )
                     test_total += loss.detach()
                     test_count += 1
@@ -359,6 +415,7 @@ def main() -> None:
                 step_loss_total = torch.zeros((), device=context.device)
                 step_pred_total = torch.zeros((), device=context.device)
                 step_norm_total = torch.zeros((), device=context.device)
+                step_ssim_total = torch.zeros((), device=context.device)
                 for micro_step in range(accumulation_steps):
                     try:
                         batch = next(train_iter)
@@ -377,18 +434,21 @@ def main() -> None:
                         else model.no_sync()
                     )
                     with sync_context:
-                        loss, pred_loss, norm_loss = _loss(
+                        loss, pred_loss, norm_loss, ssim_loss = _loss(
                             model,
                             batch,
                             coefficient_grad=fe_config.coefficient_grad,
                             orthonormality_loss_weight=(
                                 fe_config.orthonormality_loss_weight
                             ),
+                            ssim_loss_weight=fe_config.ssim_loss_weight,
+                            spatial_dims=loss_spatial_dims,
                         )
                         (loss / accumulation_steps).backward()
                     step_loss_total += loss.detach()
                     step_pred_total += pred_loss.detach()
                     step_norm_total += norm_loss.detach()
+                    step_ssim_total += ssim_loss.detach()
                 optimizer.step()
                 completed_steps = step + 1
                 step_seconds.append(time.time() - step_start)
@@ -402,6 +462,10 @@ def main() -> None:
                 )
                 mean_step_norm = reduce_mean(
                     step_norm_total / accumulation_steps,
+                    context,
+                )
+                mean_step_ssim = reduce_mean(
+                    step_ssim_total / accumulation_steps,
                     context,
                 )
 
@@ -424,6 +488,11 @@ def main() -> None:
                     writer.add_scalar(
                         f"loss_train_norm/{args.encoder_type}",
                         mean_step_norm.item(),
+                        completed_steps,
+                    )
+                    writer.add_scalar(
+                        f"loss_train_ssim/{args.encoder_type}",
+                        mean_step_ssim.item(),
                         completed_steps,
                     )
 
@@ -471,13 +540,15 @@ def main() -> None:
                 for batch in train_loader:
                     batch = _move_batch(batch, context.device)
                     optimizer.zero_grad(set_to_none=True)
-                    loss, pred_loss, norm_loss = _loss(
+                    loss, pred_loss, norm_loss, ssim_loss = _loss(
                         model,
                         batch,
                         coefficient_grad=fe_config.coefficient_grad,
                         orthonormality_loss_weight=(
                             fe_config.orthonormality_loss_weight
                         ),
+                        ssim_loss_weight=fe_config.ssim_loss_weight,
+                        spatial_dims=loss_spatial_dims,
                     )
                     loss.backward()
                     optimizer.step()
@@ -557,6 +628,7 @@ def main() -> None:
                 "basis_chunk_size": fe_config.basis_chunk_size,
                 "coefficient_grad": fe_config.coefficient_grad,
                 "orthonormality_loss_weight": fe_config.orthonormality_loss_weight,
+                "ssim_loss_weight": fe_config.ssim_loss_weight,
                 "rank0_device": str(context.device),
                 "rank0_device_name": (
                     torch.cuda.get_device_name(context.device)
