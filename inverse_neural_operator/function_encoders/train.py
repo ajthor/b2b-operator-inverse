@@ -174,6 +174,67 @@ def _load_dataset(config, split: str):
     return load_overhaul_dataset(config, split)
 
 
+def _estimate_spectral_stats(dataset, *, encoder_type: str, spatial_dims, sample_count: int, seed: int):
+    import torch
+
+    if sample_count <= 0 or spatial_dims is None or len(spatial_dims) != 2:
+        return {
+            "enabled": False,
+            "sample_count": 0,
+            "spectral_centroid": 0.0,
+            "high_frequency_ratio": 0.0,
+        }
+
+    height, width = int(spatial_dims[0]), int(spatial_dims[1])
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    count = min(sample_count, len(dataset))
+    if count <= 0:
+        return {
+            "enabled": False,
+            "sample_count": 0,
+            "spectral_centroid": 0.0,
+            "high_frequency_ratio": 0.0,
+        }
+    indices = torch.randperm(len(dataset), generator=generator)[:count].tolist()
+    fy = torch.fft.fftfreq(height).reshape(height, 1)
+    fx = torch.fft.fftfreq(width).reshape(1, width)
+    radius = torch.sqrt(fy.pow(2) + fx.pow(2))
+    max_radius = torch.clamp(radius.max(), min=1e-12)
+    radius = radius / max_radius
+    high_mask = radius >= 0.5
+
+    centroids = []
+    high_ratios = []
+    for index in indices:
+        _, u, _, s = dataset[index]
+        values = u if encoder_type == "input" else s
+        flat = values.detach().float().reshape(-1)
+        if flat.numel() != height * width:
+            continue
+        image = flat.reshape(height, width)
+        image = image - image.mean()
+        spectrum = torch.fft.fft2(image)
+        magnitude = torch.abs(spectrum)
+        total = torch.clamp(magnitude.sum(), min=1e-12)
+        centroids.append(float(((radius * magnitude).sum() / total).item()))
+        high_ratios.append(float((magnitude[high_mask].sum() / total).item()))
+
+    if not centroids:
+        return {
+            "enabled": False,
+            "sample_count": 0,
+            "spectral_centroid": 0.0,
+            "high_frequency_ratio": 0.0,
+        }
+    return {
+        "enabled": True,
+        "sample_count": len(centroids),
+        "spectral_centroid": float(sum(centroids) / len(centroids)),
+        "high_frequency_ratio": float(sum(high_ratios) / len(high_ratios)),
+    }
+
+
 def main() -> None:
     args = parse_args()
     config = load_experiment_config(args.config)
@@ -274,6 +335,14 @@ def main() -> None:
             loss_spatial_dims = dataset_info.get("output_spatial_dims")
             weights_name = "output_encoder.safetensors"
 
+        spectral_stats = _estimate_spectral_stats(
+            train_base,
+            encoder_type=args.encoder_type,
+            spatial_dims=loss_spatial_dims,
+            sample_count=fe_config.basis.winner_samples,
+            seed=args.seed + (0 if args.encoder_type == "input" else 17_171),
+        )
+
         assert model_dir is not None
         if context.is_rank_zero:
             refuse_existing_artifact(model_dir / weights_name, overwrite=args.overwrite)
@@ -336,6 +405,10 @@ def main() -> None:
             basis_kind=fe_config.basis.kind,
             activation=fe_config.basis.activation,
             omega_0=fe_config.basis.omega_0,
+            winner_spectral_centroid=spectral_stats["spectral_centroid"],
+            winner_noise_scale=fe_config.basis.winner_noise_scale,
+            winner_first_layer_scale=fe_config.basis.winner_first_layer_scale,
+            winner_hidden_layer_scale=fe_config.basis.winner_hidden_layer_scale,
             regularization=fe_config.regularization,
             basis_chunk_size=fe_config.basis_chunk_size,
             inner_product=(
@@ -651,6 +724,13 @@ def main() -> None:
                 "test_samples": len(test_dataset),
                 "n_basis": fe_config.basis.n_basis,
                 "basis_kind": fe_config.basis.kind,
+                "basis_hidden_sizes": fe_config.basis.hidden_sizes,
+                "basis_omega_0": fe_config.basis.omega_0,
+                "winner_samples": fe_config.basis.winner_samples,
+                "winner_noise_scale": fe_config.basis.winner_noise_scale,
+                "winner_first_layer_scale": fe_config.basis.winner_first_layer_scale,
+                "winner_hidden_layer_scale": fe_config.basis.winner_hidden_layer_scale,
+                "winner_spectral_stats": spectral_stats,
                 "basis_chunk_size": fe_config.basis_chunk_size,
                 "coefficient_grad": fe_config.coefficient_grad,
                 "orthonormality_loss_weight": fe_config.orthonormality_loss_weight,

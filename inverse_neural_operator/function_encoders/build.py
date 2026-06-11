@@ -33,6 +33,7 @@ def _init_siren_linear(
     *,
     layer_index: int,
     omega_0: float,
+    winner_scale: float = 0.0,
 ) -> torch.nn.Linear:
     with torch.no_grad():
         in_features = layer.weight.shape[1]
@@ -42,7 +43,9 @@ def _init_siren_linear(
             bound = math.sqrt(6 / in_features) / omega_0
         layer.weight.uniform_(-bound, bound)
         if layer.bias is not None:
-            layer.bias.uniform_(-bound, bound)
+            layer.bias.zero_()
+        if winner_scale > 0:
+            layer.weight.add_(torch.randn_like(layer.weight) * bound * winner_scale)
     return layer
 
 
@@ -66,15 +69,29 @@ def _make_siren(
     hidden_sizes: Iterable[int],
     output_size: int,
     omega_0: float,
+    *,
+    winner_spectral_centroid: float = 0.0,
+    winner_noise_scale: float = 1.0,
+    winner_first_layer_scale: float = 1.0,
+    winner_hidden_layer_scale: float = 1.0,
 ) -> torch.nn.Sequential:
     sizes = [input_size] + list(hidden_sizes) + [output_size]
     layers: List[torch.nn.Module] = []
     for idx, (in_features, out_features) in enumerate(zip(sizes[:-1], sizes[1:])):
+        winner_scale = 0.0
+        if winner_spectral_centroid > 0 and idx < 2:
+            layer_multiplier = (
+                winner_first_layer_scale if idx == 0 else winner_hidden_layer_scale
+            )
+            winner_scale = (
+                winner_spectral_centroid * winner_noise_scale * layer_multiplier
+            )
         layers.append(
             _init_siren_linear(
                 torch.nn.Linear(in_features, out_features),
                 layer_index=idx,
                 omega_0=omega_0,
+                winner_scale=winner_scale,
             )
         )
         if idx < len(sizes) - 2:
@@ -157,6 +174,10 @@ def create_function_encoder(
     basis_kind: str,
     activation: str = "relu",
     omega_0: float = 30.0,
+    winner_spectral_centroid: float = 0.0,
+    winner_noise_scale: float = 1.0,
+    winner_first_layer_scale: float = 1.0,
+    winner_hidden_layer_scale: float = 1.0,
     regularization: float = 1e-3,
     inner_product: Optional[Callable] = None,
     basis_chunk_size: Optional[int] = None,
@@ -171,9 +192,23 @@ def create_function_encoder(
             basis_networks.append(
                 _make_mlp(input_size, hidden_sizes, output_size, activation)
             )
-        elif basis_kind == "siren":
+        elif basis_kind in {"siren", "siren_square", "winner_siren"}:
+            centroid = (
+                winner_spectral_centroid
+                if basis_kind in {"siren_square", "winner_siren"}
+                else 0.0
+            )
             basis_networks.append(
-                _make_siren(input_size, hidden_sizes, output_size, omega_0)
+                _make_siren(
+                    input_size,
+                    hidden_sizes,
+                    output_size,
+                    omega_0,
+                    winner_spectral_centroid=centroid,
+                    winner_noise_scale=winner_noise_scale,
+                    winner_first_layer_scale=winner_first_layer_scale,
+                    winner_hidden_layer_scale=winner_hidden_layer_scale,
+                )
             )
         else:
             raise ValueError(f"Unsupported function encoder basis kind: {basis_kind}")
