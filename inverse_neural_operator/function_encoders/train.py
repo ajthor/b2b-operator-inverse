@@ -66,6 +66,7 @@ def _loss(
     coefficient_grad: bool,
     orthonormality_loss_weight: float,
     ssim_loss_weight: float,
+    ssim_max_points: int | None,
     spatial_dims,
 ):
     import torch
@@ -82,11 +83,17 @@ def _loss(
     if ssim_loss_weight > 0:
         ssim_xs = torch.cat([example_xs, xs], dim=1)
         ssim_ys = torch.cat([example_ys, ys], dim=1)
+        ssim_xs, ssim_ys, ssim_spatial_dims = _subsample_grid_for_ssim(
+            ssim_xs,
+            ssim_ys,
+            spatial_dims,
+            max_points=ssim_max_points,
+        )
         ssim_pred = model(ssim_xs, coefficients)
         ssim_loss = _ssim_loss(
             ssim_pred,
             ssim_ys,
-            spatial_dims,
+            ssim_spatial_dims,
             coordinates=ssim_xs,
         )
     else:
@@ -106,6 +113,54 @@ def _loss(
         + ssim_loss_weight * ssim_loss
     )
     return loss, pred_loss.detach(), norm_loss.detach(), ssim_loss.detach()
+
+
+def _subsample_grid_for_ssim(coordinates, values, spatial_dims, *, max_points):
+    import math
+    import torch
+
+    if (
+        max_points is None
+        or max_points <= 0
+        or spatial_dims is None
+        or len(spatial_dims) != 2
+    ):
+        return coordinates, values, spatial_dims
+    height, width = int(spatial_dims[0]), int(spatial_dims[1])
+    if coordinates.shape[1] != height * width or coordinates.shape[1] <= max_points:
+        return coordinates, values, spatial_dims
+
+    coord = coordinates.detach().float()
+    coord_min = coord.amin(dim=1, keepdim=True)
+    coord_range = torch.clamp(coord.amax(dim=1, keepdim=True) - coord_min, min=1e-12)
+    coord = (coord - coord_min) / coord_range
+    sort_key = coord[..., 0] * 1_000_000.0 + coord[..., 1]
+    sort_index = torch.argsort(sort_key, dim=1)
+    coord_index = sort_index.unsqueeze(-1).expand(-1, -1, coordinates.shape[-1])
+    value_index = sort_index.unsqueeze(-1).expand(-1, -1, values.shape[-1])
+    sorted_coordinates = torch.gather(coordinates, dim=1, index=coord_index)
+    sorted_values = torch.gather(values, dim=1, index=value_index)
+
+    stride = max(1, math.ceil(math.sqrt((height * width) / max_points)))
+    new_height = len(range(0, height, stride))
+    new_width = len(range(0, width, stride))
+    sorted_coordinates = sorted_coordinates.reshape(
+        coordinates.shape[0],
+        height,
+        width,
+        coordinates.shape[-1],
+    )[:, ::stride, ::stride, :]
+    sorted_values = sorted_values.reshape(
+        values.shape[0],
+        height,
+        width,
+        values.shape[-1],
+    )[:, ::stride, ::stride, :]
+    return (
+        sorted_coordinates.reshape(coordinates.shape[0], new_height * new_width, -1),
+        sorted_values.reshape(values.shape[0], new_height * new_width, -1),
+        (new_height, new_width),
+    )
 
 
 def _ssim_loss(prediction, target, spatial_dims, coordinates=None):
@@ -494,6 +549,7 @@ def main() -> None:
                             fe_config.orthonormality_loss_weight
                         ),
                         ssim_loss_weight=fe_config.ssim_loss_weight,
+                        ssim_max_points=fe_config.ssim_max_points,
                         spatial_dims=loss_spatial_dims,
                     )
                     test_total += loss.detach()
@@ -541,6 +597,7 @@ def main() -> None:
                                 fe_config.orthonormality_loss_weight
                             ),
                             ssim_loss_weight=fe_config.ssim_loss_weight,
+                            ssim_max_points=fe_config.ssim_max_points,
                             spatial_dims=loss_spatial_dims,
                         )
                         (loss / accumulation_steps).backward()
@@ -647,6 +704,7 @@ def main() -> None:
                             fe_config.orthonormality_loss_weight
                         ),
                         ssim_loss_weight=fe_config.ssim_loss_weight,
+                        ssim_max_points=fe_config.ssim_max_points,
                         spatial_dims=loss_spatial_dims,
                     )
                     loss.backward()
@@ -735,6 +793,7 @@ def main() -> None:
                 "coefficient_grad": fe_config.coefficient_grad,
                 "orthonormality_loss_weight": fe_config.orthonormality_loss_weight,
                 "ssim_loss_weight": fe_config.ssim_loss_weight,
+                "ssim_max_points": fe_config.ssim_max_points,
                 "rank0_device": str(context.device),
                 "rank0_device_name": (
                     torch.cuda.get_device_name(context.device)

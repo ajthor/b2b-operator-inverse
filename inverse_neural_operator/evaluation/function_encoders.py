@@ -23,6 +23,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", default="test", choices=["train", "test"])
     parser.add_argument("--num-samples", type=int, default=3)
     parser.add_argument(
+        "--encoder-types",
+        nargs="+",
+        choices=["input", "output"],
+        default=["input", "output"],
+        help="Encoder types to plot. Useful for partial artifacts.",
+    )
+    parser.add_argument(
         "--execute",
         action="store_true",
         help="Actually write plots. Without this flag the command only prints paths.",
@@ -151,7 +158,7 @@ def main() -> None:
         require_function_encoder_artifact,
     )
 
-    require_function_encoder_artifact(artifact_dir)
+    require_function_encoder_artifact(artifact_dir, encoder_types=args.encoder_types)
     dataset = _load_dataset(config, args.split)
     dataset_info = dataset.get_info()
     device = torch.device(
@@ -160,18 +167,13 @@ def main() -> None:
         else "cpu"
     )
     encoders = {
-        "input": load_function_encoder(
+        encoder_type: load_function_encoder(
             artifact_dir,
-            encoder_type="input",
+            encoder_type=encoder_type,
             dataset_info=dataset_info,
             device=device,
-        ),
-        "output": load_function_encoder(
-            artifact_dir,
-            encoder_type="output",
-            dataset_info=dataset_info,
-            device=device,
-        ),
+        )
+        for encoder_type in args.encoder_types
     }
 
     records = []
@@ -212,6 +214,7 @@ def main() -> None:
             "seed": args.seed,
             "split": args.split,
             "num_samples": sample_count,
+            "encoder_types": args.encoder_types,
             "records": records,
         },
     )

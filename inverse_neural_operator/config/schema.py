@@ -57,6 +57,7 @@ class FunctionEncoderConfig:
     regularization: float = 1e-3
     orthonormality_loss_weight: float = 0.0
     ssim_loss_weight: float = 0.0
+    ssim_max_points: Optional[int] = None
     batch_size: int = 4
     gradient_accumulation_steps: int = 1
     sample_with_replacement: bool = False
