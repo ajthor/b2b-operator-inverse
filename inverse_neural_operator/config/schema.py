@@ -41,6 +41,9 @@ class BasisConfig:
     hidden_sizes: List[int] = field(default_factory=lambda: [512, 512, 512])
     activation: str = "relu"
     omega_0: float = 30.0
+    omega_start: Optional[float] = None
+    omega_end: Optional[float] = None
+    omega_warmup_steps: int = 0
     winner_samples: int = 0
     winner_noise_scale: float = 1.0
     winner_first_layer_scale: float = 1.0

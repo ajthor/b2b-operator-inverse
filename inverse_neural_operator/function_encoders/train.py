@@ -59,6 +59,24 @@ def _move_batch(batch, device):
     return tuple(tensor.to(device, non_blocking=True) for tensor in batch)
 
 
+def _set_sine_omega(model, omega: float) -> None:
+    target = model.module if hasattr(model, "module") else model
+    for module in target.modules():
+        if hasattr(module, "omega_0"):
+            module.omega_0 = float(omega)
+
+
+def _scheduled_omega(basis_config, completed_steps: int) -> float:
+    if basis_config.omega_start is None or basis_config.omega_end is None:
+        return float(basis_config.omega_0)
+    warmup_steps = max(1, int(basis_config.omega_warmup_steps))
+    fraction = min(max(completed_steps, 0) / warmup_steps, 1.0)
+    return float(
+        basis_config.omega_start
+        + fraction * (basis_config.omega_end - basis_config.omega_start)
+    )
+
+
 def _loss(
     model,
     batch,
@@ -565,6 +583,8 @@ def main() -> None:
             train_iter = iter(train_loader)
             for step in range(start_step, fe_config.max_steps):
                 step_start = time.time()
+                current_omega = _scheduled_omega(fe_config.basis, step)
+                _set_sine_omega(model, current_omega)
                 model.train()
                 optimizer.zero_grad(set_to_none=True)
                 step_loss_total = torch.zeros((), device=context.device)
@@ -651,6 +671,11 @@ def main() -> None:
                         mean_step_ssim.item(),
                         completed_steps,
                     )
+                    writer.add_scalar(
+                        f"omega/{args.encoder_type}",
+                        current_omega,
+                        completed_steps,
+                    )
 
                 should_evaluate = (
                     fe_config.eval_interval > 0
@@ -690,6 +715,8 @@ def main() -> None:
                 epoch_start = time.time()
                 if train_sampler is not None:
                     train_sampler.set_epoch(epoch)
+                current_omega = _scheduled_omega(fe_config.basis, completed_steps)
+                _set_sine_omega(model, current_omega)
                 model.train()
                 train_total = torch.zeros((), device=context.device)
                 train_count = 0
@@ -733,6 +760,7 @@ def main() -> None:
                     )
                     writer.add_scalar(f"loss_test/{args.encoder_type}", mean_test.item(), epoch)
                     writer.add_scalar(f"eval_batches/{args.encoder_type}", test_count, epoch)
+                    writer.add_scalar(f"omega/{args.encoder_type}", current_omega, epoch)
                 save_checkpoint(epoch, completed_steps, mean_test.item())
 
         barrier(context)
@@ -784,6 +812,9 @@ def main() -> None:
                 "basis_kind": fe_config.basis.kind,
                 "basis_hidden_sizes": fe_config.basis.hidden_sizes,
                 "basis_omega_0": fe_config.basis.omega_0,
+                "basis_omega_start": fe_config.basis.omega_start,
+                "basis_omega_end": fe_config.basis.omega_end,
+                "basis_omega_warmup_steps": fe_config.basis.omega_warmup_steps,
                 "winner_samples": fe_config.basis.winner_samples,
                 "winner_noise_scale": fe_config.basis.winner_noise_scale,
                 "winner_first_layer_scale": fe_config.basis.winner_first_layer_scale,
