@@ -1,5 +1,5 @@
 experiment: fwi_forward_models_siren2_nbasis100_3gpu
-description: Full FWI forward coefficient model training using the SIREN2/WINNER 100-basis function encoders.
+description: Full FWI forward coefficient model training using the SIREN2/WINNER 100-basis omega-curriculum function encoders.
 
 dataset:
   name: fwi
@@ -25,7 +25,7 @@ matrix:
     - forward_models
 
 function_encoders:
-  artifact: siren2_nbasis100_ssim_3gpu
+  artifact: siren2_nbasis100_omega10to30_ssim_3gpu
   basis_chunk_size: 4
   coefficient_grad: false
   basis:
@@ -37,7 +37,7 @@ function_encoders:
 
 forward_models:
   models: [b2b_nonlinear]
-  function_encoder_artifact: siren2_nbasis100_ssim_3gpu
+  function_encoder_artifact: siren2_nbasis100_omega10to30_ssim_3gpu
   hidden_sizes: [128, 128]
   coefficient_loss_weight: 1.0
   reconstruction_loss_weight: 1.0
