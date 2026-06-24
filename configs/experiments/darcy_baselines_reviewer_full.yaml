@@ -1,0 +1,54 @@
+experiment: darcy_baselines_reviewer_full
+description: Darcy reviewer baseline run for invertible DeepONet and NIO.
+
+dataset:
+  name: darcy_1d
+  source: ajthor/darcy_1d
+  sample_limit: null
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  tensorboard_dir: ./results
+  env:
+    CUDA_VISIBLE_DEVICES: "0"
+    MASTER_PORT: "29533"
+
+matrix:
+  seeds: [1]
+  stages:
+    - baselines
+
+baselines:
+  models: [invertible_deeponet, nio]
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 5000
+  eval_interval: 250
+  eval_batches: 2
+  log_interval: 10
+  learning_rate: 0.0001
+  checkpoint_interval: 250
+  invertible_deeponet:
+    hidden_sizes: [128, 128]
+    trunk_hidden_sizes: [128, 128]
+    n_coupling_layers: 6
+    regularization: 0.001
+    forward_loss_weight: 1.0
+    inverse_loss_weight: 1.0
+    loss: relative_l2
+  nio:
+    branch_hidden_sizes: [128, 128]
+    trunk_hidden_sizes: [128, 128]
+    n_basis: 64
+    lifting_channels: 32
+    modes: 16
+    n_fourier_layers: 3
+    measurement_points: 64
+    loss: l1

@@ -4,6 +4,7 @@ import json
 import numpy as np
 from torch.utils.data import Dataset
 from datasets import load_dataset
+from typing import Any, Dict, Optional
 
 # Get paths relative to this file
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -137,3 +138,84 @@ def load_data(params, device, split="train"):
 
     return model_dataset
 
+
+class DarcyCpuDataset(Dataset):
+    """Darcy dataset that keeps tensors on host memory until the training loop."""
+
+    def __init__(self, dataset, stats: Dict[str, Any]):
+        self.dataset = dataset
+        self.stats = stats
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def _normalize(self, tensor, mean, std):
+        return (tensor - mean) / std
+
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+        X = torch.as_tensor(sample["X"], dtype=torch.float32)
+        u = torch.as_tensor(sample["u"], dtype=torch.float32)
+        Y = torch.as_tensor(sample["Y"], dtype=torch.float32)
+        s = torch.as_tensor(sample["s"], dtype=torch.float32)
+        if X.dim() == 1:
+            X = X.unsqueeze(-1)
+        if u.dim() == 1:
+            u = u.unsqueeze(-1)
+        if Y.dim() == 1:
+            Y = Y.unsqueeze(-1)
+        if s.dim() == 1:
+            s = s.unsqueeze(-1)
+        u = self._normalize(u, self.stats["u_mean"], self.stats["u_std"])
+        s = self._normalize(s, self.stats["s_mean"], self.stats["s_std"])
+        return X, u, Y, s
+
+    def get_info(self):
+        X, u, Y, s = self[0]
+        return {
+            "X_size": X.shape[-1],
+            "u_size": u.shape[-1],
+            "Y_size": Y.shape[-1],
+            "s_size": s.shape[-1],
+            "X_len": X.shape[0],
+            "u_len": u.shape[0],
+            "Y_len": Y.shape[0],
+            "s_len": s.shape[0],
+            "input_spatial_dims": (X.shape[0],),
+            "output_spatial_dims": (Y.shape[0],),
+            "input_function_channels": u.shape[-1],
+            "output_function_channels": s.shape[-1],
+            "coordinate_dim": X.shape[-1],
+            "normalization_stats": self.stats,
+        }
+
+
+def _load_or_compute_stats(source: str) -> Dict[str, Any]:
+    if os.path.exists(stats_path):
+        with open(stats_path, "r") as handle:
+            return json.load(handle)
+    train_ds = load_dataset(source, split="train")
+    return compute_stats(train_ds)
+
+
+def _materialize(source: str, split: str, sample_limit: Optional[int]):
+    if sample_limit is None:
+        return load_dataset(source, split=split)
+    stream = load_dataset(source, split=split, streaming=True)
+    samples = []
+    for idx, sample in enumerate(stream):
+        if idx >= sample_limit:
+            break
+        samples.append(dict(sample))
+    return samples
+
+
+def load_darcy_dataset(
+    *,
+    split: str,
+    source: str = "ajthor/darcy_1d",
+    sample_limit: Optional[int] = None,
+) -> DarcyCpuDataset:
+    stats = _load_or_compute_stats(source)
+    dataset = _materialize(source, split, sample_limit)
+    return DarcyCpuDataset(dataset, stats)

@@ -8,8 +8,10 @@ from .schema import (
     ForwardModelsConfig,
     FunctionEncoderConfig,
     IFNOConfig,
+    InvertibleDeepONetConfig,
     InverseModelsConfig,
     MatrixConfig,
+    NIOConfig,
     RuntimeConfig,
     load_experiment_config,
 )
@@ -22,8 +24,10 @@ __all__ = [
     "ForwardModelsConfig",
     "FunctionEncoderConfig",
     "IFNOConfig",
+    "InvertibleDeepONetConfig",
     "InverseModelsConfig",
     "MatrixConfig",
+    "NIOConfig",
     "RuntimeConfig",
     "load_experiment_config",
 ]

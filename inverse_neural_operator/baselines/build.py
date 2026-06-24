@@ -4,8 +4,21 @@ from __future__ import annotations
 
 
 def create_baseline_model(model_name: str, dataset_info, config):
+    if model_name == "invertible_deeponet":
+        from inverse_neural_operator.models.reviewer_baselines import (
+            create_invertible_deeponet,
+        )
+
+        return create_invertible_deeponet(dataset_info, config)
+    if model_name == "nio":
+        from inverse_neural_operator.models.reviewer_baselines import create_nio
+
+        return create_nio(dataset_info, config)
     if model_name != "ifno":
-        raise ValueError(f"Unknown baseline model: {model_name}. Supported: ifno.")
+        raise ValueError(
+            f"Unknown baseline model: {model_name}. "
+            "Supported: ifno, invertible_deeponet, nio."
+        )
 
     from inverse_neural_operator.models.ifno import create_model
 
@@ -28,4 +41,3 @@ def create_baseline_model(model_name: str, dataset_info, config):
         coordinate_dim=dataset_info["coordinate_dim"],
         intermediate_dim=ifno.intermediate_dim,
     )
-

@@ -20,7 +20,15 @@ def load_overhaul_dataset(config, split: str):
             source=config.dataset.source or "ajthor/burgers-fenics",
             sample_limit=config.dataset.sample_limit,
         )
+    if config.dataset.name in {"darcy", "darcy_1d"}:
+        from inverse_neural_operator.data.darcy_1d import load_darcy_dataset
+
+        return load_darcy_dataset(
+            split=split,
+            source=config.dataset.source or "ajthor/darcy_1d",
+            sample_limit=config.dataset.sample_limit,
+        )
     raise ValueError(
         f"Unsupported migrated dataset {config.dataset.name!r}. "
-        "Supported values are: fwi, burgers, burgers_1d."
+        "Supported values are: fwi, burgers, burgers_1d, darcy, darcy_1d."
     )

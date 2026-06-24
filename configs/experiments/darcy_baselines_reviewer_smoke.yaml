@@ -1,0 +1,54 @@
+experiment: darcy_baselines_reviewer_smoke
+description: Tiny Darcy smoke test for reviewer-requested invertible DeepONet and NIO baselines.
+
+dataset:
+  name: darcy_1d
+  source: ajthor/darcy_1d
+  sample_limit: 4
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  tensorboard_dir: ./results
+  env:
+    CUDA_VISIBLE_DEVICES: "0"
+    MASTER_PORT: "29531"
+
+matrix:
+  seeds: [902]
+  stages:
+    - baselines
+
+baselines:
+  models: [invertible_deeponet, nio]
+  batch_size: 1
+  gradient_accumulation_steps: 1
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 4
+  eval_interval: 2
+  eval_batches: 1
+  log_interval: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 2
+  invertible_deeponet:
+    hidden_sizes: [32, 32]
+    trunk_hidden_sizes: [32, 32]
+    n_coupling_layers: 2
+    regularization: 0.001
+    forward_loss_weight: 1.0
+    inverse_loss_weight: 1.0
+    loss: relative_l2
+  nio:
+    branch_hidden_sizes: [32, 32]
+    trunk_hidden_sizes: [32, 32]
+    n_basis: 16
+    lifting_channels: 16
+    modes: 8
+    n_fourier_layers: 1
+    measurement_points: 16
+    loss: l1

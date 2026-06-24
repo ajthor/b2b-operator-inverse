@@ -111,13 +111,46 @@ class IFNOConfig:
 
 
 @dataclass
+class InvertibleDeepONetConfig:
+    hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])
+    trunk_hidden_sizes: Optional[List[int]] = None
+    n_coupling_layers: int = 6
+    regularization: float = 1e-3
+    forward_loss_weight: float = 1.0
+    inverse_loss_weight: float = 1.0
+    loss: str = "relative_l2"
+
+
+@dataclass
+class NIOConfig:
+    branch_hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])
+    trunk_hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])
+    n_basis: int = 64
+    lifting_channels: int = 32
+    modes: int = 16
+    n_fourier_layers: int = 3
+    measurement_points: Optional[int] = None
+    loss: str = "l1"
+
+
+@dataclass
 class BaselinesConfig:
     models: List[str] = field(default_factory=lambda: ["ifno"])
     batch_size: int = 4
+    gradient_accumulation_steps: int = 1
+    sample_with_replacement: bool = False
     epochs: int = 1
+    max_steps: Optional[int] = None
+    eval_interval: int = 250
+    eval_batches: Optional[int] = None
+    log_interval: int = 10
     learning_rate: float = 1e-4
     checkpoint_interval: int = 1
     ifno: IFNOConfig = field(default_factory=IFNOConfig)
+    invertible_deeponet: InvertibleDeepONetConfig = field(
+        default_factory=InvertibleDeepONetConfig
+    )
+    nio: NIOConfig = field(default_factory=NIOConfig)
 
 
 @dataclass
@@ -215,11 +248,29 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
         IFNOConfig,
         _require_mapping(baselines_raw.get("ifno", {}), "baselines.ifno"),
     )
+    invertible_deeponet = _dataclass_from_mapping(
+        InvertibleDeepONetConfig,
+        _require_mapping(
+            baselines_raw.get("invertible_deeponet", {}),
+            "baselines.invertible_deeponet",
+        ),
+    )
+    nio = _dataclass_from_mapping(
+        NIOConfig,
+        _require_mapping(baselines_raw.get("nio", {}), "baselines.nio"),
+    )
     baselines_without_ifno = {
         key: value for key, value in baselines_raw.items() if key != "ifno"
     }
-    baselines = _dataclass_from_mapping(BaselinesConfig, baselines_without_ifno)
+    baselines_without_nested = {
+        key: value
+        for key, value in baselines_without_ifno.items()
+        if key not in {"invertible_deeponet", "nio"}
+    }
+    baselines = _dataclass_from_mapping(BaselinesConfig, baselines_without_nested)
     baselines.ifno = ifno
+    baselines.invertible_deeponet = invertible_deeponet
+    baselines.nio = nio
     inverse_models = _dataclass_from_mapping(
         InverseModelsConfig,
         _require_mapping(raw.get("inverse_models", {}), "inverse_models"),
