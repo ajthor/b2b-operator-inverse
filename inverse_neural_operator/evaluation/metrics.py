@@ -5,6 +5,24 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 
+def mae(prediction, target):
+    import torch
+
+    return torch.mean(torch.abs(prediction - target))
+
+
+def mse(prediction, target):
+    import torch
+
+    return torch.mean((prediction - target) ** 2)
+
+
+def rmse(prediction, target):
+    import torch
+
+    return torch.sqrt(mse(prediction, target))
+
+
 def relative_l2(prediction, target):
     import torch
 

@@ -12,6 +12,7 @@ from scipy.integrate import quad
 import tqdm
 import time
 import os
+from pathlib import Path
 
 
 class ChladniDataset(Dataset):
@@ -92,6 +93,67 @@ class ChladniDataset(Dataset):
             "output_function_channels": 1,  # Scalar displacement field
             "coordinate_dim": 2,  # 2D spatial coordinates
         }
+
+
+class ChladniCpuDataset(Dataset):
+    """Chladni dataset that keeps tensors on host memory until evaluation/training."""
+
+    def __init__(self, dataset, stats):
+        self.dataset = dataset
+        self.stats = stats
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+        X = torch.as_tensor(sample["X"], dtype=torch.float32)
+        u = torch.as_tensor(sample["u"], dtype=torch.float32)
+        Y = torch.as_tensor(sample["Y"], dtype=torch.float32)
+        s = torch.as_tensor(sample["s"], dtype=torch.float32)
+        if u.dim() == 1:
+            u = u.unsqueeze(-1)
+        if s.dim() == 1:
+            s = s.unsqueeze(-1)
+        return X, u, Y, s
+
+    def get_info(self):
+        X, u, Y, s = self[0]
+        return {
+            "X_size": X.shape[-1],
+            "u_size": u.shape[-1],
+            "Y_size": Y.shape[-1],
+            "s_size": s.shape[-1],
+            "X_len": X.shape[0],
+            "u_len": u.shape[0],
+            "Y_len": Y.shape[0],
+            "s_len": s.shape[0],
+            "input_spatial_dims": (25, 25),
+            "output_spatial_dims": (25, 25),
+            "input_function_channels": u.shape[-1],
+            "output_function_channels": s.shape[-1],
+            "coordinate_dim": X.shape[-1],
+            "normalization_stats": self.stats,
+        }
+
+
+def _plain_stats(stats):
+    plain = {}
+    for key, value in stats.items():
+        array = np.asarray(value)
+        plain[key] = float(array) if array.shape == () else array.tolist()
+    return plain
+
+
+def load_chladni_dataset(split="train", sample_limit=None):
+    """Load the normalized Chladni dataset from disk for overhaul stages."""
+    root = Path(__file__).resolve().parents[2]
+    ds = load_from_disk(str(root / "data" / "chladni_dataset"))
+    split_ds = ds[split]
+    if sample_limit is not None:
+        split_ds = split_ds.select(range(min(sample_limit, len(split_ds))))
+    stats = _plain_stats(load_normalization_stats())
+    return ChladniCpuDataset(split_ds, stats)
 
 
 def load_data(params=None, device="cpu", split="train"):
@@ -334,7 +396,8 @@ def load_chladni_original():
 
 def load_normalization_stats():
     """Load the normalization statistics for denormalization if needed."""
-    data = np.load("data/ChladniData_normalization.npz")
+    root = Path(__file__).resolve().parents[2]
+    data = np.load(root / "data" / "ChladniData_normalization.npz")
     return {key: data[key] for key in data.keys()}
 
 

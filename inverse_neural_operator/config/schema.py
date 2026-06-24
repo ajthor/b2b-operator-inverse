@@ -178,6 +178,18 @@ class InverseModelsConfig:
 
 
 @dataclass
+class PDEValidationConfig:
+    enabled: bool = False
+    backend: str = "external"
+    command: Optional[str] = None
+    max_samples: int = 32
+    metrics: List[str] = field(
+        default_factory=lambda: ["mae", "mse", "rmse", "relative_l2", "ssim"]
+    )
+    overwrite: bool = False
+
+
+@dataclass
 class ExperimentConfig:
     experiment: str
     description: str = ""
@@ -190,6 +202,7 @@ class ExperimentConfig:
     forward_models: ForwardModelsConfig = field(default_factory=ForwardModelsConfig)
     baselines: BaselinesConfig = field(default_factory=BaselinesConfig)
     inverse_models: InverseModelsConfig = field(default_factory=InverseModelsConfig)
+    pde_validation: PDEValidationConfig = field(default_factory=PDEValidationConfig)
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -275,6 +288,10 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
         InverseModelsConfig,
         _require_mapping(raw.get("inverse_models", {}), "inverse_models"),
     )
+    pde_validation = _dataclass_from_mapping(
+        PDEValidationConfig,
+        _require_mapping(raw.get("pde_validation", {}), "pde_validation"),
+    )
 
     experiment = raw.get("experiment")
     if not experiment:
@@ -290,5 +307,6 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
         forward_models=forward_models,
         baselines=baselines,
         inverse_models=inverse_models,
+        pde_validation=pde_validation,
         raw=raw,
     )

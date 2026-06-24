@@ -28,7 +28,15 @@ def load_overhaul_dataset(config, split: str):
             source=config.dataset.source or "ajthor/darcy_1d",
             sample_limit=config.dataset.sample_limit,
         )
+    if config.dataset.name in {"chladni", "chladni_2d"}:
+        from inverse_neural_operator.data.chladni_2d import load_chladni_dataset
+
+        return load_chladni_dataset(
+            split=split,
+            sample_limit=config.dataset.sample_limit,
+        )
     raise ValueError(
         f"Unsupported migrated dataset {config.dataset.name!r}. "
-        "Supported values are: fwi, burgers, burgers_1d, darcy, darcy_1d."
+        "Supported values are: fwi, burgers, burgers_1d, darcy, darcy_1d, "
+        "chladni, chladni_2d."
     )
