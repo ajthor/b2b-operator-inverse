@@ -197,6 +197,60 @@ class FNOBlock1d(torch.nn.Module):
         return self.activation(self.spectral(x) + self.pointwise(x))
 
 
+class SpectralConv2d(torch.nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, modes1: int, modes2: int):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.modes1 = modes1
+        self.modes2 = modes2
+        scale = 1 / math.sqrt(in_channels * out_channels)
+        # Two weight banks for the two retained corners of the rfft2 spectrum.
+        self.weight1 = torch.nn.Parameter(
+            scale * torch.randn(in_channels, out_channels, modes1, modes2, dtype=torch.cfloat)
+        )
+        self.weight2 = torch.nn.Parameter(
+            scale * torch.randn(in_channels, out_channels, modes1, modes2, dtype=torch.cfloat)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch, _, height, width = x.shape
+        x_ft = torch.fft.rfft2(x, dim=(-2, -1))
+        out_ft = torch.zeros(
+            batch,
+            self.out_channels,
+            x_ft.shape[-2],
+            x_ft.shape[-1],
+            dtype=torch.cfloat,
+            device=x.device,
+        )
+        modes1 = min(self.modes1, x_ft.shape[-2] // 2)
+        modes2 = min(self.modes2, x_ft.shape[-1])
+        if modes1 > 0 and modes2 > 0:
+            out_ft[:, :, :modes1, :modes2] = torch.einsum(
+                "bixy,ioxy->boxy",
+                x_ft[:, :, :modes1, :modes2],
+                self.weight1[:, :, :modes1, :modes2],
+            )
+            out_ft[:, :, -modes1:, :modes2] = torch.einsum(
+                "bixy,ioxy->boxy",
+                x_ft[:, :, -modes1:, :modes2],
+                self.weight2[:, :, :modes1, :modes2],
+            )
+        return torch.fft.irfft2(out_ft, s=(height, width), dim=(-2, -1))
+
+
+class FNOBlock2d(torch.nn.Module):
+    def __init__(self, channels: int, modes: int):
+        super().__init__()
+        self.spectral = SpectralConv2d(channels, channels, modes, modes)
+        self.pointwise = torch.nn.Conv2d(channels, channels, kernel_size=1)
+        self.activation = torch.nn.GELU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.activation(self.spectral(x) + self.pointwise(x))
+
+
 class NIOBaseline(torch.nn.Module):
     """Supervised adaptation of DeepONet measurement aggregation plus FNO mixer."""
 
@@ -214,22 +268,36 @@ class NIOBaseline(torch.nn.Module):
         modes: int,
         n_fourier_layers: int,
         measurement_points: Optional[int],
+        input_spatial_dims: Iterable[int] = (),
     ):
         super().__init__()
         self.input_channels = input_channels
         self.n_basis = n_basis
         self.lifting_channels = lifting_channels
         self.measurement_points = measurement_points
+        self.spatial_dims = tuple(int(dim) for dim in input_spatial_dims)
+        self.spatial_ndim = len(self.spatial_dims)
+        if self.spatial_ndim not in (1, 2):
+            raise ValueError(
+                "NIOBaseline supports 1D or 2D input grids; got "
+                f"input_spatial_dims={self.spatial_dims!r}."
+            )
         self.branch = _mlp(output_coordinate_dim + output_channels, branch_hidden_sizes, n_basis)
         self.trunk = _mlp(input_coordinate_dim, trunk_hidden_sizes, n_basis)
         self.lift = torch.nn.Linear(n_basis + input_coordinate_dim, lifting_channels)
+        if self.spatial_ndim == 1:
+            block_cls = FNOBlock1d
+            conv_cls = torch.nn.Conv1d
+        else:
+            block_cls = FNOBlock2d
+            conv_cls = torch.nn.Conv2d
         self.blocks = torch.nn.ModuleList(
-            [FNOBlock1d(lifting_channels, modes) for _ in range(n_fourier_layers)]
+            [block_cls(lifting_channels, modes) for _ in range(n_fourier_layers)]
         )
         self.project = torch.nn.Sequential(
-            torch.nn.Conv1d(lifting_channels, lifting_channels, kernel_size=1),
+            conv_cls(lifting_channels, lifting_channels, kernel_size=1),
             torch.nn.GELU(),
-            torch.nn.Conv1d(lifting_channels, input_channels, kernel_size=1),
+            conv_cls(lifting_channels, input_channels, kernel_size=1),
         )
 
     def _sample_measurements(self, y: torch.Tensor, s: torch.Tensor):
@@ -243,12 +311,26 @@ class NIOBaseline(torch.nn.Module):
         return y[:, indices], s[:, indices]
 
     def predict_inverse(self, x: torch.Tensor, y: torch.Tensor, s: torch.Tensor):
+        batch, n_points, _ = x.shape
         y_sample, s_sample = self._sample_measurements(y, s)
         measurement_features = torch.cat([y_sample, s_sample], dim=-1)
         branch = self.branch(measurement_features)
         trunk = self.trunk(x)
         deeponet_features = trunk * branch.mean(dim=1).unsqueeze(1)
+        # [batch, lifting_channels, n_points]
         lifted = self.lift(torch.cat([deeponet_features, x], dim=-1)).permute(0, 2, 1)
+        if self.spatial_ndim == 2:
+            height, width = self.spatial_dims
+            if height * width != n_points:
+                raise ValueError(
+                    f"Expected {height * width} grid points for spatial dims "
+                    f"{self.spatial_dims}, got {n_points}."
+                )
+            lifted = lifted.reshape(batch, self.lifting_channels, height, width)
+            for block in self.blocks:
+                lifted = block(lifted)
+            out = self.project(lifted)  # [batch, input_channels, H, W]
+            return out.reshape(batch, self.input_channels, n_points).permute(0, 2, 1)
         for block in self.blocks:
             lifted = block(lifted)
         return self.project(lifted).permute(0, 2, 1)
@@ -257,7 +339,7 @@ class NIOBaseline(torch.nn.Module):
 def create_invertible_deeponet(dataset_info, config):
     cfg = config.baselines.invertible_deeponet
     return InvertibleDeepONetBaseline(
-        input_points=dataset_info["u_len"],
+        input_points=math.prod(dataset_info["input_spatial_dims"]),
         input_channels=dataset_info["input_function_channels"],
         output_channels=dataset_info["output_function_channels"],
         coordinate_dim=dataset_info["Y_size"],
@@ -282,4 +364,5 @@ def create_nio(dataset_info, config):
         modes=cfg.modes,
         n_fourier_layers=cfg.n_fourier_layers,
         measurement_points=cfg.measurement_points,
+        input_spatial_dims=dataset_info["input_spatial_dims"],
     )

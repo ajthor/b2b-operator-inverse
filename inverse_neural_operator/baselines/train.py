@@ -238,6 +238,210 @@ def _train_vae_if_requested(model, train_loader, context, writer, baseline_confi
             )
 
 
+_IFNO_KL_WEIGHT = 0.01
+
+
+def _ifno_forward(model, batch, out_function_channels):
+    import torch
+
+    x, u, _, _ = batch
+    result = model(torch.cat([x, u], dim=-1))
+    if isinstance(result, tuple):
+        pred_s_full, recon = result
+    else:
+        pred_s_full, recon = result, torch.zeros((), device=x.device)
+    return pred_s_full[..., -out_function_channels:], recon
+
+
+def _ifno_inverse(model, batch):
+    import torch
+
+    _, _, y, s = batch
+    result = model.inverse(torch.cat([y, s], dim=-1))
+    if isinstance(result, tuple):
+        pred_u_full, recon = result
+    else:
+        pred_u_full, recon = result, torch.zeros((), device=y.device)
+    return pred_u_full, recon
+
+
+def _evaluate_ifno(model, loader, context, config, in_function_channels, out_function_channels):
+    """Faithful iFNO eval: forward error, and inverse error using the VAE-refined
+    inverse (paper's inference path), with the raw (no-VAE) inverse also reported."""
+    import torch
+
+    model.eval()
+    totals = {}
+    count = torch.zeros((), device=context.device)
+    with torch.no_grad():
+        for batch_index, batch in enumerate(loader):
+            if config.baselines.eval_batches is not None and batch_index >= config.baselines.eval_batches:
+                break
+            batch = _move_batch(batch, context.device)
+            _, u, _, s = batch
+            batch_size = u.shape[0]
+
+            pred_s, _ = _ifno_forward(model, batch, out_function_channels)
+            pred_u_full, _ = _ifno_inverse(model, batch)
+            pred_u_raw = pred_u_full[..., -in_function_channels:]
+
+            refined = model.refine_inverse(pred_u_full)
+            u_vae = model._get_vae_input_shape(u)
+
+            forward_loss = _relative_l2_loss(pred_s, s)
+            input_loss = _relative_l2_loss(
+                refined.reshape(batch_size, -1), u_vae.reshape(batch_size, -1)
+            )
+            input_loss_raw = _relative_l2_loss(pred_u_raw, u)
+
+            metrics = {
+                "loss": forward_loss + input_loss,
+                "forward_loss": forward_loss,
+                "input_loss": input_loss,
+                "input_loss_raw": input_loss_raw,
+                "forward_relative_l2": forward_loss,
+                "input_relative_l2": input_loss,
+            }
+            for key, value in metrics.items():
+                totals.setdefault(key, torch.zeros((), device=context.device))
+                totals[key] += value.detach()
+            count += 1
+    for value in totals.values():
+        _all_reduce_sum(value, context)
+    _all_reduce_sum(count, context)
+    count = torch.clamp(count, min=1)
+    payload = {key: float((value / count).item()) for key, value in totals.items()}
+    payload["eval_batches"] = int(count.item())
+    return payload
+
+
+def _run_ifno_training(model, train_loader, test_loader, context, config, writer):
+    """Faithful three-phase iFNO training (arXiv:2402.11722), mirroring the
+    reference implementation (BayesianAIGroup/iFNO):
+
+      Phase 1 - pre-train invertible blocks with forward + backward data losses
+                plus the P/Q and P'/Q' reconstruction losses.
+      Phase 2 - pre-train the beta-VAE on input functions (recon + KL).
+      Phase 3 - joint training: forward data loss (lr_forward) and a backward
+                objective that passes the rough inverse through the VAE and
+                reconstructs the true input (lr_backward).
+
+    Eval uses the VAE-refined inverse, matching the paper's inverse inference.
+    """
+    import torch
+
+    if context.is_distributed:
+        raise RuntimeError(
+            "Faithful iFNO baseline training is single-process only; run without DDP."
+        )
+
+    baseline_config = config.baselines
+    ifno_cfg = baseline_config.ifno
+    out_fc = model.output_function_channels
+    in_fc = model.input_function_channels
+    device = context.device
+
+    def log_scalar(tag, value, step):
+        if context.is_rank_zero and writer is not None:
+            writer.add_scalar(tag, float(value), step)
+
+    global_step = 0
+
+    # Phase 1: pre-train invertible blocks (forward + backward + reconstruction).
+    if ifno_cfg.epochs_ifno:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=ifno_cfg.lr_ifno)
+        for epoch in range(ifno_cfg.epochs_ifno):
+            model.train()
+            for batch in train_loader:
+                batch = _move_batch(batch, device)
+                _, u, _, s = batch
+                pred_s, recon_f = _ifno_forward(model, batch, out_fc)
+                pred_u_full, recon_b = _ifno_inverse(model, batch)
+                pred_u = pred_u_full[..., -in_fc:]
+                loss = (
+                    _relative_l2_loss(pred_s, s)
+                    + recon_f
+                    + _relative_l2_loss(pred_u, u)
+                    + recon_b
+                )
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+                optimizer.step()
+                global_step += 1
+                if global_step % baseline_config.log_interval == 0:
+                    log_scalar("train/ifno_pretrain_loss", loss.item(), global_step)
+
+    # Phase 2: pre-train the beta-VAE on input functions.
+    if ifno_cfg.epochs_vae:
+        optimizer = torch.optim.AdamW(model.vae_net.parameters(), lr=ifno_cfg.lr_vae)
+        for epoch in range(ifno_cfg.epochs_vae):
+            model.train()
+            for batch in train_loader:
+                batch = _move_batch(batch, device)
+                _, u, _, _ = batch
+                vae_in = model._get_vae_input_shape(u)
+                recon, vae_input, mu, log_var = model.vae_net(vae_in)
+                recon_loss = _relative_l2_loss(
+                    recon.reshape(u.shape[0], -1), vae_input.reshape(u.shape[0], -1)
+                )
+                kl_loss = torch.mean(
+                    -0.5 * torch.sum(1 + log_var - mu**2 - log_var.exp(), dim=1), dim=0
+                )
+                loss = recon_loss + _IFNO_KL_WEIGHT * kl_loss
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+                optimizer.step()
+                global_step += 1
+                if global_step % baseline_config.log_interval == 0:
+                    log_scalar("train/ifno_vae_loss", loss.item(), global_step)
+
+    # Phase 3: joint training (forward data loss + VAE-refined backward objective).
+    lr_backward = ifno_cfg.lr_backward if ifno_cfg.lr_backward is not None else ifno_cfg.lr_forward
+    optimizer_forward = torch.optim.AdamW(model.parameters(), lr=ifno_cfg.lr_forward)
+    optimizer_backward = torch.optim.AdamW(model.parameters(), lr=lr_backward)
+    metrics = {}
+    best_test = None
+    for epoch in range(baseline_config.epochs):
+        model.train()
+        for batch in train_loader:
+            batch = _move_batch(batch, device)
+            _, u, _, s = batch
+
+            pred_s, _ = _ifno_forward(model, batch, out_fc)
+            loss_forward = _relative_l2_loss(pred_s, s)
+            optimizer_forward.zero_grad(set_to_none=True)
+            loss_forward.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+            optimizer_forward.step()
+
+            pred_u_full, _ = _ifno_inverse(model, batch)
+            loss_backward = model.inverse_vae_loss(pred_u_full, u, _IFNO_KL_WEIGHT)
+            optimizer_backward.zero_grad(set_to_none=True)
+            loss_backward.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+            optimizer_backward.step()
+
+            global_step += 1
+            if global_step % baseline_config.log_interval == 0:
+                log_scalar("train/ifno_joint_forward", loss_forward.item(), global_step)
+                log_scalar("train/ifno_joint_backward", loss_backward.item(), global_step)
+
+        metrics = _evaluate_ifno(model, test_loader, context, config, in_fc, out_fc)
+        best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
+        if context.is_rank_zero and writer is not None:
+            for key, value in metrics.items():
+                if isinstance(value, (int, float)):
+                    writer.add_scalar(f"eval/{key}", value, epoch)
+
+    if not metrics:
+        metrics = _evaluate_ifno(model, test_loader, context, config, in_fc, out_fc)
+        best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
+
+    return metrics, best_test, global_step
+
+
 def main() -> None:
     args = parse_args()
     config = load_experiment_config(args.config)
@@ -290,11 +494,6 @@ def main() -> None:
         raise SystemExit(
             f"Model {args.model!r} is not listed in baselines.models: "
             f"{baseline_config.models}"
-        )
-    if args.model == "ifno" and baseline_config.ifno.epochs_ifno:
-        raise RuntimeError(
-            "IFNO pretraining is not ported in the migrated baseline stage yet. "
-            "Set baselines.ifno.epochs_ifno to 0."
         )
     assert model_dir is not None
     refuse_existing_artifact(model_dir / "model.safetensors", overwrite=args.overwrite)
@@ -383,109 +582,115 @@ def main() -> None:
         checkpoint_path = run_dir / "latest_checkpoint.pt"
         start_time = time.time()
 
-        _train_vae_if_requested(ddp_model, train_loader, context, writer, baseline_config)
-
-        optimizer = torch.optim.AdamW(
-            ddp_model.parameters(),
-            lr=baseline_config.learning_rate,
-            weight_decay=1e-4,
-        )
         best_test = None
         metrics = {}
         completed_steps = 0
-        data_epoch = 0
-        train_iter = iter(train_loader)
 
-        def run_train_step(step: int):
-            nonlocal train_iter, data_epoch
-            ddp_model.train()
-            optimizer.zero_grad(set_to_none=True)
-            step_totals = {}
-            for micro_step in range(accumulation_steps):
-                try:
-                    batch = next(train_iter)
-                except StopIteration:
-                    data_epoch += 1
+        if args.model == "ifno":
+            metrics, best_test, completed_steps = _run_ifno_training(
+                model, train_loader, test_loader, context, config, writer
+            )
+        else:
+            _train_vae_if_requested(ddp_model, train_loader, context, writer, baseline_config)
+
+            optimizer = torch.optim.AdamW(
+                ddp_model.parameters(),
+                lr=baseline_config.learning_rate,
+                weight_decay=1e-4,
+            )
+            data_epoch = 0
+            train_iter = iter(train_loader)
+
+            def run_train_step(step: int):
+                nonlocal train_iter, data_epoch
+                ddp_model.train()
+                optimizer.zero_grad(set_to_none=True)
+                step_totals = {}
+                for micro_step in range(accumulation_steps):
+                    try:
+                        batch = next(train_iter)
+                    except StopIteration:
+                        data_epoch += 1
+                        if isinstance(train_sampler, DistributedSampler):
+                            train_sampler.set_epoch(data_epoch)
+                        train_iter = iter(train_loader)
+                        batch = next(train_iter)
+                    batch = _move_batch(batch, context.device)
+                    should_sync = micro_step == accumulation_steps - 1
+                    sync_context = (
+                        nullcontext()
+                        if should_sync or not hasattr(ddp_model, "no_sync")
+                        else ddp_model.no_sync()
+                    )
+                    with sync_context:
+                        batch_metrics = _batch_metrics(ddp_model, batch, args.model, config)
+                        (batch_metrics["loss"] / accumulation_steps).backward()
+                    for key, value in batch_metrics.items():
+                        step_totals.setdefault(key, torch.zeros((), device=context.device))
+                        step_totals[key] += value.detach() / accumulation_steps
+                torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), max_norm=2.0)
+                optimizer.step()
+                for value in step_totals.values():
+                    _all_reduce_sum(value, context)
+                    value /= context.world_size
+                if context.is_rank_zero and writer is not None and step % baseline_config.log_interval == 0:
+                    for key, value in step_totals.items():
+                        writer.add_scalar(f"train/{key}", float(value.item()), step)
+                return float(step_totals["loss"].item())
+
+            if baseline_config.max_steps is not None:
+                for step in range(1, baseline_config.max_steps + 1):
+                    completed_steps = step
+                    train_loss = run_train_step(step)
+                    if step % baseline_config.eval_interval == 0 or step == baseline_config.max_steps:
+                        metrics = _evaluate(ddp_model, test_loader, context, args.model, config)
+                        best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
+                        if context.is_rank_zero and writer is not None:
+                            for key, value in metrics.items():
+                                if isinstance(value, (int, float)):
+                                    writer.add_scalar(f"eval/{key}", value, step)
+                    if step % baseline_config.checkpoint_interval == 0 and context.is_rank_zero:
+                        torch.save(
+                            {
+                                "step": step,
+                                "model_state_dict": model.state_dict(),
+                                "optimizer_state_dict": optimizer.state_dict(),
+                                "loss": train_loss,
+                                "best_test_loss": best_test,
+                            },
+                            checkpoint_path,
+                        )
+            else:
+                step = 0
+                for epoch in range(baseline_config.epochs):
                     if isinstance(train_sampler, DistributedSampler):
-                        train_sampler.set_epoch(data_epoch)
-                    train_iter = iter(train_loader)
-                    batch = next(train_iter)
-                batch = _move_batch(batch, context.device)
-                should_sync = micro_step == accumulation_steps - 1
-                sync_context = (
-                    nullcontext()
-                    if should_sync or not hasattr(ddp_model, "no_sync")
-                    else ddp_model.no_sync()
-                )
-                with sync_context:
-                    batch_metrics = _batch_metrics(ddp_model, batch, args.model, config)
-                    (batch_metrics["loss"] / accumulation_steps).backward()
-                for key, value in batch_metrics.items():
-                    step_totals.setdefault(key, torch.zeros((), device=context.device))
-                    step_totals[key] += value.detach() / accumulation_steps
-            torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), max_norm=2.0)
-            optimizer.step()
-            for value in step_totals.values():
-                _all_reduce_sum(value, context)
-                value /= context.world_size
-            if context.is_rank_zero and writer is not None and step % baseline_config.log_interval == 0:
-                for key, value in step_totals.items():
-                    writer.add_scalar(f"train/{key}", float(value.item()), step)
-            return float(step_totals["loss"].item())
-
-        if baseline_config.max_steps is not None:
-            for step in range(1, baseline_config.max_steps + 1):
-                completed_steps = step
-                train_loss = run_train_step(step)
-                if step % baseline_config.eval_interval == 0 or step == baseline_config.max_steps:
+                        train_sampler.set_epoch(epoch)
+                    for _ in range(len(train_loader)):
+                        step += 1
+                        completed_steps = step
+                        train_loss = run_train_step(step)
                     metrics = _evaluate(ddp_model, test_loader, context, args.model, config)
                     best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
                     if context.is_rank_zero and writer is not None:
                         for key, value in metrics.items():
                             if isinstance(value, (int, float)):
-                                writer.add_scalar(f"eval/{key}", value, step)
-                if step % baseline_config.checkpoint_interval == 0 and context.is_rank_zero:
-                    torch.save(
-                        {
-                            "step": step,
-                            "model_state_dict": model.state_dict(),
-                            "optimizer_state_dict": optimizer.state_dict(),
-                            "loss": train_loss,
-                            "best_test_loss": best_test,
-                        },
-                        checkpoint_path,
-                    )
-        else:
-            step = 0
-            for epoch in range(baseline_config.epochs):
-                if isinstance(train_sampler, DistributedSampler):
-                    train_sampler.set_epoch(epoch)
-                for _ in range(len(train_loader)):
-                    step += 1
-                    completed_steps = step
-                    train_loss = run_train_step(step)
+                                writer.add_scalar(f"eval/{key}", value, epoch)
+                    if context.is_rank_zero:
+                        torch.save(
+                            {
+                                "epoch": epoch,
+                                "step": step,
+                                "model_state_dict": model.state_dict(),
+                                "optimizer_state_dict": optimizer.state_dict(),
+                                "loss": train_loss,
+                                "best_test_loss": best_test,
+                            },
+                            checkpoint_path,
+                        )
+
+            if not metrics:
                 metrics = _evaluate(ddp_model, test_loader, context, args.model, config)
                 best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
-                if context.is_rank_zero and writer is not None:
-                    for key, value in metrics.items():
-                        if isinstance(value, (int, float)):
-                            writer.add_scalar(f"eval/{key}", value, epoch)
-                if context.is_rank_zero:
-                    torch.save(
-                        {
-                            "epoch": epoch,
-                            "step": step,
-                            "model_state_dict": model.state_dict(),
-                            "optimizer_state_dict": optimizer.state_dict(),
-                            "loss": train_loss,
-                            "best_test_loss": best_test,
-                        },
-                        checkpoint_path,
-                    )
-
-        if not metrics:
-            metrics = _evaluate(ddp_model, test_loader, context, args.model, config)
-            best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
 
         barrier(context)
         if context.is_rank_zero:

@@ -1157,6 +1157,40 @@ class IFNO(nn.Module):
 
             return x_preds
 
+    def _inverse_function_channels(self, pred_u_full):
+        """Extract the input-function channels from a raw inverse() prediction."""
+        fc = self.input_function_channels
+        return pred_u_full[..., -fc:]
+
+    def refine_inverse(self, pred_u_full):
+        """Faithful iFNO inverse inference: project the rough inverse prediction
+        onto the learned input-function manifold via the (deterministic) VAE.
+
+        Mirrors the reference eval path: x = backward(y); x = VAE.forward2(x_func).
+        Returns the refined function field shaped as VAE input: (batch, fc, *spatial).
+        """
+        pred_func = self._inverse_function_channels(pred_u_full)
+        vae_in = self._get_vae_input_shape(pred_func)
+        refined, _, _, _ = self.vae_net.forward2(vae_in)
+        return refined
+
+    def inverse_vae_loss(self, pred_u_full, u_func, kl_weight):
+        """Faithful joint backward objective: encode the rough inverse prediction
+        through the VAE (with sampling) and reconstruct the true input function,
+        plus a KL term. Mirrors the reference VAE_train used in joint_train."""
+        pred_func = self._inverse_function_channels(pred_u_full)
+        vae_in = self._get_vae_input_shape(pred_func)
+        recon, _, mu, log_var = self.vae_net(vae_in)
+        target = self._get_vae_input_shape(u_func)
+        batch_size = recon.shape[0]
+        recon_loss = relative_l2_loss(
+            recon.reshape(batch_size, -1), target.reshape(batch_size, -1)
+        )
+        kl_loss = torch.mean(
+            -0.5 * torch.sum(1 + log_var - mu**2 - log_var.exp(), dim=1), dim=0
+        )
+        return recon_loss + kl_weight * kl_loss
+
 
 def create_model(
     input_size,
