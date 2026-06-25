@@ -44,7 +44,7 @@ function_encoders:
   regularization: 0.001
   orthonormality_loss_weight: 0.0
   ssim_loss_weight: 1.0
-  ssim_max_points: 4096
+  ssim_max_points: 1024
   batch_size: 1
   gradient_accumulation_steps: 18
   sample_with_replacement: true
