@@ -1,0 +1,57 @@
+experiment: fwi_function_encoders_siren2_nbasis50_omega10to45_ssim_3gpu
+description: FWI SIREN2/WINNER function encoder training with 50 bases, omega ramp 10 to 45, and MSE plus SSIM loss on three allocated GPUs.
+
+dataset:
+  name: fwi
+  source: ajthor/fwi
+  sample_limit: null
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 3
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  tensorboard_dir: ./results
+  env:
+    CUDA_VISIBLE_DEVICES: "0,1,2"
+    MASTER_PORT: "29523"
+    NCCL_SHM_DISABLE: "1"
+
+matrix:
+  seeds: [1]
+  stages:
+    - function_encoders
+
+function_encoders:
+  artifact: siren2_nbasis50_omega10to45_ssim_3gpu
+  encoder_types: [input, output]
+  basis_chunk_size: 4
+  coefficient_grad: false
+  basis:
+    kind: siren_square
+    n_basis: 50
+    hidden_sizes: [512, 512, 512]
+    omega_0: 45.0
+    omega_start: 10.0
+    omega_end: 45.0
+    omega_warmup_steps: 1500
+    winner_samples: 128
+    winner_noise_scale: 1.0
+    winner_first_layer_scale: 1.0
+    winner_hidden_layer_scale: 1.0
+  regularization: 0.001
+  orthonormality_loss_weight: 0.0
+  ssim_loss_weight: 1.0
+  ssim_max_points: 8192
+  batch_size: 1
+  gradient_accumulation_steps: 18
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 5000
+  eval_interval: 100
+  eval_batches: 2
+  log_interval: 1
+  learning_rate: 0.0001
+  checkpoint_interval: 100
