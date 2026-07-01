@@ -1,0 +1,73 @@
+experiment: fwi_inverse_architecture_matrix_siren2_nbasis50_omega10to45_3gpu
+description: FWI inverse architecture sweep using the SIREN2/WINNER 50-basis omega 10 to 45 function encoders.
+
+dataset:
+  name: fwi
+  source: ajthor/fwi
+  sample_limit: null
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 3
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  tensorboard_dir: ./results
+  env:
+    CUDA_VISIBLE_DEVICES: "0,1,2"
+    MASTER_PORT: "29525"
+    NCCL_SHM_DISABLE: "1"
+
+matrix:
+  seeds: [1]
+  stages:
+    - inverse_models
+
+function_encoders:
+  artifact: siren2_nbasis50_omega10to45_ssim_3gpu
+  basis_chunk_size: 4
+  coefficient_grad: false
+  basis:
+    kind: siren_square
+    n_basis: 50
+    hidden_sizes: [512, 512, 512]
+    omega_0: 45.0
+  regularization: 0.001
+
+forward_models:
+  models: [b2b_nonlinear]
+  function_encoder_artifact: siren2_nbasis50_omega10to45_ssim_3gpu
+  hidden_sizes: [128, 128]
+
+inverse_models:
+  models:
+    - nonlinear
+    - linear_inverse
+    - conditional_realnvp
+    - vae
+    - mixture_density
+    - cinn_additive
+    - cinn_affine
+    - cinn_additive_probabilistic
+    - cinn_affine_probabilistic
+    - inn_additive
+    - inn_affine
+  function_encoder_artifact: siren2_nbasis50_omega10to45_ssim_3gpu
+  forward_model: b2b_nonlinear
+  hidden_sizes: [128, 128]
+  latent_size: 128
+  n_coupling_layers: 6
+  n_components: 5
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 5000
+  eval_interval: 250
+  eval_batches: 2
+  log_interval: 10
+  learning_rate: 0.0001
+  checkpoint_interval: 250
