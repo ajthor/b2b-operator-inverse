@@ -403,6 +403,8 @@ def _run_ifno_training(model, train_loader, test_loader, context, config, writer
     optimizer_backward = torch.optim.AdamW(model.parameters(), lr=lr_backward)
     metrics = {}
     best_test = None
+    max_steps = getattr(baseline_config, "max_steps", None)
+    eval_interval = getattr(baseline_config, "eval_interval", None)
     for epoch in range(baseline_config.epochs):
         model.train()
         for batch in train_loader:
@@ -428,12 +430,27 @@ def _run_ifno_training(model, train_loader, test_loader, context, config, writer
                 log_scalar("train/ifno_joint_forward", loss_forward.item(), global_step)
                 log_scalar("train/ifno_joint_backward", loss_backward.item(), global_step)
 
-        metrics = _evaluate_ifno(model, test_loader, context, config, in_fc, out_fc)
-        best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
-        if context.is_rank_zero and writer is not None:
-            for key, value in metrics.items():
-                if isinstance(value, (int, float)):
-                    writer.add_scalar(f"eval/{key}", value, epoch)
+            should_eval = max_steps is not None and global_step >= max_steps
+            if eval_interval:
+                should_eval = should_eval or global_step % eval_interval == 0
+            if should_eval:
+                metrics = _evaluate_ifno(model, test_loader, context, config, in_fc, out_fc)
+                best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
+                if context.is_rank_zero and writer is not None:
+                    for key, value in metrics.items():
+                        if isinstance(value, (int, float)):
+                            writer.add_scalar(f"eval/{key}", value, global_step)
+            if max_steps is not None and global_step >= max_steps:
+                break
+        if max_steps is None:
+            metrics = _evaluate_ifno(model, test_loader, context, config, in_fc, out_fc)
+            best_test = metrics["loss"] if best_test is None else min(best_test, metrics["loss"])
+            if context.is_rank_zero and writer is not None:
+                for key, value in metrics.items():
+                    if isinstance(value, (int, float)):
+                        writer.add_scalar(f"eval/{key}", value, global_step)
+        if max_steps is not None and global_step >= max_steps:
+            break
 
     if not metrics:
         metrics = _evaluate_ifno(model, test_loader, context, config, in_fc, out_fc)
