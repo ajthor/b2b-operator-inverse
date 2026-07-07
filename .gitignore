@@ -264,7 +264,7 @@ results/
 *.4
 *.arrow
 
-evaluation/
+/evaluation/
 logs_ifno/
 results_plots/
 temp_plots/
