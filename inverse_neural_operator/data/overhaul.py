@@ -35,8 +35,26 @@ def load_overhaul_dataset(config, split: str):
             split=split,
             sample_limit=config.dataset.sample_limit,
         )
+    if config.dataset.name in {"wave_scattering", "wave_scattering_2d"}:
+        from inverse_neural_operator.data.wave_scattering import (
+            load_wave_scattering_dataset,
+        )
+
+        return load_wave_scattering_dataset(
+            split=split,
+            source=config.dataset.source or "ajthor/wave_scattering",
+            sample_limit=config.dataset.sample_limit,
+        )
+    if config.dataset.name in {"elastic_plate", "elastic"}:
+        from inverse_neural_operator.data.elastic_plate import load_elastic_plate_dataset
+
+        return load_elastic_plate_dataset(
+            split=split,
+            sample_limit=config.dataset.sample_limit,
+        )
     raise ValueError(
         f"Unsupported migrated dataset {config.dataset.name!r}. "
         "Supported values are: fwi, burgers, burgers_1d, darcy, darcy_1d, "
-        "chladni, chladni_2d."
+        "chladni, chladni_2d, wave_scattering, wave_scattering_2d, "
+        "elastic_plate, elastic."
     )

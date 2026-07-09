@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from datasets import load_dataset
+from typing import Any, Dict, Optional
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -157,3 +158,92 @@ def load_data(params, device, split="train"):
     model_dataset = WaveScatteringDataset(ds, stats=stats, device=device)
 
     return model_dataset
+
+
+class WaveScatteringCpuDataset(Dataset):
+    """Wave scattering dataset that keeps tensors on host until the training loop."""
+
+    def __init__(self, dataset, stats: Dict[str, Any]):
+        self.dataset = dataset
+        self.stats = stats
+        grid_size = 200
+        x = torch.linspace(0, 1, grid_size, dtype=torch.float32)
+        y = torch.linspace(0, 1, grid_size, dtype=torch.float32)
+        x_grid, y_grid = torch.meshgrid(x, y, indexing="ij")
+        self.output_coordinates = torch.stack(
+            [x_grid.flatten(), y_grid.flatten()],
+            dim=1,
+        )
+
+    @staticmethod
+    def _normalize(tensor, mean, std):
+        mean = torch.as_tensor(mean, dtype=tensor.dtype)
+        std = torch.as_tensor(std, dtype=tensor.dtype).clamp(min=1e-6)
+        return (tensor - mean) / std
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+        theta = torch.as_tensor(sample["theta"], dtype=torch.float32)
+        X = torch.stack([torch.cos(theta), torch.sin(theta)], dim=-1)
+        u = torch.as_tensor(sample["u"], dtype=torch.float32)
+        s = torch.as_tensor(sample["s"], dtype=torch.float32).reshape(-1)
+        if u.dim() == 1:
+            u = u.unsqueeze(-1)
+        if s.dim() == 1:
+            s = s.unsqueeze(-1)
+        u = self._normalize(u, self.stats["u_mean"], self.stats["u_std"])
+        s = self._normalize(s, self.stats["s_mean"], self.stats["s_std"])
+        return X, u, self.output_coordinates, s
+
+    def get_info(self):
+        X, u, Y, s = self[0]
+        return {
+            "X_size": X.shape[-1],
+            "u_size": u.shape[-1],
+            "Y_size": Y.shape[-1],
+            "s_size": s.shape[-1],
+            "X_len": X.shape[0],
+            "u_len": u.shape[0],
+            "Y_len": Y.shape[0],
+            "s_len": s.shape[0],
+            "input_spatial_dims": (X.shape[0],),
+            "output_spatial_dims": (200, 200),
+            "input_function_channels": u.shape[-1],
+            "output_function_channels": s.shape[-1],
+            "coordinate_dim": 2,
+            "normalization_stats": self.stats,
+        }
+
+
+def _load_or_compute_stats(source: str) -> Dict[str, Any]:
+    if os.path.exists(stats_path):
+        with open(stats_path, "r") as handle:
+            return json.load(handle)
+    train_ds = load_dataset(source, split="train")
+    return compute_stats(train_ds)
+
+
+def _materialize(source: str, split: str, sample_limit: Optional[int]):
+    if sample_limit is None:
+        return load_dataset(source, split=split)
+    stream = load_dataset(source, split=split, streaming=True)
+    samples = []
+    for idx, sample in enumerate(stream):
+        if idx >= sample_limit:
+            break
+        samples.append(dict(sample))
+    return samples
+
+
+def load_wave_scattering_dataset(
+    *,
+    split: str,
+    source: str = "ajthor/wave_scattering",
+    sample_limit: Optional[int] = None,
+) -> WaveScatteringCpuDataset:
+    stats = _load_or_compute_stats(source)
+    dataset = _materialize(source, split, sample_limit)
+    return WaveScatteringCpuDataset(dataset, stats)

@@ -91,6 +91,52 @@ class ElasticPlateDataset(Dataset):
         }
 
 
+class ElasticPlateCpuDataset(Dataset):
+    """Elastic plate dataset that keeps tensors on host until the training loop."""
+
+    def __init__(self, dataset, stats):
+        self.dataset = dataset
+        self.stats = stats
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+        X = torch.as_tensor(sample["X"], dtype=torch.float32)
+        u = torch.as_tensor(sample["u"], dtype=torch.float32)
+        Y = torch.as_tensor(sample["Y"], dtype=torch.float32)
+        s = torch.as_tensor(sample["s"], dtype=torch.float32)
+        if X.dim() == 1:
+            X = X.unsqueeze(-1)
+        if u.dim() == 1:
+            u = u.unsqueeze(-1)
+        if Y.dim() == 1:
+            Y = Y.unsqueeze(-1)
+        if s.dim() == 1:
+            s = s.unsqueeze(-1)
+        return X, u, Y, s
+
+    def get_info(self):
+        X, u, Y, s = self[0]
+        return {
+            "X_size": X.shape[-1],
+            "u_size": u.shape[-1],
+            "Y_size": Y.shape[-1],
+            "s_size": s.shape[-1],
+            "X_len": X.shape[0],
+            "u_len": u.shape[0],
+            "Y_len": Y.shape[0],
+            "s_len": s.shape[0],
+            "input_spatial_dims": (X.shape[0],),
+            "output_spatial_dims": (Y.shape[0],),
+            "input_function_channels": u.shape[-1],
+            "output_function_channels": s.shape[-1],
+            "coordinate_dim": Y.shape[-1],
+            "normalization_stats": self.stats,
+        }
+
+
 def normalize_data(data, axis=None):
     """
     Normalize data to zero mean and unit variance.
@@ -343,6 +389,24 @@ def load_elastic_normalization_stats():
     stats_path = os.path.join(current_dir, 'elastic_normalization_stats.json')
     with open(stats_path, 'r') as f:
         return json.load(f)
+
+
+def load_elastic_plate_dataset(split="train", sample_limit=None):
+    """Load the generated elastic plate dataset for overhaul stages."""
+    dataset_path = os.path.join(current_dir, "elastic_dataset")
+    if not os.path.exists(dataset_path):
+        raise FileNotFoundError(
+            f"Elastic plate dataset is missing at {dataset_path}. "
+            "Run generate_elastic_data() before launching overhaul training."
+        )
+    ds = load_from_disk(dataset_path)
+    if split not in ds:
+        raise ValueError(f"Split {split!r} not found. Available splits: {list(ds.keys())}")
+    split_ds = ds[split]
+    if sample_limit is not None:
+        split_ds = split_ds.select(range(min(sample_limit, len(split_ds))))
+    stats = load_elastic_normalization_stats()
+    return ElasticPlateCpuDataset(split_ds, stats)
 
 def load_elastic_original():
     """Load the original elastic data arrays."""

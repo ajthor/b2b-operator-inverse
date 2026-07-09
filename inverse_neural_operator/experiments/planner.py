@@ -447,6 +447,8 @@ def _evaluation_jobs(
                 f"--config {config_path} --model {model_name} "
                 f"--seed {seed} --split test --execute"
             )
+            if config.inverse_models.eval_batches is not None:
+                command += f" --eval-batches {config.inverse_models.eval_batches}"
             command = _with_root_args(command, models_dir_override, results_dir_override)
             yield PlannedJob(
                 stage="evaluation",
