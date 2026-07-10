@@ -128,11 +128,12 @@ def _forward_dependency(
         return [], []
     if models_dir is None:
         return [], ["B2B_MODELS_DIR unset; cannot check forward model artifact"]
+    forward_artifact = config.forward_models.artifact or config.inverse_models.forward_model
     path = model_artifact_dir(
         models_dir,
         config.dataset.name,
         "forward_models",
-        config.inverse_models.forward_model,
+        forward_artifact,
         seed,
     )
     missing = missing_forward_model_files(path)
@@ -212,12 +213,13 @@ def _forward_model_jobs(
     dataset = config.dataset.name
     for seed in config.matrix.seeds:
         for model_name in forward_config.models:
+            artifact_name = forward_config.artifact or model_name
             model_dir = (
                 model_artifact_dir(
                     models_dir,
                     dataset,
                     "forward_models",
-                    model_name,
+                    artifact_name,
                     seed,
                 )
                 if models_dir is not None
@@ -227,7 +229,7 @@ def _forward_model_jobs(
                 results_dir,
                 dataset,
                 "forward_models",
-                model_name,
+                artifact_name,
                 seed,
             )
             complete = bool(model_dir and not missing_forward_model_files(model_dir))
@@ -250,7 +252,7 @@ def _forward_model_jobs(
             )
             yield PlannedJob(
                 stage="forward_models",
-                name=model_name,
+                name=artifact_name,
                 encoder_type=None,
                 dataset=dataset,
                 seed=seed,
@@ -331,12 +333,13 @@ def _inverse_model_jobs(
     dataset = config.dataset.name
     for seed in config.matrix.seeds:
         for model_name in config.inverse_models.models:
+            artifact_name = config.inverse_models.artifact or model_name
             model_dir = (
                 model_artifact_dir(
                     models_dir,
                     dataset,
                     "inverse_models",
-                    model_name,
+                    artifact_name,
                     seed,
                 )
                 if models_dir is not None
@@ -346,7 +349,7 @@ def _inverse_model_jobs(
                 results_dir,
                 dataset,
                 "inverse_models",
-                model_name,
+                artifact_name,
                 seed,
             )
             complete = bool(model_dir and not missing_inverse_model_files(model_dir))
@@ -369,7 +372,7 @@ def _inverse_model_jobs(
             )
             yield PlannedJob(
                 stage="inverse_models",
-                name=model_name,
+                name=artifact_name,
                 encoder_type=None,
                 dataset=dataset,
                 seed=seed,
@@ -393,12 +396,13 @@ def _evaluation_jobs(
     dataset = config.dataset.name
     for seed in config.matrix.seeds:
         for model_name in config.inverse_models.models:
+            artifact_name = config.inverse_models.artifact or model_name
             model_dir = (
                 model_artifact_dir(
                     models_dir,
                     dataset,
                     "inverse_models",
-                    model_name,
+                    artifact_name,
                     seed,
                 )
                 if models_dir is not None
@@ -412,7 +416,7 @@ def _evaluation_jobs(
                     "inverse_models",
                     seed,
                 )
-                / model_name
+                / artifact_name
                 / "test"
             )
             complete = (run_dir / "metrics.json").exists()
@@ -452,7 +456,7 @@ def _evaluation_jobs(
             command = _with_root_args(command, models_dir_override, results_dir_override)
             yield PlannedJob(
                 stage="evaluation",
-                name=model_name,
+                name=artifact_name,
                 encoder_type=None,
                 dataset=dataset,
                 seed=seed,

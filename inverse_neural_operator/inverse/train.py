@@ -215,6 +215,10 @@ def main() -> None:
     args = parse_args()
     experiment_config = load_experiment_config(args.config)
     inverse_config = experiment_config.inverse_models
+    artifact_name = inverse_config.artifact or args.model
+    forward_artifact_name = (
+        experiment_config.forward_models.artifact or inverse_config.forward_model
+    )
 
     try:
         model_root = models_root(required=args.execute, override=args.models_dir)
@@ -226,7 +230,7 @@ def main() -> None:
             model_root,
             experiment_config.dataset.name,
             "inverse_models",
-            args.model,
+            artifact_name,
             args.seed,
         )
         if model_root is not None
@@ -236,7 +240,7 @@ def main() -> None:
         result_root,
         experiment_config.dataset.name,
         "inverse_models",
-        args.model,
+        artifact_name,
         args.seed,
     )
     tensorboard_root = args.tensorboard_dir or experiment_config.runtime.tensorboard_dir
@@ -245,7 +249,7 @@ def main() -> None:
             Path(tensorboard_root).expanduser().resolve(),
             experiment_config.dataset.name,
             "inverse_models",
-            args.model,
+            artifact_name,
             args.seed,
         )
         if tensorboard_root
@@ -267,7 +271,7 @@ def main() -> None:
             model_root,
             experiment_config.dataset.name,
             "forward_models",
-            inverse_config.forward_model,
+            forward_artifact_name,
             args.seed,
         )
         if model_root is not None and inverse_config.forward_model
@@ -634,6 +638,9 @@ def main() -> None:
                     "elapsed_seconds": time.time() - start_time,
                     "function_encoder_artifact": inverse_config.function_encoder_artifact,
                     "forward_model": inverse_config.forward_model,
+                    "forward_model_artifact": forward_artifact_name,
+                    "model": args.model,
+                    "artifact": artifact_name,
                     "forward_model_loaded": forward_model is not None,
                     "tensorboard_dir": str(tensorboard_dir),
                     "latent_size": inverse_config.latent_size,
@@ -646,12 +653,14 @@ def main() -> None:
                 model_dir,
                 artifact_type="inverse_model",
                 dataset=experiment_config.dataset.name,
-                name=args.model,
+                name=artifact_name,
                 seed=args.seed,
                 files={"model": "model.safetensors"},
                 extra={
+                    "model": args.model,
                     "function_encoder_artifact": inverse_config.function_encoder_artifact,
                     "forward_model": inverse_config.forward_model,
+                    "forward_model_artifact": forward_artifact_name,
                     "forward_model_loaded": forward_model is not None,
                     "training_mode": (
                         "steps" if inverse_config.max_steps is not None else "epochs"

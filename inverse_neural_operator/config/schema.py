@@ -76,6 +76,7 @@ class FunctionEncoderConfig:
 @dataclass
 class ForwardModelsConfig:
     models: List[str] = field(default_factory=lambda: ["b2b_nonlinear"])
+    artifact: Optional[str] = None
     function_encoder_artifact: str = "default"
     hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])
     coefficient_loss_weight: float = 1.0
@@ -156,6 +157,7 @@ class BaselinesConfig:
 @dataclass
 class InverseModelsConfig:
     models: List[str] = field(default_factory=lambda: ["nonlinear"])
+    artifact: Optional[str] = None
     function_encoder_artifact: str = "default"
     forward_model: Optional[str] = None
     hidden_sizes: List[int] = field(default_factory=lambda: [128, 128])

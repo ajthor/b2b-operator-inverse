@@ -1,0 +1,89 @@
+experiment: elastic_plate_pipeline_mlp_relu_nbasis50_2gpu
+description: Elastic plate comparison pipeline using 50-basis ReLU MLP function encoders on two allocated GPUs.
+
+dataset:
+  name: elastic_plate
+  sample_limit: null
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 2
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  tensorboard_dir: ./results
+  env:
+    CUDA_VISIBLE_DEVICES: "0,1"
+    MASTER_PORT: "29564"
+    NCCL_SHM_DISABLE: "1"
+
+matrix:
+  seeds: [1]
+  stages:
+    - function_encoders
+    - forward_models
+    - inverse_models
+    - evaluation
+
+function_encoders:
+  artifact: mlp_relu_nbasis50_2gpu
+  encoder_types: [input, output]
+  basis_chunk_size: 16
+  coefficient_grad: false
+  basis:
+    kind: mlp
+    activation: relu
+    n_basis: 50
+    hidden_sizes: [256, 256]
+  regularization: 0.001
+  ssim_loss_weight: 0.5
+  ssim_max_points: 4096
+  batch_size: 2
+  gradient_accumulation_steps: 8
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 3000
+  eval_interval: 250
+  eval_batches: 2
+  log_interval: 10
+  learning_rate: 0.0001
+  checkpoint_interval: 250
+
+forward_models:
+  models: [b2b_nonlinear]
+  artifact: b2b_nonlinear_mlp_relu_nbasis50_2gpu
+  function_encoder_artifact: mlp_relu_nbasis50_2gpu
+  hidden_sizes: [128, 128]
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 3000
+  eval_interval: 250
+  eval_batches: 2
+  log_interval: 10
+  learning_rate: 0.0001
+  checkpoint_interval: 250
+
+inverse_models:
+  models: [nonlinear]
+  artifact: nonlinear_mlp_relu_nbasis50_2gpu
+  function_encoder_artifact: mlp_relu_nbasis50_2gpu
+  forward_model: b2b_nonlinear
+  hidden_sizes: [128, 128]
+  latent_size: 128
+  n_coupling_layers: 6
+  n_components: 5
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 3000
+  eval_interval: 250
+  eval_batches: 2
+  log_interval: 10
+  learning_rate: 0.0001
+  checkpoint_interval: 250

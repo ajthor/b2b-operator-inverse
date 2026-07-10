@@ -123,6 +123,8 @@ def main() -> None:
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
     result_root = results_root(args.results_dir)
+    configured_artifact = inverse_config.artifact
+    forward_artifact_name = config.forward_models.artifact or inverse_config.forward_model
 
     if args.device == "cuda":
         import torch
@@ -133,19 +135,20 @@ def main() -> None:
     candidate_models = args.models or inverse_config.models
     completed = []
     for model_name in candidate_models:
+        artifact_name = configured_artifact or model_name
         model_dir = (
             model_artifact_dir(
                 model_root,
                 config.dataset.name,
                 "inverse_models",
-                model_name,
+                artifact_name,
                 args.seed,
             )
             if model_root is not None
             else None
         )
         if model_dir is not None and _artifact_complete(model_dir):
-            completed.append((model_name, model_dir))
+            completed.append((model_name, artifact_name, model_dir))
 
     encoder_dir = (
         model_artifact_dir(
@@ -163,7 +166,7 @@ def main() -> None:
             model_root,
             config.dataset.name,
             "forward_models",
-            inverse_config.forward_model,
+            forward_artifact_name,
             args.seed,
         )
         if model_root is not None and inverse_config.forward_model
@@ -172,10 +175,10 @@ def main() -> None:
 
     if not args.execute:
         print("Dry run: inverse plots will not execute.")
-        print(f"completed_models: {[name for name, _ in completed]}")
+        print(f"completed_models: {[artifact for _, artifact, _ in completed]}")
         print(f"encoder_dir:      {encoder_dir or '<B2B_MODELS_DIR unset>'}")
         print(f"forward_dir:      {forward_dir or '<none>'}")
-        for model_name, model_dir in completed:
+        for model_name, artifact_name, model_dir in completed:
             plot_dir = (
                 run_artifact_dir(
                     result_root,
@@ -184,11 +187,11 @@ def main() -> None:
                     "inverse_models",
                     args.seed,
                 )
-                / model_name
+                / artifact_name
                 / args.split
                 / "plots"
             )
-            print(f"{model_name}: {model_dir} -> {plot_dir}")
+            print(f"{artifact_name}: {model_dir} -> {plot_dir}")
         return
     assert encoder_dir is not None
 
@@ -255,7 +258,7 @@ def main() -> None:
             beta, _ = output_encoder.compute_coefficients(Y, s)
             encoded_samples.append((X, u, Y, s, alpha, beta))
 
-        for model_name, model_dir in completed:
+        for model_name, artifact_name, model_dir in completed:
             model = create_inverse_model(
                 model_name,
                 input_size=n_basis,
@@ -276,7 +279,7 @@ def main() -> None:
                     "inverse_models",
                     args.seed,
                 )
-                / model_name
+                / artifact_name
                 / args.split
                 / "plots"
             )
@@ -351,8 +354,10 @@ def main() -> None:
                 {
                     "dataset": config.dataset.name,
                     "model": model_name,
+                    "artifact": artifact_name,
                     "function_encoder_artifact": inverse_config.function_encoder_artifact,
                     "forward_model": inverse_config.forward_model,
+                    "forward_model_artifact": forward_artifact_name,
                     "seed": args.seed,
                     "split": args.split,
                     "num_samples": sample_count,

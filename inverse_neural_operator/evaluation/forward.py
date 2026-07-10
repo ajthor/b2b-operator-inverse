@@ -112,12 +112,13 @@ def main() -> None:
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
     result_root = results_root(args.results_dir)
+    artifact_name = forward_config.artifact or args.model
     forward_dir = (
         model_artifact_dir(
             model_root,
             config.dataset.name,
             "forward_models",
-            args.model,
+            artifact_name,
             args.seed,
         )
         if model_root is not None
@@ -142,7 +143,7 @@ def main() -> None:
             "forward_models",
             args.seed,
         )
-        / args.model
+        / artifact_name
         / args.split
     )
 

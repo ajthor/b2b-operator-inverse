@@ -54,13 +54,15 @@ def main() -> None:
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
     result_root = results_root(args.results_dir)
+    artifact_name = inverse_config.artifact or args.model
+    forward_artifact_name = config.forward_models.artifact or inverse_config.forward_model
 
     inverse_dir = (
         model_artifact_dir(
             model_root,
             config.dataset.name,
             "inverse_models",
-            args.model,
+            artifact_name,
             args.seed,
         )
         if model_root is not None
@@ -82,7 +84,7 @@ def main() -> None:
             model_root,
             config.dataset.name,
             "forward_models",
-            inverse_config.forward_model,
+            forward_artifact_name,
             args.seed,
         )
         if model_root is not None and inverse_config.forward_model
@@ -96,7 +98,7 @@ def main() -> None:
             "inverse_models",
             args.seed,
         )
-        / args.model
+        / artifact_name
         / args.split
     )
 

@@ -225,6 +225,7 @@ def main() -> None:
     args = parse_args()
     config = load_experiment_config(args.config)
     forward_config = config.forward_models
+    artifact_name = forward_config.artifact or args.model
 
     try:
         model_root = models_root(required=args.execute, override=args.models_dir)
@@ -236,7 +237,7 @@ def main() -> None:
             model_root,
             config.dataset.name,
             "forward_models",
-            args.model,
+            artifact_name,
             args.seed,
         )
         if model_root is not None
@@ -246,7 +247,7 @@ def main() -> None:
         result_root,
         config.dataset.name,
         "forward_models",
-        args.model,
+        artifact_name,
         args.seed,
     )
     tensorboard_root = args.tensorboard_dir or config.runtime.tensorboard_dir
@@ -255,7 +256,7 @@ def main() -> None:
             Path(tensorboard_root).expanduser().resolve(),
             config.dataset.name,
             "forward_models",
-            args.model,
+            artifact_name,
             args.seed,
         )
         if tensorboard_root
@@ -636,6 +637,8 @@ def main() -> None:
                     "log_interval": forward_config.log_interval,
                     "elapsed_seconds": time.time() - start_time,
                     "function_encoder_artifact": forward_config.function_encoder_artifact,
+                    "model": args.model,
+                    "artifact": artifact_name,
                     "tensorboard_dir": str(tensorboard_dir),
                 }
             )
@@ -644,10 +647,11 @@ def main() -> None:
                 model_dir,
                 artifact_type="forward_model",
                 dataset=config.dataset.name,
-                name=args.model,
+                name=artifact_name,
                 seed=args.seed,
                 files={"model": "model.safetensors"},
                 extra={
+                    "model": args.model,
                     "function_encoder_artifact": forward_config.function_encoder_artifact,
                     "training_mode": (
                         "steps" if forward_config.max_steps is not None else "epochs"
