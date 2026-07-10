@@ -1,0 +1,91 @@
+experiment: wave_scattering_inverse_and_baselines_siren2_nbasis50_2gpu
+description: Wave scattering inverse architecture matrix plus DDP-safe reviewer baselines.
+
+dataset:
+  name: wave_scattering
+  source: ajthor/wave_scattering
+  sample_limit: null
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 2
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  tensorboard_dir: ./results
+  env:
+    CUDA_VISIBLE_DEVICES: "0,1"
+    MASTER_PORT: "29553"
+    NCCL_SHM_DISABLE: "1"
+
+matrix:
+  seeds: [1]
+  stages: [inverse_models, baselines]
+
+function_encoders:
+  artifact: siren2_nbasis50_2gpu
+  basis_chunk_size: 8
+  coefficient_grad: false
+  basis:
+    kind: siren_square
+    n_basis: 50
+    hidden_sizes: [256, 256]
+    omega_0: 30.0
+  regularization: 0.001
+
+forward_models:
+  models: [b2b_nonlinear]
+  function_encoder_artifact: siren2_nbasis50_2gpu
+  hidden_sizes: [128, 128]
+
+inverse_models:
+  models: [nonlinear, linear_inverse, conditional_realnvp, vae, mixture_density, cinn_additive, cinn_affine, cinn_additive_probabilistic, cinn_affine_probabilistic, inn_additive, inn_affine]
+  function_encoder_artifact: siren2_nbasis50_2gpu
+  forward_model: b2b_nonlinear
+  hidden_sizes: [128, 128]
+  latent_size: 128
+  n_coupling_layers: 6
+  n_components: 5
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 3000
+  eval_interval: 250
+  eval_batches: 2
+  log_interval: 10
+  learning_rate: 0.0001
+  checkpoint_interval: 250
+
+baselines:
+  models: [invertible_deeponet, nio]
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 3000
+  eval_interval: 250
+  eval_batches: 2
+  log_interval: 10
+  learning_rate: 0.0001
+  checkpoint_interval: 250
+  invertible_deeponet:
+    hidden_sizes: [128, 128]
+    trunk_hidden_sizes: [128, 128]
+    n_coupling_layers: 6
+    regularization: 0.001
+    forward_loss_weight: 1.0
+    inverse_loss_weight: 1.0
+    loss: relative_l2
+  nio:
+    branch_hidden_sizes: [128, 128]
+    trunk_hidden_sizes: [128, 128]
+    n_basis: 64
+    lifting_channels: 32
+    modes: 16
+    n_fourier_layers: 3
+    measurement_points: 64
+    loss: l1

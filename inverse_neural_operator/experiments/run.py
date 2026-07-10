@@ -38,6 +38,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Actually run ready jobs. Without this flag, only prints the plan.",
     )
+    parser.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="Continue launching remaining ready jobs after a job failure.",
+    )
     return parser.parse_args()
 
 
@@ -147,13 +152,20 @@ def main() -> None:
     ran = 0
     skipped = len([job for job in initial_jobs if job.complete])
     records: List[dict] = []
+    failed_labels = set()
     while True:
         jobs = _plan(args)
-        ready = [job for job in jobs if not job.complete and not job.blocked]
+        ready = [
+            job
+            for job in jobs
+            if not job.complete
+            and not job.blocked
+            and _label(job) not in failed_labels
+        ]
         blocked = [job for job in jobs if not job.complete and job.blocked]
 
         if not ready:
-            if blocked:
+            if blocked and not args.keep_going:
                 print("", flush=True)
                 print("Stopped because remaining jobs are blocked:", flush=True)
                 _print_jobs(blocked)
@@ -183,7 +195,12 @@ def main() -> None:
             print("", flush=True)
             print(f"Job failed with exit code {returncode}: {_label(job)}", flush=True)
             _write_runner_summary(args, config.experiment, records, skipped)
-            raise SystemExit(returncode)
+            if not args.keep_going:
+                raise SystemExit(returncode)
+            failed_labels.add(_label(job))
+            print("Continuing because --keep-going was set.", flush=True)
+            ran += 1
+            continue
         ran += 1
 
 

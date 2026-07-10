@@ -1,0 +1,50 @@
+experiment: wave_scattering_ifno_full_1gpu
+description: Wave scattering IFNO baseline, single process because the faithful IFNO path is not DDP-enabled.
+
+dataset:
+  name: wave_scattering
+  source: ajthor/wave_scattering
+  sample_limit: null
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  tensorboard_dir: ./results
+  env:
+    CUDA_VISIBLE_DEVICES: "1"
+    MASTER_PORT: "29563"
+    NCCL_SHM_DISABLE: "1"
+
+matrix:
+  seeds: [1]
+  stages: [baselines]
+
+baselines:
+  models: [ifno]
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  sample_with_replacement: true
+  epochs: 1
+  max_steps: 3000
+  eval_interval: 250
+  eval_batches: 2
+  log_interval: 10
+  learning_rate: 0.0001
+  checkpoint_interval: 250
+  ifno:
+    modes: 16
+    width: 64
+    n_layers: 3
+    beta: 2.0
+    padding: 20
+    vae_latent_dim: 24
+    intermediate_dim: 64
+    epochs_vae: 0
+    epochs_ifno: 0
+    lr_vae: 0.0001
+    lr_ifno: 0.005
+    lr_forward: 0.0001

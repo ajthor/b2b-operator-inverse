@@ -411,6 +411,7 @@ def main() -> None:
             ddp_model = torch.nn.parallel.DistributedDataParallel(
                 model,
                 device_ids=[context.local_rank] if context.device.type == "cuda" else None,
+                find_unused_parameters=True,
             )
 
         writer = SummaryWriter(log_dir=str(tensorboard_dir)) if context.is_rank_zero else None
