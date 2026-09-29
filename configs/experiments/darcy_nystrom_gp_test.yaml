@@ -1,0 +1,47 @@
+experiment: darcy_nystrom_gp_test
+description: Experimental fixed-memory Nyström GP inverse on frozen ReLU function encoders.
+
+dataset:
+  name: darcy_1d
+  source: ajthor/darcy_1d
+  sample_limit: 256
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+
+matrix:
+  seeds: [17]
+  stages: [inverse_models, evaluation]
+
+function_encoders:
+  artifact: fe_relu_nbasis50_full
+  encoder_types: [input, output]
+  basis_chunk_size: 16
+  regularization: 0.001
+  basis:
+    kind: mlp
+    activation: relu
+    n_basis: 50
+    hidden_sizes: [256, 256]
+
+inverse_models:
+  models: [nystrom_gp]
+  artifact: nystrom_gp_test_m64
+  function_encoder_artifact: fe_relu_nbasis50_full
+  batch_size: 32
+  eval_batches: null
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
+  nystrom_gp:
+    num_inducing: 64
+    candidate_multiplier: 4
+    lengthscale: 0.0
+    noise_variance: 0.01
+    jitter: 0.00001
+    calibration_fraction: 0.1
+    correlation_shrinkage: 0.25
