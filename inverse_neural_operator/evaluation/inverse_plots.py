@@ -267,6 +267,8 @@ def main() -> None:
                 latent_size=inverse_config.latent_size,
                 n_coupling_layers=inverse_config.n_coupling_layers,
                 n_components=inverse_config.n_components,
+                nystrom_gp_config=inverse_config.nystrom_gp,
+                rff_gp_config=inverse_config.rff_gp,
             ).to(device)
             model.load_state_dict(load_file(str(model_dir / "model.safetensors"), device=str(device)))
             model.eval()

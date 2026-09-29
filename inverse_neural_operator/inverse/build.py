@@ -17,6 +17,8 @@ SUPPORTED_INVERSE_MODELS = [
     "cinn_affine_probabilistic",
     "inn_additive",
     "inn_affine",
+    "nystrom_gp",
+    "rff_gp",
 ]
 
 
@@ -79,7 +81,33 @@ def create_inverse_model(
     latent_size: int = 128,
     n_coupling_layers: int = 6,
     n_components: int = 5,
+    nystrom_gp_config=None,
+    rff_gp_config=None,
 ):
+    if model_name == "rff_gp":
+        if rff_gp_config is None:
+            from inverse_neural_operator.config.schema import RFFGPConfig
+
+            rff_gp_config = RFFGPConfig()
+        from inverse_neural_operator.models.rff_gp import create_model
+
+        return create_model(
+            input_size=output_size,
+            output_size=input_size,
+            config=rff_gp_config,
+        )
+    if model_name == "nystrom_gp":
+        if nystrom_gp_config is None:
+            from inverse_neural_operator.config.schema import NystromGPConfig
+
+            nystrom_gp_config = NystromGPConfig()
+        from inverse_neural_operator.models.nystrom_gp import create_model
+
+        return create_model(
+            input_size=output_size,
+            output_size=input_size,
+            config=nystrom_gp_config,
+        )
     if model_name == "linear_inverse":
         from inverse_neural_operator.models.linear_inverse import create_model
 

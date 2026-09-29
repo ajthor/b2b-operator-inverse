@@ -74,6 +74,120 @@ def _coefficients(batch, input_encoder, output_encoder):
     return alpha, beta, X, u, Y, s
 
 
+def _fit_fixed_feature_gp(model, loader, input_encoder, output_encoder, config, seed: int):
+    """Fit a bounded candidate set and fixed-size streaming statistics."""
+    import torch
+
+    candidate_limit = model.feature_count * max(1, config.candidate_multiplier)
+    device = model.input_mean.device
+    input_sum = torch.zeros(model.input_size, device=device, dtype=torch.float64)
+    input_square_sum = torch.zeros_like(input_sum)
+    target_sum = torch.zeros(model.output_size, device=device, dtype=torch.float64)
+    target_square_sum = torch.zeros_like(target_sum)
+    candidates = []
+    candidate_count = 0
+    count = 0
+    calibration_fraction = float(config.calibration_fraction)
+    if not 0 <= calibration_fraction < 0.5:
+        raise ValueError("GP calibration_fraction must be in [0, 0.5).")
+    calibration_stride = (
+        max(2, round(1.0 / calibration_fraction)) if calibration_fraction else None
+    )
+
+    def fit_mask(batch_size, offset, device):
+        if calibration_stride is None:
+            return torch.ones(batch_size, dtype=torch.bool, device=device)
+        indices = torch.arange(offset, offset + batch_size, device=device)
+        return torch.remainder(indices, calibration_stride) != 0
+
+    offset = 0
+    with torch.no_grad():
+        for batch in loader:
+            batch = _move_batch(batch, device)
+            alpha, beta, *_ = _coefficients(batch, input_encoder, output_encoder)
+            mask = fit_mask(beta.shape[0], offset, beta.device)
+            offset += beta.shape[0]
+            alpha, beta = alpha[mask], beta[mask]
+            beta64, alpha64 = beta.double(), alpha.double()
+            input_sum += beta64.sum(dim=0)
+            input_square_sum += beta64.square().sum(dim=0)
+            target_sum += alpha64.sum(dim=0)
+            target_square_sum += alpha64.square().sum(dim=0)
+            count += beta.shape[0]
+            remaining = candidate_limit - candidate_count
+            if remaining > 0:
+                chunk = beta[:remaining].detach()
+                candidates.append(chunk)
+                candidate_count += chunk.shape[0]
+    if hasattr(model, "num_inducing") and count < model.num_inducing:
+        raise ValueError(
+            f"Nyström GP requested {model.num_inducing} inducing points but the "
+            f"training stream contains only {count} examples."
+        )
+    input_mean = input_sum / count
+    target_mean = target_sum / count
+    input_variance = torch.clamp(input_square_sum / count - input_mean.square(), min=1e-12)
+    target_variance = torch.clamp(
+        target_square_sum / count - target_mean.square(), min=1e-12
+    )
+    model.set_normalization(
+        input_mean.float(),
+        input_variance.sqrt().float(),
+        target_mean.float(),
+        target_variance.sqrt().float(),
+    )
+    model.initialize_features(torch.cat(candidates, dim=0), seed=seed)
+
+    batches = 0
+    offset = 0
+    with torch.no_grad():
+        for batch in loader:
+            batch = _move_batch(batch, device)
+            alpha, beta, *_ = _coefficients(batch, input_encoder, output_encoder)
+            mask = fit_mask(beta.shape[0], offset, beta.device)
+            offset += beta.shape[0]
+            model.accumulate(beta[mask], alpha[mask])
+            batches += 1
+    model.finalize()
+    if calibration_stride is not None:
+        offset = 0
+        ratio_sum = torch.zeros(model.output_size, device=device)
+        standardized_outer = torch.zeros(
+            model.output_size, model.output_size, device=device
+        )
+        ratio_count = 0
+        calibration_count = 0
+        with torch.no_grad():
+            for batch in loader:
+                batch = _move_batch(batch, device)
+                alpha, beta, *_ = _coefficients(batch, input_encoder, output_encoder)
+                mask = ~fit_mask(beta.shape[0], offset, beta.device)
+                offset += beta.shape[0]
+                if mask.any():
+                    prediction = model.predict_distribution(beta[mask])
+                    standardized = (alpha[mask] - prediction.mean) / torch.sqrt(
+                        torch.clamp(prediction.predictive_variance, min=1e-12)
+                    )
+                    ratio_sum += torch.sum(standardized.square(), dim=0)
+                    standardized_outer += standardized.transpose(0, 1) @ standardized
+                    ratio_count += prediction.mean.shape[0]
+                    calibration_count += int(mask.sum().item())
+        model.set_variance_calibration(
+            ratio_sum / max(1, ratio_count), calibration_count
+        )
+        diagonal = torch.clamp(torch.diagonal(standardized_outer), min=1e-12)
+        denominator = torch.sqrt(diagonal.unsqueeze(0) * diagonal.unsqueeze(1))
+        correlation = standardized_outer / denominator
+        shrinkage = float(config.correlation_shrinkage)
+        if not 0 <= shrinkage <= 1:
+            raise ValueError("GP correlation_shrinkage must be in [0, 1].")
+        identity = torch.eye(model.output_size, device=device)
+        model.set_output_correlation(
+            (1.0 - shrinkage) * correlation + shrinkage * identity
+        )
+    return batches
+
+
 def _relative_l2(prediction, target):
     from inverse_neural_operator.evaluation.metrics import relative_l2
 
@@ -132,6 +246,24 @@ def _batch_metrics(
             else None
         ),
     }
+    if model_name in {"nystrom_gp", "rff_gp"}:
+        prediction = _unwrap(model).predict_distribution(beta)
+        variance = torch.clamp(prediction.predictive_variance, min=1e-12)
+        metrics["coefficient_nll"] = 0.5 * torch.mean(
+            torch.log(2 * torch.pi * variance)
+            + (alpha - prediction.mean).square() / variance
+        )
+        metrics["coefficient_aleatoric_variance"] = torch.mean(
+            prediction.aleatoric_variance
+        )
+        standard_deviation = torch.sqrt(variance)
+        for level, multiplier in (("50", 0.67449), ("90", 1.64485), ("95", 1.95996)):
+            metrics[f"coefficient_coverage_{level}"] = torch.mean(
+                (
+                    torch.abs(alpha - prediction.mean)
+                    <= multiplier * standard_deviation
+                ).float()
+            )
     return metrics
 
 
@@ -165,6 +297,15 @@ def _evaluate(
         "resimulation_mse": torch.zeros((), device=context.device),
         "resimulation_relative_l2": torch.zeros((), device=context.device),
     }
+    if model_name in {"nystrom_gp", "rff_gp"}:
+        for key in (
+            "coefficient_nll",
+            "coefficient_aleatoric_variance",
+            "coefficient_coverage_50",
+            "coefficient_coverage_90",
+            "coefficient_coverage_95",
+        ):
+            totals[key] = torch.zeros((), device=context.device)
     ssim_totals = {"input_ssim": 0.0, "resimulation_ssim": 0.0}
     ssim_counts = {"input_ssim": 0, "resimulation_ssim": 0}
     count = torch.zeros((), device=context.device)
@@ -381,6 +522,7 @@ def main() -> None:
             batch_size=inverse_config.batch_size,
             shuffle=(
                 train_sampler is None
+                and args.model not in {"nystrom_gp", "rff_gp"}
                 and not (
                     inverse_config.max_steps is not None
                     and inverse_config.sample_with_replacement
@@ -409,7 +551,75 @@ def main() -> None:
             latent_size=inverse_config.latent_size,
             n_coupling_layers=inverse_config.n_coupling_layers,
             n_components=inverse_config.n_components,
+            nystrom_gp_config=inverse_config.nystrom_gp,
+            rff_gp_config=inverse_config.rff_gp,
         ).to(context.device)
+        if args.model in {"nystrom_gp", "rff_gp"}:
+            if context.is_distributed:
+                raise RuntimeError(
+                    "Nyström GP fitting currently uses one process; set nproc_per_node: 1."
+                )
+            start_time = time.time()
+            gp_config = getattr(inverse_config, args.model)
+            completed_steps = _fit_fixed_feature_gp(
+                model,
+                train_loader,
+                input_encoder,
+                output_encoder,
+                gp_config,
+                args.seed,
+            )
+            metrics = _evaluate(
+                model,
+                test_loader,
+                context,
+                input_encoder,
+                output_encoder,
+                forward_model,
+                dataset_info,
+                inverse_config,
+                args.model,
+            )
+            metrics.update(
+                {
+                    "best_test_loss": metrics["loss"],
+                    "training_mode": "streaming_fixed_feature_gp",
+                    "completed_steps": completed_steps,
+                    "elapsed_seconds": time.time() - start_time,
+                    "function_encoder_artifact": inverse_config.function_encoder_artifact,
+                    "model": args.model,
+                    "artifact": artifact_name,
+                    "feature_count": model.feature_count,
+                    "num_observations": int(model.num_observations.item()),
+                    "lengthscale": float(model.lengthscale.item()),
+                    "noise_variance": model.noise_variance,
+                    "variance_calibration_mean": float(model.variance_calibration.mean().item()),
+                    "variance_calibration_min": float(model.variance_calibration.min().item()),
+                    "variance_calibration_max": float(model.variance_calibration.max().item()),
+                    "num_calibration": int(model.num_calibration.item()),
+                }
+            )
+            model_dir.mkdir(parents=True, exist_ok=True)
+            save_file(model.state_dict(), str(model_dir / "model.safetensors"))
+            write_yaml(model_dir / "config.yaml", experiment_config.raw)
+            write_json(model_dir / "metrics.json", metrics)
+            write_manifest(
+                model_dir,
+                artifact_type="inverse_model",
+                dataset=experiment_config.dataset.name,
+                name=artifact_name,
+                seed=args.seed,
+                files={"model": "model.safetensors"},
+                extra={
+                    "model": args.model,
+                    "function_encoder_artifact": inverse_config.function_encoder_artifact,
+                    "training_mode": "streaming_fixed_feature_gp",
+                    "feature_count": model.feature_count,
+                    "num_observations": int(model.num_observations.item()),
+                },
+            )
+            print(f"Wrote {args.model} artifact to {model_dir}")
+            return
         ddp_model = model
         if context.is_distributed:
             ddp_model = torch.nn.parallel.DistributedDataParallel(

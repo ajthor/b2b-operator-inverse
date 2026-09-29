@@ -152,6 +152,28 @@ class FNOConfig:
 
 
 @dataclass
+class NystromGPConfig:
+    num_inducing: int = 256
+    candidate_multiplier: int = 4
+    lengthscale: float = 0.0
+    noise_variance: float = 1e-2
+    jitter: float = 1e-5
+    calibration_fraction: float = 0.1
+    correlation_shrinkage: float = 0.25
+
+
+@dataclass
+class RFFGPConfig:
+    num_features: int = 256
+    candidate_multiplier: int = 4
+    lengthscale: float = 0.0
+    noise_variance: float = 1e-2
+    jitter: float = 1e-5
+    calibration_fraction: float = 0.1
+    correlation_shrinkage: float = 0.25
+
+
+@dataclass
 class BaselinesConfig:
     models: List[str] = field(default_factory=lambda: ["ifno"])
     batch_size: int = 4
@@ -196,6 +218,8 @@ class InverseModelsConfig:
     learning_rate: float = 1e-4
     checkpoint_interval: int = 1
     linear_regularization: float = 1e-6
+    nystrom_gp: NystromGPConfig = field(default_factory=NystromGPConfig)
+    rff_gp: RFFGPConfig = field(default_factory=RFFGPConfig)
 
 
 @dataclass
@@ -315,10 +339,25 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
     baselines.nio = nio
     baselines.deeponet = deeponet
     baselines.fno = fno
+    inverse_raw = _require_mapping(raw.get("inverse_models", {}), "inverse_models")
+    nystrom_gp = _dataclass_from_mapping(
+        NystromGPConfig,
+        _require_mapping(inverse_raw.get("nystrom_gp", {}), "inverse_models.nystrom_gp"),
+    )
+    rff_gp = _dataclass_from_mapping(
+        RFFGPConfig,
+        _require_mapping(inverse_raw.get("rff_gp", {}), "inverse_models.rff_gp"),
+    )
     inverse_models = _dataclass_from_mapping(
         InverseModelsConfig,
-        _require_mapping(raw.get("inverse_models", {}), "inverse_models"),
+        {
+            key: value
+            for key, value in inverse_raw.items()
+            if key not in {"nystrom_gp", "rff_gp"}
+        },
     )
+    inverse_models.nystrom_gp = nystrom_gp
+    inverse_models.rff_gp = rff_gp
     pde_validation = _dataclass_from_mapping(
         PDEValidationConfig,
         _require_mapping(raw.get("pde_validation", {}), "pde_validation"),

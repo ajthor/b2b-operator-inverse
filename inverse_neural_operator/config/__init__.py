@@ -14,6 +14,8 @@ from .schema import (
     InverseModelsConfig,
     MatrixConfig,
     NIOConfig,
+    NystromGPConfig,
+    RFFGPConfig,
     RuntimeConfig,
     load_experiment_config,
 )
@@ -32,6 +34,8 @@ __all__ = [
     "InverseModelsConfig",
     "MatrixConfig",
     "NIOConfig",
+    "NystromGPConfig",
+    "RFFGPConfig",
     "RuntimeConfig",
     "load_experiment_config",
 ]

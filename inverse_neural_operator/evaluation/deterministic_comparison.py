@@ -1,4 +1,4 @@
-"""Evaluate and plot B2B nonlinear, DeepONet, and FNO on one test split."""
+"""Evaluate and plot deterministic inverse baselines on one test split."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ MODEL_LABELS = {
     "b2b_nonlinear": "B2B nonlinear",
     "deeponet": "DeepONet",
     "fno": "FNO",
+    "nystrom_gp": "Nyström GP mean",
+    "rff_gp": "RFF GP mean",
 }
 
 
@@ -25,6 +27,17 @@ def parse_args():
     parser.add_argument("--results-dir", required=True)
     parser.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
     parser.add_argument("--sample-indices", nargs="+", type=int, default=[0, 1, 2])
+    parser.add_argument(
+        "--gp-config",
+        default=None,
+        help="Optional Nyström-GP config; adds its posterior mean to the comparison.",
+    )
+    parser.add_argument("--gp-artifact", default=None)
+    parser.add_argument(
+        "--gp-model",
+        default="nystrom_gp",
+        choices=["nystrom_gp", "rff_gp"],
+    )
     return parser.parse_args()
 
 
@@ -57,7 +70,13 @@ def _plot_samples(path: Path, x, target, predictions, sample_indices, dataset_na
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    colors = {"b2b_nonlinear": "#4c78a8", "deeponet": "#f58518", "fno": "#54a24b"}
+    colors = {
+        "b2b_nonlinear": "#4c78a8",
+        "deeponet": "#f58518",
+        "fno": "#54a24b",
+        "nystrom_gp": "#b279a2",
+        "rff_gp": "#e45756",
+    }
     figure, axes = plt.subplots(
         len(sample_indices),
         2,
@@ -101,7 +120,7 @@ def _plot_samples(path: Path, x, target, predictions, sample_indices, dataset_na
     plt.close(figure)
 
 
-def _plot_metrics(path: Path, metrics, dataset_name):
+def _plot_metrics(path: Path, metrics, dataset_name, sample_count):
     import matplotlib
 
     matplotlib.use("Agg")
@@ -109,13 +128,19 @@ def _plot_metrics(path: Path, metrics, dataset_name):
     import numpy as np
 
     names = list(metrics)
-    colors = ["#4c78a8", "#f58518", "#54a24b"]
+    color_map = {
+        "b2b_nonlinear": "#4c78a8",
+        "deeponet": "#f58518",
+        "fno": "#54a24b",
+        "nystrom_gp": "#b279a2",
+        "rff_gp": "#e45756",
+    }
     keys = ["mae", "mse", "relative_l2"]
     labels = ["MAE", "MSE", "Relative L2"]
     figure, axes = plt.subplots(1, 3, figsize=(12, 3.6), constrained_layout=True)
     for axis, key, label in zip(axes, keys, labels):
         values = [metrics[name][key] for name in names]
-        bars = axis.bar(np.arange(len(names)), values, color=colors)
+        bars = axis.bar(np.arange(len(names)), values, color=[color_map[name] for name in names])
         axis.set_xticks(np.arange(len(names)), [MODEL_LABELS[name] for name in names], rotation=20)
         axis.set_title(label)
         axis.grid(axis="y", alpha=0.2)
@@ -128,7 +153,7 @@ def _plot_metrics(path: Path, metrics, dataset_name):
                 va="bottom",
                 fontsize=8,
             )
-    figure.suptitle(f"{dataset_name}: full test split (n=256)", fontsize=14)
+    figure.suptitle(f"{dataset_name}: full test split (n={sample_count})", fontsize=14)
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, dpi=180)
     plt.close(figure)
@@ -189,6 +214,27 @@ def main():
         )
         model.load_state_dict(load_file(str(model_dir / "model.safetensors"), device=str(device)))
         models[name] = model.eval()
+    if args.gp_config:
+        gp_config = load_experiment_config(args.gp_config)
+        if gp_config.dataset.name != config.dataset.name:
+            raise ValueError("GP and comparison configs must use the same dataset.")
+        gp = create_inverse_model(
+            args.gp_model,
+            input_size=n_basis,
+            output_size=n_basis,
+            hidden_sizes=[],
+            nystrom_gp_config=gp_config.inverse_models.nystrom_gp,
+            rff_gp_config=gp_config.inverse_models.rff_gp,
+        ).to(device)
+        gp_dir = model_artifact_dir(
+            model_root,
+            config.dataset.name,
+            "inverse_models",
+            args.gp_artifact or gp_config.inverse_models.artifact or args.gp_model,
+            args.seed,
+        )
+        gp.load_state_dict(load_file(str(gp_dir / "model.safetensors"), device=str(device)))
+        models[args.gp_model] = gp.eval()
 
     x_values = []
     targets = []
@@ -201,6 +247,9 @@ def main():
             prediction_batches["b2b_nonlinear"].append(input_encoder(x, alpha_prediction).cpu())
             prediction_batches["deeponet"].append(models["deeponet"].predict_inverse(x, y, s).cpu())
             prediction_batches["fno"].append(models["fno"].predict_inverse(x, y, s).cpu())
+            if args.gp_model in models:
+                gp_alpha = models[args.gp_model](beta)
+                prediction_batches[args.gp_model].append(input_encoder(x, gp_alpha).cpu())
             x_values.append(x.cpu())
             targets.append(u.cpu())
 
@@ -211,13 +260,17 @@ def main():
     for name, model in models.items():
         inverse_parameters = _parameter_count(model)
         representation_parameters = 0
-        if name == "b2b_nonlinear":
+        if name in {"b2b_nonlinear", "nystrom_gp", "rff_gp"}:
             representation_parameters = _parameter_count(input_encoder) + _parameter_count(
                 output_encoder
             )
         metrics[name]["inverse_parameters"] = inverse_parameters
         metrics[name]["representation_parameters"] = representation_parameters
         metrics[name]["total_parameters"] = inverse_parameters + representation_parameters
+        if name in {"nystrom_gp", "rff_gp"}:
+            metrics[name]["inverse_state_values"] = sum(
+                value.numel() for value in model.state_dict().values()
+            )
     payload = {
         "dataset": config.dataset.name,
         "split": "test",
@@ -238,7 +291,7 @@ def main():
         args.sample_indices,
         config.dataset.name,
     )
-    _plot_metrics(output_root / "metrics.png", metrics, config.dataset.name)
+    _plot_metrics(output_root / "metrics.png", metrics, config.dataset.name, len(dataset))
     print(json.dumps(payload, indent=2))
     print(f"Wrote comparison outputs to {output_root}")
 
