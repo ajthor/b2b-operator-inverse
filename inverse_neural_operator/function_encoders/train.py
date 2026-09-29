@@ -250,7 +250,7 @@ def _load_dataset(config, split: str):
 def _estimate_spectral_stats(dataset, *, encoder_type: str, spatial_dims, sample_count: int, seed: int):
     import torch
 
-    if sample_count <= 0 or spatial_dims is None or len(spatial_dims) != 2:
+    if sample_count <= 0 or spatial_dims is None or len(spatial_dims) not in (1, 2):
         return {
             "enabled": False,
             "sample_count": 0,
@@ -258,7 +258,6 @@ def _estimate_spectral_stats(dataset, *, encoder_type: str, spatial_dims, sample
             "high_frequency_ratio": 0.0,
         }
 
-    height, width = int(spatial_dims[0]), int(spatial_dims[1])
     generator = torch.Generator()
     generator.manual_seed(seed)
     count = min(sample_count, len(dataset))
@@ -270,9 +269,16 @@ def _estimate_spectral_stats(dataset, *, encoder_type: str, spatial_dims, sample
             "high_frequency_ratio": 0.0,
         }
     indices = torch.randperm(len(dataset), generator=generator)[:count].tolist()
-    fy = torch.fft.fftfreq(height).reshape(height, 1)
-    fx = torch.fft.fftfreq(width).reshape(1, width)
-    radius = torch.sqrt(fy.pow(2) + fx.pow(2))
+    if len(spatial_dims) == 1:
+        length = int(spatial_dims[0])
+        radius = torch.fft.fftfreq(length).abs()
+        expected_points = length
+    else:
+        height, width = int(spatial_dims[0]), int(spatial_dims[1])
+        fy = torch.fft.fftfreq(height).reshape(height, 1)
+        fx = torch.fft.fftfreq(width).reshape(1, width)
+        radius = torch.sqrt(fy.pow(2) + fx.pow(2))
+        expected_points = height * width
     max_radius = torch.clamp(radius.max(), min=1e-12)
     radius = radius / max_radius
     high_mask = radius >= 0.5
@@ -283,11 +289,11 @@ def _estimate_spectral_stats(dataset, *, encoder_type: str, spatial_dims, sample
         _, u, _, s = dataset[index]
         values = u if encoder_type == "input" else s
         flat = values.detach().float().reshape(-1)
-        if flat.numel() != height * width:
+        if flat.numel() != expected_points:
             continue
-        image = flat.reshape(height, width)
-        image = image - image.mean()
-        spectrum = torch.fft.fft2(image)
+        field = flat.reshape(*spatial_dims)
+        field = field - field.mean()
+        spectrum = torch.fft.fftn(field)
         magnitude = torch.abs(spectrum)
         total = torch.clamp(magnitude.sum(), min=1e-12)
         centroids.append(float(((radius * magnitude).sum() / total).item()))

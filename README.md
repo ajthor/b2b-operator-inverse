@@ -176,6 +176,39 @@ python -m torch.distributed.run --nproc_per_node 1 \
 Use `configs/experiments/burgers_ifno_ddp_smoke.yaml` for the matching two-GPU
 IFNO baseline smoke.
 
+Deterministic inverse DeepONet and FNO baselines use the same supervised
+output-to-input objective and artifact layout as the other baselines. Run the
+small real-data checks with:
+
+```bash
+python -m inverse_neural_operator.experiments.run \
+  configs/experiments/burgers_deterministic_inverse_baselines_smoke.yaml \
+  --models-dir /tmp/b2b-deterministic-models \
+  --results-dir /tmp/b2b-deterministic-results \
+  --execute
+
+python -m inverse_neural_operator.experiments.run \
+  configs/experiments/darcy_deterministic_inverse_baselines_smoke.yaml \
+  --models-dir /tmp/b2b-deterministic-models \
+  --results-dir /tmp/b2b-deterministic-results \
+  --execute
+```
+
+For the full-data 3,000-step comparison and B2B function-encoder ablation,
+materialize matched ReLU, SiLU, SIREN, and SIREN² configs from either full base
+config:
+
+```bash
+python -m inverse_neural_operator.experiments.materialize_fe_ablation \
+  configs/experiments/burgers_deterministic_comparison_full.yaml \
+  --output-dir results/deterministic_comparison_full/generated_configs
+```
+
+The SIREN² variant estimates spectral statistics from the configured dataset
+(`winner_samples`) and uses them to perturb its SIREN initialization. Both 1D
+and 2D fields are supported. Generated configs can be launched with
+`python -m inverse_neural_operator.experiments.run ... --execute`.
+
 ### Expected Runtime
 
 - **Demo**: < 5 minutes (using pre-trained models and small dataset samples)

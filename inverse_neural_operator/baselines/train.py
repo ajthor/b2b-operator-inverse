@@ -20,7 +20,7 @@ from inverse_neural_operator.runtime.paths import (
 )
 
 
-SUPPORTED_BASELINES = ["ifno", "invertible_deeponet", "nio"]
+SUPPORTED_BASELINES = ["deeponet", "fno", "ifno", "invertible_deeponet", "nio"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -167,8 +167,8 @@ def _batch_metrics(model, batch, model_name: str, config):
             + baseline_config.forward_loss_weight * forward_loss
         )
         metrics.update(_numeric_metrics(pred_s, s, "forward"))
-    elif model_name == "nio":
-        baseline_config = config.baselines.nio
+    elif model_name in {"deeponet", "fno", "nio"}:
+        baseline_config = getattr(config.baselines, model_name)
         pred_u = module.predict_inverse(x, y, s)
         input_loss = _loss_by_name(pred_u, u, baseline_config.loss)
         total = input_loss

@@ -135,6 +135,23 @@ class NIOConfig:
 
 
 @dataclass
+class DeepONetConfig:
+    branch_hidden_sizes: List[int] = field(default_factory=lambda: [256, 256])
+    trunk_hidden_sizes: List[int] = field(default_factory=lambda: [256, 256])
+    n_basis: int = 128
+    loss: str = "relative_l2"
+
+
+@dataclass
+class FNOConfig:
+    lifting_channels: int = 64
+    modes: int = 16
+    n_fourier_layers: int = 4
+    projection_channels: int = 128
+    loss: str = "relative_l2"
+
+
+@dataclass
 class BaselinesConfig:
     models: List[str] = field(default_factory=lambda: ["ifno"])
     batch_size: int = 4
@@ -152,6 +169,8 @@ class BaselinesConfig:
         default_factory=InvertibleDeepONetConfig
     )
     nio: NIOConfig = field(default_factory=NIOConfig)
+    deeponet: DeepONetConfig = field(default_factory=DeepONetConfig)
+    fno: FNOConfig = field(default_factory=FNOConfig)
 
 
 @dataclass
@@ -274,18 +293,28 @@ def load_experiment_config(path: Union[str, Path]) -> ExperimentConfig:
         NIOConfig,
         _require_mapping(baselines_raw.get("nio", {}), "baselines.nio"),
     )
+    deeponet = _dataclass_from_mapping(
+        DeepONetConfig,
+        _require_mapping(baselines_raw.get("deeponet", {}), "baselines.deeponet"),
+    )
+    fno = _dataclass_from_mapping(
+        FNOConfig,
+        _require_mapping(baselines_raw.get("fno", {}), "baselines.fno"),
+    )
     baselines_without_ifno = {
         key: value for key, value in baselines_raw.items() if key != "ifno"
     }
     baselines_without_nested = {
         key: value
         for key, value in baselines_without_ifno.items()
-        if key not in {"invertible_deeponet", "nio"}
+        if key not in {"invertible_deeponet", "nio", "deeponet", "fno"}
     }
     baselines = _dataclass_from_mapping(BaselinesConfig, baselines_without_nested)
     baselines.ifno = ifno
     baselines.invertible_deeponet = invertible_deeponet
     baselines.nio = nio
+    baselines.deeponet = deeponet
+    baselines.fno = fno
     inverse_models = _dataclass_from_mapping(
         InverseModelsConfig,
         _require_mapping(raw.get("inverse_models", {}), "inverse_models"),

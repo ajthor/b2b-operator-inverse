@@ -61,7 +61,7 @@ inverse_models:
   checkpoint_interval: 250
 
 baselines:
-  models: [invertible_deeponet, nio]
+  models: [deeponet, fno, invertible_deeponet, nio]
   batch_size: 1
   gradient_accumulation_steps: 4
   sample_with_replacement: true
@@ -72,6 +72,17 @@ baselines:
   log_interval: 10
   learning_rate: 0.0001
   checkpoint_interval: 250
+  deeponet:
+    branch_hidden_sizes: [256, 256]
+    trunk_hidden_sizes: [256, 256]
+    n_basis: 128
+    loss: relative_l2
+  fno:
+    lifting_channels: 64
+    modes: 16
+    n_fourier_layers: 4
+    projection_channels: 128
+    loss: relative_l2
   invertible_deeponet:
     hidden_sizes: [128, 128]
     trunk_hidden_sizes: [128, 128]

@@ -23,6 +23,8 @@ def _activation(name: str) -> torch.nn.Module:
         return torch.nn.ReLU()
     if name == "gelu":
         return torch.nn.GELU()
+    if name == "silu":
+        return torch.nn.SiLU()
     if name == "tanh":
         return torch.nn.Tanh()
     raise ValueError(f"Unsupported MLP activation: {name}")

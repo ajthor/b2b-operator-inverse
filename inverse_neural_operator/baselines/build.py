@@ -4,6 +4,14 @@ from __future__ import annotations
 
 
 def create_baseline_model(model_name: str, dataset_info, config):
+    if model_name == "deeponet":
+        from inverse_neural_operator.models.deterministic_baselines import create_deeponet
+
+        return create_deeponet(dataset_info, config)
+    if model_name == "fno":
+        from inverse_neural_operator.models.deterministic_baselines import create_fno
+
+        return create_fno(dataset_info, config)
     if model_name == "invertible_deeponet":
         from inverse_neural_operator.models.reviewer_baselines import (
             create_invertible_deeponet,
@@ -17,7 +25,7 @@ def create_baseline_model(model_name: str, dataset_info, config):
     if model_name != "ifno":
         raise ValueError(
             f"Unknown baseline model: {model_name}. "
-            "Supported: ifno, invertible_deeponet, nio."
+            "Supported: deeponet, fno, ifno, invertible_deeponet, nio."
         )
 
     from inverse_neural_operator.models.ifno import create_model

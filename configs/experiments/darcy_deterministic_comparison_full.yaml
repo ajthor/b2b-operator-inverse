@@ -1,0 +1,85 @@
+experiment: darcy_deterministic_comparison_full
+description: Full-data, long-budget Darcy deterministic inverse comparison and FE ablation base.
+
+dataset:
+  name: darcy_1d
+  source: ajthor/darcy_1d
+  sample_limit: null
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cuda
+  num_workers: 0
+  pin_memory: true
+  env:
+    CUDA_VISIBLE_DEVICES: "1"
+    MASTER_PORT: "29701"
+
+matrix:
+  seeds: [17]
+  stages: [baselines]
+
+function_encoders:
+  artifact: fe_relu_nbasis50_full
+  encoder_types: [input, output]
+  basis_chunk_size: 16
+  coefficient_grad: false
+  regularization: 0.001
+  basis:
+    kind: mlp
+    activation: relu
+    n_basis: 50
+    hidden_sizes: [256, 256]
+    omega_0: 30.0
+    winner_samples: 0
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  sample_with_replacement: true
+  max_steps: 3000
+  eval_interval: 250
+  eval_batches: 16
+  log_interval: 25
+  learning_rate: 0.0001
+  checkpoint_interval: 250
+
+inverse_models:
+  models: [nonlinear]
+  artifact: b2b_nonlinear_fe_relu_full
+  function_encoder_artifact: fe_relu_nbasis50_full
+  forward_model: null
+  hidden_sizes: [128, 128]
+  prediction_loss_weight: 1.0
+  coefficient_loss_weight: 0.0
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  sample_with_replacement: true
+  max_steps: 3000
+  eval_interval: 250
+  eval_batches: 16
+  log_interval: 25
+  learning_rate: 0.0001
+  checkpoint_interval: 250
+
+baselines:
+  models: [deeponet, fno]
+  batch_size: 16
+  sample_with_replacement: true
+  max_steps: 3000
+  eval_interval: 250
+  eval_batches: 16
+  log_interval: 25
+  learning_rate: 0.0001
+  checkpoint_interval: 250
+  deeponet:
+    branch_hidden_sizes: [256, 256]
+    trunk_hidden_sizes: [256, 256]
+    n_basis: 128
+    loss: relative_l2
+  fno:
+    lifting_channels: 64
+    modes: 16
+    n_fourier_layers: 4
+    projection_channels: 128
+    loss: relative_l2

@@ -1,0 +1,41 @@
+experiment: darcy_deterministic_inverse_baselines_smoke
+description: Tiny Darcy smoke test for deterministic inverse DeepONet and FNO baselines.
+
+dataset:
+  name: darcy_1d
+  source: ajthor/darcy_1d
+  sample_limit: 8
+
+runtime:
+  dry_run: true
+  launcher: torchrun
+  nproc_per_node: 1
+  device: cpu
+  num_workers: 0
+  pin_memory: false
+
+matrix:
+  seeds: [1]
+  stages: [baselines]
+
+baselines:
+  models: [deeponet, fno]
+  batch_size: 2
+  sample_with_replacement: true
+  max_steps: 10
+  eval_interval: 5
+  eval_batches: 2
+  log_interval: 1
+  learning_rate: 0.001
+  checkpoint_interval: 5
+  deeponet:
+    branch_hidden_sizes: [32, 32]
+    trunk_hidden_sizes: [32, 32]
+    n_basis: 16
+    loss: relative_l2
+  fno:
+    lifting_channels: 16
+    modes: 8
+    n_fourier_layers: 2
+    projection_channels: 32
+    loss: relative_l2
