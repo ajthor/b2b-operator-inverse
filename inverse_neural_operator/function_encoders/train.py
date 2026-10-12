@@ -77,11 +77,19 @@ def _scheduled_omega(basis_config, completed_steps: int) -> float:
     )
 
 
+def _basis_unit_norm_loss(gram):
+    """Match FunctionEncoder 0.0.4's Gram-diagonal scale penalty."""
+    import torch
+
+    return torch.mean((torch.diagonal(gram, dim1=-2, dim2=-1) - 1) ** 2)
+
+
 def _loss(
     model,
     batch,
     *,
     coefficient_grad: bool,
+    basis_unit_norm_loss_weight: float,
     orthonormality_loss_weight: float,
     ssim_loss_weight: float,
     ssim_max_points: int | None,
@@ -91,8 +99,11 @@ def _loss(
 
     example_xs, example_ys, xs, ys = batch
     encoder = model.module if hasattr(model, "module") else model
-    if coefficient_grad:
+    gram_requires_grad = basis_unit_norm_loss_weight > 0 or orthonormality_loss_weight > 0
+    if coefficient_grad or gram_requires_grad:
         coefficients, gram = encoder.compute_coefficients(example_xs, example_ys)
+        if not coefficient_grad:
+            coefficients = coefficients.detach()
     else:
         with torch.no_grad():
             coefficients, gram = encoder.compute_coefficients(example_xs, example_ys)
@@ -116,6 +127,7 @@ def _loss(
         )
     else:
         ssim_loss = torch.zeros((), device=ys.device)
+    unit_norm_loss = _basis_unit_norm_loss(gram)
     if orthonormality_loss_weight > 0:
         try:
             from function_encoder.losses import basis_orthonormality_loss
@@ -127,10 +139,17 @@ def _loss(
         norm_loss = torch.zeros((), device=ys.device)
     loss = (
         pred_loss
+        + basis_unit_norm_loss_weight * unit_norm_loss
         + orthonormality_loss_weight * norm_loss
         + ssim_loss_weight * ssim_loss
     )
-    return loss, pred_loss.detach(), norm_loss.detach(), ssim_loss.detach()
+    return (
+        loss,
+        pred_loss.detach(),
+        unit_norm_loss.detach(),
+        norm_loss.detach(),
+        ssim_loss.detach(),
+    )
 
 
 def _subsample_grid_for_ssim(coordinates, values, spatial_dims, *, max_points):
@@ -565,10 +584,13 @@ def main() -> None:
                     ):
                         break
                     batch = _move_batch(batch, context.device)
-                    loss, _, _, _ = _loss(
+                    loss, _, _, _, _ = _loss(
                         model,
                         batch,
                         coefficient_grad=fe_config.coefficient_grad,
+                        basis_unit_norm_loss_weight=(
+                            fe_config.basis_unit_norm_loss_weight
+                        ),
                         orthonormality_loss_weight=(
                             fe_config.orthonormality_loss_weight
                         ),
@@ -595,6 +617,7 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
                 step_loss_total = torch.zeros((), device=context.device)
                 step_pred_total = torch.zeros((), device=context.device)
+                step_unit_norm_total = torch.zeros((), device=context.device)
                 step_norm_total = torch.zeros((), device=context.device)
                 step_ssim_total = torch.zeros((), device=context.device)
                 for micro_step in range(accumulation_steps):
@@ -615,10 +638,13 @@ def main() -> None:
                         else model.no_sync()
                     )
                     with sync_context:
-                        loss, pred_loss, norm_loss, ssim_loss = _loss(
+                        loss, pred_loss, unit_norm_loss, norm_loss, ssim_loss = _loss(
                             model,
                             batch,
                             coefficient_grad=fe_config.coefficient_grad,
+                            basis_unit_norm_loss_weight=(
+                                fe_config.basis_unit_norm_loss_weight
+                            ),
                             orthonormality_loss_weight=(
                                 fe_config.orthonormality_loss_weight
                             ),
@@ -629,8 +655,14 @@ def main() -> None:
                         (loss / accumulation_steps).backward()
                     step_loss_total += loss.detach()
                     step_pred_total += pred_loss.detach()
+                    step_unit_norm_total += unit_norm_loss.detach()
                     step_norm_total += norm_loss.detach()
                     step_ssim_total += ssim_loss.detach()
+                gradient_norm = None
+                if fe_config.gradient_clip_norm is not None:
+                    gradient_norm = torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), max_norm=fe_config.gradient_clip_norm
+                    )
                 optimizer.step()
                 completed_steps = step + 1
                 step_seconds.append(time.time() - step_start)
@@ -640,6 +672,10 @@ def main() -> None:
                 )
                 mean_step_pred = reduce_mean(
                     step_pred_total / accumulation_steps,
+                    context,
+                )
+                mean_step_unit_norm = reduce_mean(
+                    step_unit_norm_total / accumulation_steps,
                     context,
                 )
                 mean_step_norm = reduce_mean(
@@ -668,6 +704,11 @@ def main() -> None:
                         completed_steps,
                     )
                     writer.add_scalar(
+                        f"loss_train_unit_norm/{args.encoder_type}",
+                        mean_step_unit_norm.item(),
+                        completed_steps,
+                    )
+                    writer.add_scalar(
                         f"loss_train_norm/{args.encoder_type}",
                         mean_step_norm.item(),
                         completed_steps,
@@ -682,6 +723,12 @@ def main() -> None:
                         current_omega,
                         completed_steps,
                     )
+                    if gradient_norm is not None:
+                        writer.add_scalar(
+                            f"gradient_norm/{args.encoder_type}",
+                            float(gradient_norm.item()),
+                            completed_steps,
+                        )
 
                 should_evaluate = (
                     fe_config.eval_interval > 0
@@ -729,10 +776,13 @@ def main() -> None:
                 for batch in train_loader:
                     batch = _move_batch(batch, context.device)
                     optimizer.zero_grad(set_to_none=True)
-                    loss, pred_loss, norm_loss, ssim_loss = _loss(
+                    loss, pred_loss, unit_norm_loss, norm_loss, ssim_loss = _loss(
                         model,
                         batch,
                         coefficient_grad=fe_config.coefficient_grad,
+                        basis_unit_norm_loss_weight=(
+                            fe_config.basis_unit_norm_loss_weight
+                        ),
                         orthonormality_loss_weight=(
                             fe_config.orthonormality_loss_weight
                         ),
@@ -741,6 +791,10 @@ def main() -> None:
                         spatial_dims=loss_spatial_dims,
                     )
                     loss.backward()
+                    if fe_config.gradient_clip_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(), max_norm=fe_config.gradient_clip_norm
+                        )
                     optimizer.step()
                     train_total += loss.detach()
                     train_count += 1
@@ -828,7 +882,9 @@ def main() -> None:
                 "winner_spectral_stats": spectral_stats,
                 "basis_chunk_size": fe_config.basis_chunk_size,
                 "coefficient_grad": fe_config.coefficient_grad,
+                "basis_unit_norm_loss_weight": fe_config.basis_unit_norm_loss_weight,
                 "orthonormality_loss_weight": fe_config.orthonormality_loss_weight,
+                "gradient_clip_norm": fe_config.gradient_clip_norm,
                 "ssim_loss_weight": fe_config.ssim_loss_weight,
                 "ssim_max_points": fe_config.ssim_max_points,
                 "rank0_device": str(context.device),

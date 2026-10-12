@@ -58,6 +58,7 @@ class FunctionEncoderConfig:
     basis_chunk_size: Optional[int] = None
     coefficient_grad: bool = True
     regularization: float = 1e-3
+    basis_unit_norm_loss_weight: float = 1.0
     orthonormality_loss_weight: float = 0.0
     ssim_loss_weight: float = 0.0
     ssim_max_points: Optional[int] = None
@@ -70,6 +71,7 @@ class FunctionEncoderConfig:
     eval_batches: Optional[int] = None
     log_interval: int = 10
     learning_rate: float = 1e-4
+    gradient_clip_norm: Optional[float] = 1.0
     checkpoint_interval: int = 1
 
 
